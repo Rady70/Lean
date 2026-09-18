@@ -1,0 +1,124 @@
+{
+  // ---------------------------------------------------------------------------
+  // MarketLab-owned LEAN configuration: LOCAL BACKTESTING ONLY.
+  //
+  // This is a complete, standalone configuration file for the LEAN Launcher,
+  // selected with `--config <this file>`. LEAN loads exactly one config file
+  // (Configuration/Config.cs, SetConfigurationFile); it does not overlay this on
+  // top of Launcher/config.json, so every key LEAN needs is spelled out here.
+  //
+  // Boundary (LEAN_FORK_PLAN.md section 6): local, historical, backtesting,
+  // no external execution. The only environment defined below is
+  // "backtesting"; there is no live environment, no brokerage key, no data
+  // queue, and no credential of any kind. MarketLab/scripts/run-backtest.ps1
+  // refuses to launch if these invariants are not met.
+  //
+  // Path placeholders: "algorithm-location", "data-folder" and
+  // "results-destination-folder" are written relative to the repository root
+  // purely as self-description; run-backtest.ps1 ALWAYS overrides them with
+  // absolute paths on the command line. LEAN resolves relative paths against
+  // the process working directory, and "object-store-root" (./storage) has no
+  // command-line override at all, so a manual launch must set the working
+  // directory to a scratch/output directory exactly as the helper does
+  // (never the repository root, where storage\ would land untracked).
+  //
+  // JSON `//` comments are permitted: LEAN parses this file with
+  // Newtonsoft JObject.Parse, exactly like upstream's Launcher/config.json.
+  // ---------------------------------------------------------------------------
+
+  // Selected environment. Must be "backtesting"; the helper also passes
+  // `--environment backtesting` on the command line so the selection is visible
+  // in the run's command line, not only in this file.
+  "environment": "backtesting",
+
+  // Live mode is disabled at the top level AND inside the backtesting
+  // environment below. There is no CLI option for live-mode; it comes only from
+  // configuration (Common/Globals.cs, Reset).
+  "live-mode": false,
+
+  // Exit when the backtest finishes instead of waiting for a keypress
+  // (Queues/JobQueue.cs, AcknowledgeJob). Required for scripted runs.
+  "close-automatically": true,
+
+  // Log an error line for every local data file the engine looks for and does
+  // not find (Engine/DataFeeds/SubscriptionDataSourceReader.cs). Missing data is
+  // otherwise silent in LEAN; the helper additionally checks the engine's own
+  // data-monitor report after the run.
+  "show-missing-data-logs": true,
+
+  "debugging": false,
+
+  // --- Algorithm selection (overridden by the helper's -Algorithm* parameters) ---
+  "algorithm-type-name": "BasicTemplateFrameworkAlgorithm",
+  "algorithm-language": "CSharp",
+  "algorithm-location": "Launcher/bin/Release/QuantConnect.Algorithm.CSharp.dll",
+
+  // --- Local paths (overridden by the helper with absolute paths) ---
+  // Historical data root. Must contain market-hours/market-hours-database.json
+  // and symbol-properties/symbol-properties-database.csv in addition to the
+  // price data itself.
+  "data-folder": "Data/",
+  // Results, the engine log (log.txt) and the data-monitor files all go here
+  // (Engine/Initializer.cs sets Log.FilePath = <this>/log.txt).
+  "results-destination-folder": "MarketLab/output/manual-run",
+  // LocalObjectStore root, relative to the process working directory
+  // (Engine/Storage/LocalObjectStore.cs). The helper's cwd is the run directory.
+  "object-store-root": "./storage",
+
+  // --- Handlers: local, file-system-only set, identical to upstream's
+  // backtesting selection in Launcher/config.json ---
+  "log-handler": "QuantConnect.Logging.CompositeLogHandler",
+  "messaging-handler": "QuantConnect.Messaging.Messaging",
+  "job-queue-handler": "QuantConnect.Queues.JobQueue",
+  // QuantConnect.Api.Api is the upstream default and makes no request for a
+  // local backtest (Api/Api.cs, SetAlgorithmStatus is a no-op; Batch A
+  // observation 12). It is listed so the handler set is explicit.
+  "api-handler": "QuantConnect.Api.Api",
+  "map-file-provider": "QuantConnect.Data.Auxiliary.LocalDiskMapFileProvider",
+  "factor-file-provider": "QuantConnect.Data.Auxiliary.LocalDiskFactorFileProvider",
+  "data-provider": "QuantConnect.Lean.Engine.DataFeeds.DefaultDataProvider",
+  "data-channel-provider": "DataChannelProvider",
+  "object-store": "QuantConnect.Lean.Engine.Storage.LocalObjectStore",
+  "data-aggregator": "QuantConnect.Lean.Engine.DataFeeds.AggregationManager",
+
+  // --- Limits, copied from upstream's Launcher/config.json ---
+  "symbol-minute-limit": 10000,
+  "symbol-second-limit": 10000,
+  "symbol-tick-limit": 10000,
+  "maximum-warmup-history-days-look-back": 5,
+  "maximum-data-points-per-chart-series": 1000000,
+  "maximum-chart-series": 30,
+  "force-exchange-always-open": false,
+  "transaction-log": "",
+  "reserved-words-prefix": "@",
+
+  // --- QuantConnect identity: intentionally empty. ---
+  // No account, login, API token or organization is used or needed for a local
+  // backtest. These are the same empty defaults upstream ships; they are kept
+  // explicit so a reviewer can see that nothing is filled in.
+  "job-user-id": "0",
+  "api-access-token": "",
+  "job-organization-id": "",
+
+  // Algorithm parameters (none for the representative backtest).
+  "parameters": {},
+
+  // The ONLY environment. run-backtest.ps1 refuses to launch if any other
+  // environment is defined, if this one nests an "environment"/"environments"
+  // of its own, if live-mode is anything but the JSON boolean false at either
+  // level, if a live-only key (live-mode-brokerage, data-queue-handler) is
+  // present, or if any handler key names a type other than the qualified
+  // backtesting set below (and DefaultDataProvider above).
+  "environments": {
+    "backtesting": {
+      "live-mode": false,
+
+      "setup-handler": "QuantConnect.Lean.Engine.Setup.BacktestingSetupHandler",
+      "result-handler": "QuantConnect.Lean.Engine.Results.BacktestingResultHandler",
+      "data-feed-handler": "QuantConnect.Lean.Engine.DataFeeds.FileSystemDataFeed",
+      "real-time-handler": "QuantConnect.Lean.Engine.RealTime.BacktestingRealTimeHandler",
+      "history-provider": [ "QuantConnect.Lean.Engine.HistoricalData.SubscriptionDataReaderHistoryProvider" ],
+      "transaction-handler": "QuantConnect.Lean.Engine.TransactionHandlers.BacktestingTransactionHandler"
+    }
+  }
+}
