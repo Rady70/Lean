@@ -38,8 +38,9 @@ codes you can read from `$LASTEXITCODE` when invoked with `-File`.
 - Network access to the NuGet feed for `dotnet restore` only.
 - For Python algorithms only (section 9): a CPython 3.11 installation with the
   packages named in `Algorithm.Python\readme.md` (pandas, wrapt) and the
-  **Debug** build (section 2). PyPI access is needed once to install those
-  packages; the backtest itself needs none (outbound traffic is not
+  **Debug** build (section 2). Obtaining CPython and installing those packages
+  may need network access (python.org, PyPI), as may the build's NuGet
+  restore; the backtest itself needs none (outbound traffic is not
   instrumented, section 13).
 - Not required: Visual Studio, Python (C# path), the LEAN CLI, Docker, a
   QuantConnect account. See section 11.
@@ -156,7 +157,7 @@ outside Git by default.
 
 ```powershell
 pwsh -File MarketLab\scripts\run-backtest.ps1              # defaults = Batch A representative run
-pwsh -File MarketLab\scripts\run-backtest.ps1 -DryRun      # validate and print the command, launch nothing
+pwsh -File MarketLab\scripts\run-backtest.ps1 -DryRun      # validate and print the command; LEAN is not launched
 Get-Help MarketLab\scripts\run-backtest.ps1 -Full          # every parameter
 ```
 
@@ -167,7 +168,7 @@ The helper, in order:
 2. pre-flight: launcher DLL present, config present and parsable and
    backtesting-only (section 3), algorithm file present, data folder present
    with both auxiliary databases, output root usable. Every problem is one
-   `ERROR:` line naming the path and the fix; exit code 2, nothing launched;
+   `ERROR:` line naming the path and the fix; exit code 2, LEAN not launched;
 3. creates `<OutputRoot>\<yyyyMMdd-HHmmss UTC>-<AlgorithmTypeName>\` and prints
    LEAN root, configuration, config file, algorithm, data folder, run
    directory, log file and the exact command line;
@@ -216,7 +217,7 @@ Invocation notes:
 |---|---|
 | 0 | backtest completed; every local data request succeeded; no engine `ERROR::` line in `log.txt` |
 | 1 | LEAN: algorithm did not reach `Completed` ([`Launcher/Program.cs`](../Launcher/Program.cs)); also PowerShell's own code when it rejects a parameter value (for example an empty `-AlgorithmTypeName`) before the script runs |
-| 2 | pre-flight validation failed; nothing was launched |
+| 2 | pre-flight validation failed; LEAN was not launched (for Python, the pandas probe may have run) |
 | 3 | LEAN exited 0 but its data monitor counted failed data requests (warning only with `-AllowMissingData`) |
 | 4 | LEAN exited 0 but its engine log contains engine `ERROR::` lines, for example a corrupt or empty data file it skipped or a statistics failure (warning only with `-AllowEngineErrors`); the algorithm's own `Error()` output, rejected orders and missing-file lines already counted by exit code 3 are not engine errors |
 | other | LEAN's own exit code, propagated unchanged |
@@ -301,7 +302,9 @@ describes for Windows. What that readme asks for, and what was used:
 | `pandas` (readme: 2.2.3), `wrapt` (readme: 1.16.0), installed into that interpreter | `pandas==2.2.3`, `wrapt==1.16.0`, plus `numpy==1.26.4` pinned to the version upstream's container tests against (`DockerfileLeanFoundation`); pandas's own dependencies as resolved by pip |
 | build LEAN, then run with `algorithm-language: Python` | `build.ps1 -Configuration Debug`, then the helper with `-Configuration Debug` |
 
-Setup, once (the only step that needs network access — PyPI):
+Install the Python packages once (this step may require PyPI access;
+installing CPython and the build's NuGet restore may need network access
+too):
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe" -m pip install pandas==2.2.3 wrapt==1.16.0 numpy==1.26.4
@@ -318,7 +321,7 @@ pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Debug -AlgorithmLan
 
 What the helper does for a Python run, in addition to section 5:
 
-- pre-flight (exit 2, nothing launched) requires `-AlgorithmLocation`, an
+- pre-flight (exit 2, LEAN not launched) requires `-AlgorithmLocation`, an
   existing `-PythonDll` / `PYTHONNET_PYDLL`, and `-Configuration Debug`;
 - pre-flight imports `pandas` through the `python.exe` next to the DLL, because
   LEAN's `PandasConverter` imports pandas for every Python algorithm and its
@@ -347,9 +350,13 @@ disposes, the optimizing JIT lets it be garbage-collected during
 `GIL must always be released...` on the finalizer thread, which ends the
 process with exit code -532462766 (0xE0434352) after "PythonInitializer.
 Shutdown(): calling engine shutdown...". With the Debug build the JIT keeps
-the local alive and the process exits 0. This is upstream issue
+the local alive and the process exits 0. On this machine the abort
+reproduced 3/3 on Release and never on Debug; it matches upstream issue
 [QuantConnect/Lean#9708](https://github.com/QuantConnect/Lean/issues/9708)
-(closed without a fix); it is not corrected in this fork because the
+(closed 2026-09-10 without a fix; the maintainers did not reproduce it in
+their public CI), so what is established is a reproducible failure in the
+upstream shutdown path on the qualified environment, not an upstream
+acknowledgement. It is not corrected in this fork because the
 MarketLab no-modification policy allows no engine source change without an
 approved exception. Debug is upstream's own documented run configuration
 (readme: `dotnet build`, `Launcher/bin/Debug`), so the helper refuses
@@ -473,8 +480,9 @@ unchanged and unused; nothing claims it was removed.
 ## 13. Known limitations
 
 - Python algorithms are qualified on the **Debug** build only, with the
-  runtime in section 9; the Release build aborts at Python shutdown (upstream
-  #9708) and is refused in pre-flight. `wrapt` is installed because the
+  runtime in section 9; on this machine the Release build reproducibly
+  aborts at Python shutdown (matching closed upstream issue #9708) and is
+  refused in pre-flight. `wrapt` is installed because the
   upstream readme lists it; no engine source references it, so its necessity
   was not verified. The pandas pre-flight probe needs a `python.exe` next to
   the DLL and is skipped (with a warning) otherwise.

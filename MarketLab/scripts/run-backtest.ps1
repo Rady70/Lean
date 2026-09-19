@@ -12,7 +12,7 @@ own data-monitor report and fails if any local data request failed, and it
 fails if the engine log of an exit-0 run contains ERROR:: lines (LEAN keeps
 going after a corrupt data file or a statistics failure and still exits 0).
 
-Pre-flight rejects (exit code 2, nothing launched) a config that is not
+Pre-flight rejects (exit code 2, LEAN not launched) a config that is not
 backtesting-only: `environment` must be exactly "backtesting"; `live-mode`
 must be the JSON boolean false at the top level and inside every environment;
 `environments` must be an object defining only `backtesting`, and that
@@ -34,8 +34,9 @@ imports in the interpreter next to it (LEAN's PandasConverter imports pandas for
 every Python algorithm and reports only "type initializer ... threw an
 exception" when it is missing), and refuses the Release configuration: with
 Release binaries LEAN completes the backtest and writes every result, then
-aborts while shutting down the Python runtime (upstream issue
-QuantConnect/Lean#9708, Common/Python/PythonInitializer.cs; exit code
+aborts while shutting down the Python runtime (reproducible on the qualified
+Windows environment; in Common/Python/PythonInitializer.cs; matches upstream
+issue QuantConnect/Lean#9708, closed without a fix; exit code
 -532462766 / 0xE0434352). Python runs are qualified on the Debug build only
 (-Configuration Debug). For the launcher process only, the script sets
 PYTHONNET_PYDLL to the resolved DLL and PYTHONPATH to the launcher build
@@ -60,7 +61,8 @@ Exit codes (observable via $LASTEXITCODE when invoked with `-File`):
      ERROR:: line in the run's log.txt
   1  LEAN reported that the algorithm did not complete (Launcher/Program.cs),
      or PowerShell rejected a parameter value before the script ran
-  2  pre-flight validation failed; nothing was launched
+  2  pre-flight validation failed; LEAN was not launched (a Python
+     pre-flight may have run the pandas probe)
   3  LEAN exited 0 but its data-monitor report counts failed data requests
      (suppressed to a warning by -AllowMissingData)
   4  LEAN exited 0 but its engine log (log.txt) contains engine ERROR:: lines,
@@ -141,7 +143,8 @@ Runs the Python representative algorithm against the Debug build.
 
 .EXAMPLE
 pwsh -File MarketLab\scripts\run-backtest.ps1 -DryRun
-Shows what would be run without launching anything.
+Shows what would be run without launching LEAN (a Python dry run still runs
+the pandas probe).
 
 .LINK
 https://github.com/QuantConnect/Lean/blob/master/Launcher/config.json
@@ -476,7 +479,7 @@ if ($null -ne $leanRootPath) {
 
 if ($problems.Count -gt 0) {
     foreach ($problem in $problems) { Write-ErrorLine $problem }
-    Write-ErrorLine "Pre-flight validation failed with $($problems.Count) problem(s); nothing was launched. Exit code $script:ExitPreflight."
+    Write-ErrorLine "Pre-flight validation failed with $($problems.Count) problem(s); LEAN was not launched. Exit code $script:ExitPreflight."
     exit $script:ExitPreflight
 }
 
@@ -509,7 +512,7 @@ if (-not (Test-Path -LiteralPath $algorithmLocationPath -PathType Leaf)) {
 $pythonExe = $null
 if ($AlgorithmLanguage -eq 'Python') {
     if ($Configuration -ne 'Debug') {
-        $problems.Add("-AlgorithmLanguage Python requires -Configuration Debug. With the $Configuration build LEAN completes the backtest and writes every result, then aborts while shutting down the Python runtime (upstream QuantConnect/Lean issue #9708: Common/Python/PythonInitializer.cs Shutdown() holds a Py.GIL() handle it never disposes, and the optimizing JIT lets Python.NET finalize it during PythonEngine.Shutdown; process exit code -532462766 / 0xE0434352). Python runs are qualified on the Debug build only: build with MarketLab\scripts\build.ps1 -Configuration Debug and pass -Configuration Debug.")
+        $problems.Add("-AlgorithmLanguage Python requires -Configuration Debug. With the $Configuration build LEAN completes the backtest and writes every result, then aborts while shutting down the Python runtime (reproducible on the qualified environment; matches upstream QuantConnect/Lean issue #9708, closed without a fix: Common/Python/PythonInitializer.cs Shutdown() holds a Py.GIL() handle it never disposes, and the optimizing JIT lets Python.NET finalize it during PythonEngine.Shutdown; process exit code -532462766 / 0xE0434352). Python runs are qualified on the Debug build only: build with MarketLab\scripts\build.ps1 -Configuration Debug and pass -Configuration Debug.")
     }
     if (-not $pythonDllGiven) {
         $problems.Add("-AlgorithmLanguage Python requires -PythonDll <path to python311.dll> or the PYTHONNET_PYDLL environment variable (Algorithm.Python/readme.md). Python.NET cannot start without it (Runtime.PythonDLL was not set). See MarketLab\README.md section 9 for the qualified runtime.")
@@ -682,7 +685,7 @@ elseif (-not (Test-Path -LiteralPath $outputRootPath -PathType Container)) {
 
 if ($problems.Count -gt 0) {
     foreach ($problem in $problems) { Write-ErrorLine $problem }
-    Write-ErrorLine "Pre-flight validation failed with $($problems.Count) problem(s); nothing was launched. Exit code $script:ExitPreflight."
+    Write-ErrorLine "Pre-flight validation failed with $($problems.Count) problem(s); LEAN was not launched. Exit code $script:ExitPreflight."
     exit $script:ExitPreflight
 }
 
@@ -739,7 +742,7 @@ Write-Info "  working dir:      $runDir"
 Write-Info "  command line:     $commandLine"
 
 if ($DryRun) {
-    Write-Info 'Dry run: pre-flight passed; nothing was created or launched. Exit code 0.'
+    Write-Info 'Dry run: pre-flight passed; LEAN was not launched and no run directory was created. Exit code 0.'
     exit 0
 }
 

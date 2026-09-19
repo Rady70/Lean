@@ -13,8 +13,9 @@ requirements: -AlgorithmLocation, -Configuration Debug, an existing
 Every helper invocation is a child process of the same PowerShell executable
 that runs this script, so exit codes are the real process exit codes.
 
-No Pester, no module, no network, no LEAN CLI. Without -IncludeSmoke nothing is
-launched and the run finishes in a few seconds. With -IncludeSmoke real
+No Pester, no module, no network, no LEAN CLI. Without -IncludeSmoke LEAN is
+never launched (the only other process is the helper's pandas probe when
+-PythonDll is given) and the run finishes in a few seconds. With -IncludeSmoke real
 backtests are run into a temporary output root that is deleted afterwards: the
 Batch A representative C# algorithm on the shipped sample data, the same
 algorithm on a temporary copy of that data with one corrupted zip file (helper
@@ -224,7 +225,7 @@ function Assert-PreflightFailure([string]$Name, [string[]]$Arguments, [string]$E
     $r = Invoke-Helper $Arguments
     Assert-Equal 2 $r.ExitCode "$Name -> exit code 2"
     Assert-Match $r.StdErr ('(?m)^ERROR: .*' + $ErrorPattern) "$Name -> ERROR line matches /$ErrorPattern/"
-    Assert-NotContains $r.All 'Launching LEAN' "$Name -> nothing launched"
+    Assert-NotContains $r.All 'Launching LEAN' "$Name -> LEAN not launched"
 }
 
 # ----------------------------------------------------------------------------
@@ -338,7 +339,7 @@ try {
     Assert-NotContains $dry.All 'login' 'dry run: no "login" in output'
     Assert-NotContains $dry.All 'live-paper' 'dry run: no "live-paper" in output'
     Assert-NotContains $dry.All 'pip install' 'dry run: no "pip install" in output'
-    Assert-NotContains $dry.All 'Launching LEAN' 'dry run: nothing launched'
+    Assert-NotContains $dry.All 'Launching LEAN' 'dry run: LEAN not launched'
     Assert-NotContains $dry.StdOut '--live-mode' 'dry run: live-mode is not passed on the command line'
     Assert-Match $dry.StdOut "(?m)^  command line:     & '" 'dry run: command line is a pasteable PowerShell call'
 
@@ -419,7 +420,7 @@ try {
         Assert-Contains $pyFake.StdOut ('PYTHONPATH:       ' + (Join-Path $script:LeanRootPath 'Launcher\bin\Debug')) 'Python dry run: PYTHONPATH line is the Debug launcher directory'
         Assert-Contains $pyFake.StdOut '--algorithm-language Python' 'Python dry run: command line has --algorithm-language Python'
         Assert-Contains $pyFake.StdOut 'Launcher\bin\Debug\QuantConnect.Lean.Launcher.dll' 'Python dry run: command line uses the Debug launcher'
-        Assert-NotContains $pyFake.All 'Launching LEAN' 'Python dry run: nothing launched'
+        Assert-NotContains $pyFake.All 'Launching LEAN' 'Python dry run: LEAN not launched'
         Assert-NotContains $pyFake.All 'NOT qualified' 'Python dry run: no stale "not qualified" warning'
         if ($script:HasPythonDll) {
             $pyReal = Invoke-Helper ($pyArgs + @('-Configuration', 'Debug', '-PythonDll', $PythonDll, '-DryRun'))
@@ -456,7 +457,7 @@ try {
     Assert-Match $lh.StdErr '(?m)^ERROR: .*"data-feed-handler" is .*LiveTradingDataFeed' 'config copy with live handlers -> ERROR names data-feed-handler'
     Assert-Match $lh.StdErr '(?m)^ERROR: .*"live-mode-brokerage" is present' 'config copy with live handlers -> ERROR names live-mode-brokerage'
     Assert-Match $lh.StdErr '(?m)^ERROR: .*"data-queue-handler" is present' 'config copy with live handlers -> ERROR names data-queue-handler'
-    Assert-NotContains $lh.All 'Launching LEAN' 'config copy with live handlers -> nothing launched'
+    Assert-NotContains $lh.All 'Launching LEAN' 'config copy with live handlers -> LEAN not launched'
 
     # ApiDataProvider downloads through the QuantConnect API (account/token gated).
     $apiProvider = Join-Path $script:TempRoot 'api-data-provider.json'
@@ -483,7 +484,7 @@ try {
     $emptyName = Invoke-Helper @('-AlgorithmTypeName', '', '-DryRun')
     Assert-True ($emptyName.ExitCode -ne 0) 'empty -AlgorithmTypeName -> non-zero exit code' "got exit code $($emptyName.ExitCode)"
     Assert-Contains $emptyName.All 'AlgorithmTypeName' 'empty -AlgorithmTypeName -> error names the parameter'
-    Assert-NotContains $emptyName.All 'Launching LEAN' 'empty -AlgorithmTypeName -> nothing launched'
+    Assert-NotContains $emptyName.All 'Launching LEAN' 'empty -AlgorithmTypeName -> LEAN not launched'
 
     # ------------------------------------------------------------------------
     # Optional smoke run
