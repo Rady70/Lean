@@ -36,6 +36,11 @@ codes you can read from `$LASTEXITCODE` when invoked with `-File`.
   `$env:DOTNET_ROOT`, then `%ProgramFiles%\dotnet\dotnet.exe`, and stop with an
   `ERROR:` if none exists.
 - Network access to the NuGet feed for `dotnet restore` only.
+- For Python algorithms only (section 9): a CPython 3.11 installation with the
+  packages named in `Algorithm.Python\readme.md` (pandas, wrapt) and the
+  **Debug** build (section 2). PyPI access is needed once to install those
+  packages; the backtest itself needs none (outbound traffic is not
+  instrumented, section 13).
 - Not required: Visual Studio, Python (C# path), the LEAN CLI, Docker, a
   QuantConnect account. See section 11.
 
@@ -52,7 +57,9 @@ dotnet restore QuantConnect.Lean.sln
 dotnet build QuantConnect.Lean.sln --configuration Release --no-restore
 ```
 
-- Configuration: `Release` (Batch A baseline; `-Configuration Debug` is accepted).
+- Configuration: `Release` (Batch A baseline, the C# path). `-Configuration
+  Debug` builds `Launcher\bin\Debug\` alongside it and is **required for Python
+  algorithms** (section 9); both builds can coexist.
 - Output: `Launcher\bin\Release\` (no `net10.0` subfolder; upstream sets
   `AppendTargetFrameworkToOutputPath=false`).
 - Success: exit code 0, MSBuild's `Build succeeded.` with `0 Error(s)`, and the
@@ -180,7 +187,9 @@ The helper, in order:
    [`Configuration/LeanArgumentParser.cs`](../Configuration/LeanArgumentParser.cs);
    there is no `live-mode` option, that key comes from the validated file only;
 5. reads the engine's own `data-monitor-report-*.json` from the run directory
-   and fails with exit code 3 if any data request failed (section 10);
+   and fails with exit code 3 if any data request failed (section 10), then
+   reads the run's `log.txt` and fails with exit code 4 if LEAN exited 0 but
+   logged an engine `ERROR::` line (section 10);
 6. prints `run-backtest: exit code N; run directory: ...; log: ...`.
 
 Nothing is copied, downloaded or installed. The script does not call `lean`,
@@ -205,10 +214,11 @@ Invocation notes:
 
 | Code | Meaning |
 |---|---|
-| 0 | backtest completed; every local data request succeeded |
+| 0 | backtest completed; every local data request succeeded; no engine `ERROR::` line in `log.txt` |
 | 1 | LEAN: algorithm did not reach `Completed` ([`Launcher/Program.cs`](../Launcher/Program.cs)); also PowerShell's own code when it rejects a parameter value (for example an empty `-AlgorithmTypeName`) before the script runs |
 | 2 | pre-flight validation failed; nothing was launched |
 | 3 | LEAN exited 0 but its data monitor counted failed data requests (warning only with `-AllowMissingData`) |
+| 4 | LEAN exited 0 but its engine log contains engine `ERROR::` lines, for example a corrupt or empty data file it skipped or a statistics failure (warning only with `-AllowEngineErrors`); the algorithm's own `Error()` output, rejected orders and missing-file lines already counted by exit code 3 are not engine errors |
 | other | LEAN's own exit code, propagated unchanged |
 
 ## 6. Results
@@ -273,9 +283,83 @@ Only supported LEAN inputs are used (`--algorithm-type-name`,
 - Algorithm parameters: the `parameters` object in the config file (read
   through `QCAlgorithm.GetParameter`); copy `config\backtesting.json` and pass
   `-Config <copy>` to keep the tracked file unchanged.
-- `-AlgorithmLanguage Python -AlgorithmLocation <file.py>` is passed through
-  but **not qualified**: Batch A did not set up the pinned Python 3.11 runtime,
-  and this batch does not either (section 13).
+- Python algorithms: see below.
+
+### Python algorithms (qualified in Batch C on the Debug build)
+
+LEAN runs Python algorithms through its embedded Python.NET runtime
+(`QuantConnect.pythonnet`, [`AlgorithmFactory/Loader.cs`](../AlgorithmFactory/Loader.cs),
+[`Common/Python/PythonInitializer.cs`](../Common/Python/PythonInitializer.cs)),
+which loads the CPython DLL named by the `PYTHONNET_PYDLL` environment
+variable, exactly as [`Algorithm.Python/readme.md`](../Algorithm.Python/readme.md)
+describes for Windows. What that readme asks for, and what was used:
+
+| Requirement (upstream) | Qualified on this machine |
+|---|---|
+| CPython 3.11 (readme: 3.11.11 from python.org; python.org ships no Windows installer past 3.11.9, and upstream's own container uses conda 3.11.11) | python.org CPython **3.11.9** x64, per-user install (`%LOCALAPPDATA%\Programs\Python\Python311`), not on `PATH` |
+| `PYTHONNET_PYDLL` → that installation's `python311.dll` | passed by the helper (`-PythonDll`, or an inherited `PYTHONNET_PYDLL`) to the launcher process only |
+| `pandas` (readme: 2.2.3), `wrapt` (readme: 1.16.0), installed into that interpreter | `pandas==2.2.3`, `wrapt==1.16.0`, plus `numpy==1.26.4` pinned to the version upstream's container tests against (`DockerfileLeanFoundation`); pandas's own dependencies as resolved by pip |
+| build LEAN, then run with `algorithm-language: Python` | `build.ps1 -Configuration Debug`, then the helper with `-Configuration Debug` |
+
+Setup, once (the only step that needs network access — PyPI):
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe" -m pip install pandas==2.2.3 wrapt==1.16.0 numpy==1.26.4
+pwsh -File MarketLab\scripts\build.ps1 -Configuration Debug
+```
+
+Run:
+
+```powershell
+pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Debug -AlgorithmLanguage Python `
+    -AlgorithmTypeName BasicTemplateAlgorithm -AlgorithmLocation Algorithm.Python\BasicTemplateAlgorithm.py `
+    -PythonDll "$env:LOCALAPPDATA\Programs\Python\Python311\python311.dll"
+```
+
+What the helper does for a Python run, in addition to section 5:
+
+- pre-flight (exit 2, nothing launched) requires `-AlgorithmLocation`, an
+  existing `-PythonDll` / `PYTHONNET_PYDLL`, and `-Configuration Debug`;
+- pre-flight imports `pandas` through the `python.exe` next to the DLL, because
+  LEAN's `PandasConverter` imports pandas for every Python algorithm and its
+  only diagnostic when pandas is missing is
+  `The type initializer for 'QuantConnect.Python.PandasConverter' threw an
+  exception`; if there is no `python.exe` next to the DLL the check is skipped
+  with a warning;
+- for the launcher process only, it sets `PYTHONNET_PYDLL` to the DLL and
+  `PYTHONPATH` to `Launcher\bin\Debug`, where the build copies
+  `AlgorithmImports.py`. Upstream relies on that directory being the working
+  directory for `from AlgorithmImports import *` to resolve; the MarketLab
+  working directory is the run directory, so the path is supplied the way
+  upstream's own `.vscode/launch_research.sh` and `DockerfileJupyter` supply
+  it (upstream appends to `PYTHONPATH`; the helper replaces an inherited value
+  and warns, so the import path is exactly the qualified one). Use the config
+  key `python-additional-paths` for extra import paths. The pandas probe runs
+  with the same two variables, and it also runs under `-DryRun`;
+- the algorithm's own directory is put on the Python path by LEAN itself
+  ([`Queues/JobQueue.cs`](../Queues/JobQueue.cs), `GetAlgorithmLocation`).
+
+**Why Debug only.** With the Release build, LEAN completes the Python backtest
+and writes every result file, then aborts while shutting down the Python
+runtime: `PythonInitializer.Shutdown()` takes a `Py.GIL()` handle it never
+disposes, the optimizing JIT lets it be garbage-collected during
+`PythonEngine.Shutdown()`, and Python.NET's `GILState` finalizer throws
+`GIL must always be released...` on the finalizer thread, which ends the
+process with exit code -532462766 (0xE0434352) after "PythonInitializer.
+Shutdown(): calling engine shutdown...". With the Debug build the JIT keeps
+the local alive and the process exits 0. This is upstream issue
+[QuantConnect/Lean#9708](https://github.com/QuantConnect/Lean/issues/9708)
+(closed without a fix); it is not corrected in this fork because the
+MarketLab no-modification policy allows no engine source change without an
+approved exception. Debug is upstream's own documented run configuration
+(readme: `dotnet build`, `Launcher/bin/Debug`), so the helper refuses
+`-AlgorithmLanguage Python` with `-Configuration Release` in pre-flight rather
+than launching a run that cannot exit cleanly.
+
+The qualified Python runtime is the one in the table above. Python.NET 2.0.66
+also loaded this machine's python.org 3.14.5 with pandas 3.0.3 and produced
+the same statistics once; that is an observation, not a qualified
+configuration.
 
 ## 10. When required data is missing
 
@@ -299,6 +383,52 @@ The MarketLab path makes this visible in three places:
 A data folder that is missing the auxiliary databases, or that does not exist,
 is rejected in pre-flight (exit 2) before anything runs.
 
+### Corrupt data and other errors LEAN carries on from (exit code 4)
+
+LEAN exits 0 whenever the algorithm reaches `Completed`, even when the engine
+logged errors on the way and kept going. Three shapes were observed in
+Batch C:
+
+- a **corrupt zip file** is skipped with
+  `ZipDataCacheProvider.Fetch(): Corrupt zip file/entry: ...`
+  ([`Engine/DataFeeds/ZipDataCacheProvider.cs`](../Engine/DataFeeds/ZipDataCacheProvider.cs)),
+  fill-forward covers the gap, the data monitor still counts the request as
+  succeeded (the file exists), and the risk statistics silently differ from
+  the intact-data run;
+- a **valid zip whose entry is empty** (or otherwise yields no data) is
+  reported only as `SubscriptionDataSourceReader.InvalidSource(): File not
+  found: ...` — the same line LEAN prints for a genuinely missing file — while
+  the data monitor counts the request as succeeded because the file opened;
+- **malformed rows inside a valid zip** poison the equity curve and
+  `BaseResultsHandler.GenerateStatisticsResults()` fails with an
+  `OverflowException`, leaving the statistics block empty.
+
+Every clean qualified run has no `ERROR::` line in its `log.txt`, so after a
+run that LEAN ended with exit code 0 the helper reads `log.txt` and exits **4**
+with an `ERROR:` block quoting up to five engine `ERROR::` lines when any are
+present. Two kinds of `ERROR::` line are **not** engine errors and are not
+counted:
+
+- lines whose message starts with the algorithm time
+  (`2013-10-07 09:31:00 ...`): LEAN routes the algorithm's own `Error()` /
+  `self.error()` output and handled simulation errors such as rejected orders
+  (`Order Error: ... Insufficient buying power ...`) through `Log.Error` with
+  that prefix ([`Messaging/Messaging.cs`](../Messaging/Messaging.cs),
+  `HandledError`). They are the algorithm's messages, appear in its result
+  packet, and a completed backtest that contains them is still a clean run;
+- `InvalidSource(): File not found` lines whose path is in the run's
+  `failed-data-requests-*.txt`: those files really are missing and the
+  data-monitor check above already owns them (exit code 3, or a warning with
+  `-AllowMissingData`). The same line for a file that is **not** in that list
+  means the file exists but produced no data, and it is counted.
+
+When a run has both a missing file and an engine error, exit code 3 is
+returned and both `ERROR:` blocks are printed. `-AllowEngineErrors` turns the
+engine-error block into a `WARNING:` and keeps LEAN's exit code. The check
+reads the log only; it does not inspect data files, and it relies on the
+message texts above, so an upstream change to them would add noise rather
+than change an exit code.
+
 ## 11. No QuantConnect account, login, API token, organization, Cloud, LEAN CLI, pip, Docker
 
 The MarketLab path is `dotnet <launcher dll>` on local files, and nothing else:
@@ -312,8 +442,11 @@ The MarketLab path is `dotnet <launcher dll>` on local files, and nothing else:
 - No environment variable can smuggle a credential in: LEAN's configuration
   layer reads only the JSON file and the command line (there is no
   `GetEnvironmentVariable` anywhere under `Configuration/`), and the helper
-  reads only `PATH`, `DOTNET_ROOT` and `ProgramFiles`, to find `dotnet`
-  (it sets `DOTNET_CLI_TELEMETRY_OPTOUT` and `DOTNET_NOLOGO`).
+  reads only `PATH`, `DOTNET_ROOT` and `ProgramFiles`, to find `dotnet`, plus
+  `PYTHONNET_PYDLL` and `PYTHONPATH` for Python runs (it sets
+  `DOTNET_CLI_TELEMETRY_OPTOUT` and `DOTNET_NOLOGO`, and, for the launcher
+  process of a Python run only — and for the pandas probe, which is the one
+  other process the helper starts — `PYTHONNET_PYDLL` and `PYTHONPATH`).
 - No LEAN CLI, no `pip install lean`, no Docker: the helper never invokes
   `lean`, `pip` or `docker`; neither executable is present on the qualifying
   machine. Upstream's readme recommends the CLI; this fork does not use it.
@@ -339,20 +472,34 @@ unchanged and unused; nothing claims it was removed.
 
 ## 13. Known limitations
 
-- Python algorithms are not qualified (Batch A observation 7); the language
-  switch is a pass-through only.
+- Python algorithms are qualified on the **Debug** build only, with the
+  runtime in section 9; the Release build aborts at Python shutdown (upstream
+  #9708) and is refused in pre-flight. `wrapt` is installed because the
+  upstream readme lists it; no engine source references it, so its necessity
+  was not verified. The pandas pre-flight probe needs a `python.exe` next to
+  the DLL and is skipped (with a warning) otherwise.
 - Shipped sample data is a small engine fixture under an AlgoSeek
   all-rights-reserved notice; it is not research data and must not be
   redistributed. Any real study needs its own data folder.
 - The helper checks a run's data requests only through LEAN's own data
-  monitor; it does not inspect the data files themselves.
+  monitor and its engine log; it does not inspect the data files themselves.
+  A corrupt or empty data file is therefore detected only because LEAN logs
+  it; a file with plausible but wrong numbers is not detected at all.
+- Python runs leave `__pycache__` directories beside the algorithm file and
+  in `Launcher\bin\<Configuration>` (CPython's own byte-code cache; ignored
+  by upstream's `.gitignore`).
 - The build helper wraps upstream's command-line build only; the Visual Studio
   IDE route in upstream's readme is not covered.
 - Outbound network traffic is not instrumented; the absence of remote calls is
   read from the configuration, the handler set and the logs.
-- Failure handling beyond the pre-flight checks and the missing-data check
-  (for example corrupt data files, algorithm exceptions, disk-full) is Batch C
-  scope.
-- One representative backtest (`BasicTemplateFrameworkAlgorithm`, the Batch A
-  algorithm) exercises this path; other algorithms and resolutions are not
-  qualified here.
+- Two representative backtests exercise this path (`BasicTemplateAlgorithm`
+  in C# and Python, and the Batch A `BasicTemplateFrameworkAlgorithm`), all on
+  SPY minute data for one week; other algorithms, symbols and resolutions are
+  not qualified here.
+- Exit code 1 is also what LEAN returns after an upstream cosmetic error: when
+  an algorithm fails to load, `BacktestingResultHandler.SendFinalResult()` logs
+  a `NullReferenceException` from `ParameterCountAnalysis` after the real
+  error; the real error is the first `ERROR::` line.
+- `tests\Test-MarketLabBacktesting.ps1` run against a directory that is not a
+  LEAN checkout ends with a terminating error (exit 1) instead of a tally; it
+  still fails, which is what the negative check requires.

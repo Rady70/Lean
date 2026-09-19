@@ -8,7 +8,9 @@ and the local data folder, then invokes the LEAN Launcher DIRECTLY
 (`dotnet QuantConnect.Lean.Launcher.dll ...`) with the backtesting environment
 and absolute local paths, with the process working directory set to a fresh
 per-run output directory under -OutputRoot. After the run it reads the engine's
-own data-monitor report and fails if any local data request failed.
+own data-monitor report and fails if any local data request failed, and it
+fails if the engine log of an exit-0 run contains ERROR:: lines (LEAN keeps
+going after a corrupt data file or a statistics failure and still exits 0).
 
 Pre-flight rejects (exit code 2, nothing launched) a config that is not
 backtesting-only: `environment` must be exactly "backtesting"; `live-mode`
@@ -24,20 +26,49 @@ real-time-handler BacktestingRealTimeHandler, transaction-handler
 BacktestingTransactionHandler, history-provider entries
 SubscriptionDataReaderHistoryProvider, data-provider DefaultDataProvider).
 
+Python algorithms (-AlgorithmLanguage Python) use LEAN's embedded Python.NET
+runtime, which loads the CPython DLL named by the PYTHONNET_PYDLL environment
+variable (Algorithm.Python/readme.md). Pre-flight requires -PythonDll (or an
+inherited PYTHONNET_PYDLL) naming an existing python3xx.dll, checks that pandas
+imports in the interpreter next to it (LEAN's PandasConverter imports pandas for
+every Python algorithm and reports only "type initializer ... threw an
+exception" when it is missing), and refuses the Release configuration: with
+Release binaries LEAN completes the backtest and writes every result, then
+aborts while shutting down the Python runtime (upstream issue
+QuantConnect/Lean#9708, Common/Python/PythonInitializer.cs; exit code
+-532462766 / 0xE0434352). Python runs are qualified on the Debug build only
+(-Configuration Debug). For the launcher process only, the script sets
+PYTHONNET_PYDLL to the resolved DLL and PYTHONPATH to the launcher build
+directory so that `from AlgorithmImports import *` resolves from the per-run
+working directory (upstream puts the build directory on PYTHONPATH the same
+way in .vscode/launch_research.sh and DockerfileJupyter; upstream appends,
+this script replaces an inherited value and warns, so the import path is
+exactly what was qualified). The pandas probe runs the interpreter next to
+the DLL with the same two variables; it is the only process started besides
+the launcher and it also runs under -DryRun.
+
 The script never calls the LEAN CLI (`lean`), Docker, pip, QuantConnect Cloud or
 any broker, needs no QuantConnect account, login, API token or organization,
 and reads no credential from the environment: the only environment variables
-it reads are PATH, DOTNET_ROOT and ProgramFiles (to find dotnet). LEAN's
-configuration layer itself does not read environment variables (no
-GetEnvironmentVariable in Configuration/).
+it reads are PATH, DOTNET_ROOT and ProgramFiles (to find dotnet), and, for
+Python runs, PYTHONNET_PYDLL and PYTHONPATH. LEAN's configuration layer itself
+does not read environment variables (no GetEnvironmentVariable in
+Configuration/).
 
 Exit codes (observable via $LASTEXITCODE when invoked with `-File`):
-  0  backtest completed, every local data request succeeded
+  0  backtest completed, every local data request succeeded, no engine
+     ERROR:: line in the run's log.txt
   1  LEAN reported that the algorithm did not complete (Launcher/Program.cs),
      or PowerShell rejected a parameter value before the script ran
   2  pre-flight validation failed; nothing was launched
   3  LEAN exited 0 but its data-monitor report counts failed data requests
      (suppressed to a warning by -AllowMissingData)
+  4  LEAN exited 0 but its engine log (log.txt) contains engine ERROR:: lines,
+     e.g. a corrupt or empty data file that was skipped or a statistics
+     failure (suppressed to a warning by -AllowEngineErrors). Not counted:
+     the algorithm's own Error() output and handled simulation errors such
+     as rejected orders (algorithm-time-prefixed lines), and missing-file
+     lines for files listed in failed-data-requests-*.txt (exit code 3's)
   other  LEAN's own exit code, propagated unchanged
 
 ERROR:/WARNING: lines are written to stderr, informational lines to stdout.
@@ -59,14 +90,20 @@ environment with live-mode false. Default: <LeanRoot>\MarketLab\config\backtesti
 Algorithm class name (`--algorithm-type-name`), not empty. Default: BasicTemplateFrameworkAlgorithm.
 
 .PARAMETER AlgorithmLanguage
-CSharp (default) or Python. Python is passed through but is NOT qualified by
-MarketLab (Batch A observation 7); it needs a Python 3.11 runtime that this
-script does not set up.
+CSharp (default) or Python. Python requires -AlgorithmLocation, -PythonDll (or
+PYTHONNET_PYDLL) and -Configuration Debug; see DESCRIPTION and
+MarketLab\README.md section 9.
 
 .PARAMETER AlgorithmLocation
 Assembly (.dll) or Python file containing the algorithm (`--algorithm-location`).
 Default: <LeanRoot>\Launcher\bin\<Configuration>\QuantConnect.Algorithm.CSharp.dll.
 Required when -AlgorithmLanguage is Python.
+
+.PARAMETER PythonDll
+Python runs only: the CPython 3.11 runtime DLL (python311.dll) that Python.NET
+loads, passed to the launcher process as PYTHONNET_PYDLL. Default: the
+PYTHONNET_PYDLL environment variable. The interpreter next to it must have the
+packages from Algorithm.Python/readme.md installed (pandas, wrapt).
 
 .PARAMETER DataFolder
 Historical data root (`--data-folder`). Must contain
@@ -81,9 +118,13 @@ data-monitor files all land in that run directory. Default: <LeanRoot>\MarketLab
 .PARAMETER AllowMissingData
 Downgrade failed data requests from exit code 3 to a warning.
 
+.PARAMETER AllowEngineErrors
+Downgrade engine ERROR:: lines in an exit-0 run from exit code 4 to a warning.
+
 .PARAMETER DryRun
 Validate everything, print the resolved paths and the exact command line, create
-nothing and exit 0.
+nothing and exit 0. (For Python, validation includes the pandas probe, which
+runs the interpreter next to -PythonDll.)
 
 .EXAMPLE
 pwsh -File MarketLab\scripts\run-backtest.ps1
@@ -93,6 +134,10 @@ the shipped sample data.
 .EXAMPLE
 pwsh -File MarketLab\scripts\run-backtest.ps1 -AlgorithmTypeName BasicTemplateAlgorithm
 Runs another algorithm compiled into QuantConnect.Algorithm.CSharp.dll.
+
+.EXAMPLE
+pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Debug -AlgorithmLanguage Python -AlgorithmTypeName BasicTemplateAlgorithm -AlgorithmLocation Algorithm.Python\BasicTemplateAlgorithm.py -PythonDll C:\Python311\python311.dll
+Runs the Python representative algorithm against the Debug build.
 
 .EXAMPLE
 pwsh -File MarketLab\scripts\run-backtest.ps1 -DryRun
@@ -112,9 +157,11 @@ param(
     [ValidateSet('CSharp', 'Python')]
     [string]$AlgorithmLanguage = 'CSharp',
     [string]$AlgorithmLocation,
+    [string]$PythonDll,
     [string]$DataFolder,
     [string]$OutputRoot,
     [switch]$AllowMissingData,
+    [switch]$AllowEngineErrors,
     [switch]$DryRun
 )
 
@@ -128,6 +175,9 @@ $env:DOTNET_NOLOGO = '1'
 
 $script:ExitPreflight = 2
 $script:ExitMissingData = 3
+$script:ExitEngineErrors = 4
+# "<python version> <pandas version>" from the Python pre-flight probe, when it ran.
+$script:PythonProbe = $null
 
 # The qualified backtesting handler set (Batch B). Values are LEAN type names;
 # LEAN's Composer accepts the simple name, the namespace-qualified name or the
@@ -391,6 +441,23 @@ if ($null -ne $leanRootPath) {
     $algorithmLocationPath = Resolve-InputPath 'AlgorithmLocation' $AlgorithmLocation
 }
 
+# Python runs: the CPython DLL for Python.NET. Read from -PythonDll, else from
+# the inherited PYTHONNET_PYDLL (the upstream-documented setting). Only used,
+# validated and passed on when the language is Python.
+$pythonDllPath = $null
+$pythonDllSource = '-PythonDll'
+$pythonDllGiven = $false
+if ($AlgorithmLanguage -eq 'Python') {
+    if ([string]::IsNullOrEmpty($PythonDll) -and -not [string]::IsNullOrEmpty($env:PYTHONNET_PYDLL)) {
+        $PythonDll = $env:PYTHONNET_PYDLL
+        $pythonDllSource = 'PYTHONNET_PYDLL'
+    }
+    if (-not [string]::IsNullOrEmpty($PythonDll)) {
+        $pythonDllGiven = $true
+        $pythonDllPath = Resolve-InputPath 'PythonDll' $PythonDll
+    }
+}
+
 $dataFolderPath = $null
 if ($null -ne $leanRootPath) {
     if ([string]::IsNullOrEmpty($DataFolder)) {
@@ -431,10 +498,75 @@ if (-not (Test-Path -LiteralPath $launcherDll -PathType Leaf)) {
 }
 
 if ($AlgorithmLanguage -eq 'Python' -and -not $algorithmLocationSupplied) {
-    $problems.Add("-AlgorithmLanguage Python requires -AlgorithmLocation <algorithm .py file>. (Python algorithms are not qualified by MarketLab; see MarketLab\README.md.)")
+    $problems.Add("-AlgorithmLanguage Python requires -AlgorithmLocation <algorithm .py file> (see MarketLab\README.md section 9).")
 }
 if (-not (Test-Path -LiteralPath $algorithmLocationPath -PathType Leaf)) {
     $problems.Add("Algorithm location `"$algorithmLocationPath`" does not exist. Build first, or pass -AlgorithmLocation <assembly or .py file>.")
+}
+
+# Python runtime pre-flight (Batch C). Everything here is checked before
+# launch because LEAN's own diagnostics for these cases are late or opaque.
+$pythonExe = $null
+if ($AlgorithmLanguage -eq 'Python') {
+    if ($Configuration -ne 'Debug') {
+        $problems.Add("-AlgorithmLanguage Python requires -Configuration Debug. With the $Configuration build LEAN completes the backtest and writes every result, then aborts while shutting down the Python runtime (upstream QuantConnect/Lean issue #9708: Common/Python/PythonInitializer.cs Shutdown() holds a Py.GIL() handle it never disposes, and the optimizing JIT lets Python.NET finalize it during PythonEngine.Shutdown; process exit code -532462766 / 0xE0434352). Python runs are qualified on the Debug build only: build with MarketLab\scripts\build.ps1 -Configuration Debug and pass -Configuration Debug.")
+    }
+    if (-not $pythonDllGiven) {
+        $problems.Add("-AlgorithmLanguage Python requires -PythonDll <path to python311.dll> or the PYTHONNET_PYDLL environment variable (Algorithm.Python/readme.md). Python.NET cannot start without it (Runtime.PythonDLL was not set). See MarketLab\README.md section 9 for the qualified runtime.")
+    }
+    elseif ($null -eq $pythonDllPath) {
+        # Unusable path: already reported by Resolve-InputPath.
+    }
+    elseif (-not (Test-Path -LiteralPath $pythonDllPath -PathType Leaf)) {
+        $problems.Add("Python DLL `"$pythonDllPath`" (from $pythonDllSource) does not exist. Point -PythonDll / PYTHONNET_PYDLL at the python311.dll of a CPython 3.11 installation (see MarketLab\README.md section 9).")
+    }
+    else {
+        # LEAN's PandasConverter imports pandas in its static constructor for
+        # every Python algorithm (Common/Python/PandasConverter.cs) and the only
+        # engine diagnostic when it is missing is "The type initializer for
+        # 'QuantConnect.Python.PandasConverter' threw an exception". The
+        # interpreter that owns the DLL sits next to it in every standard
+        # Windows CPython layout; when it is there, import pandas through it,
+        # with the same PYTHONNET_PYDLL/PYTHONPATH the launcher process gets so
+        # that the probe sees the same module search path. This is the one
+        # process the script starts besides the launcher; it runs `-c` code
+        # only, cannot prompt, and makes no network call. -DryRun runs it too.
+        $pythonExe = Join-Path ([System.IO.Path]::GetDirectoryName($pythonDllPath)) 'python.exe'
+        if (Test-Path -LiteralPath $pythonExe -PathType Leaf) {
+            $probeOutput = ''
+            $probeExit = $null
+            $previousErrorActionPreference = $ErrorActionPreference
+            $probePreviousDll = $env:PYTHONNET_PYDLL
+            $probePreviousPath = $env:PYTHONPATH
+            try {
+                $ErrorActionPreference = 'Continue'
+                $env:PYTHONNET_PYDLL = $pythonDllPath
+                $env:PYTHONPATH = $launcherDir
+                $probeOutput = (& $pythonExe -c 'import sys, pandas; print(sys.version.split()[0], pandas.__version__)' 2>&1 | Out-String).Trim()
+                $probeExit = $LASTEXITCODE
+            }
+            catch {
+                $probeOutput = $_.Exception.Message
+                $probeExit = -1
+            }
+            finally {
+                $ErrorActionPreference = $previousErrorActionPreference
+                $env:PYTHONNET_PYDLL = $probePreviousDll
+                $env:PYTHONPATH = $probePreviousPath
+            }
+            if ($probeExit -ne 0) {
+                $lastLine = ''
+                if (-not [string]::IsNullOrWhiteSpace($probeOutput)) { $lastLine = ($probeOutput -split "`r?`n")[-1] }
+                $problems.Add("Python runtime `"$pythonExe`" (next to $pythonDllSource `"$pythonDllPath`") cannot import pandas ($lastLine). LEAN needs pandas for every Python algorithm and would only report `"The type initializer for 'QuantConnect.Python.PandasConverter' threw an exception`". Install the packages from Algorithm.Python/readme.md into that interpreter (python.exe -m pip install pandas==2.2.3 wrapt==1.16.0) or point -PythonDll at an interpreter that has them.")
+            }
+            else {
+                $script:PythonProbe = $probeOutput
+            }
+        }
+        else {
+            Write-WarningLine "No python.exe next to `"$pythonDllPath`"; the pandas pre-flight check was skipped. LEAN will fail at algorithm creation if pandas is not importable."
+        }
+    }
 }
 
 if (-not (Test-Path -LiteralPath $dataFolderPath -PathType Container)) {
@@ -554,10 +686,6 @@ if ($problems.Count -gt 0) {
     exit $script:ExitPreflight
 }
 
-if ($AlgorithmLanguage -eq 'Python') {
-    Write-WarningLine 'Python algorithms are passed through to LEAN but are NOT qualified by MarketLab (no Python runtime is configured by this script).'
-}
-
 # ----------------------------------------------------------------------------
 # Run directory and command line
 # ----------------------------------------------------------------------------
@@ -598,6 +726,13 @@ Write-Info "  launcher:         $launcherDll"
 Write-Info "  config file:      $configPath"
 Write-Info "  algorithm:        $AlgorithmTypeName ($AlgorithmLanguage) from $algorithmLocationPath"
 Write-Info "  data folder:      $dataFolderPath"
+if ($AlgorithmLanguage -eq 'Python') {
+    Write-Info "  PYTHONNET_PYDLL:  $pythonDllPath (from $pythonDllSource)"
+    Write-Info "  PYTHONPATH:       $launcherDir"
+    if ($null -ne $script:PythonProbe) {
+        Write-Info "  python / pandas:  $($script:PythonProbe) ($pythonExe)"
+    }
+}
 Write-Info "  run directory:    $runDir"
 Write-Info "  log file:         $logPath"
 Write-Info "  working dir:      $runDir"
@@ -630,6 +765,20 @@ Write-Info "Launching LEAN at $($startedUtc.ToString('yyyy-MM-ddTHH:mm:ssZ')) ..
 # mid-run. Native output is never an error for this script, so the preference
 # is relaxed for the duration of the launcher call only.
 $previousErrorActionPreference = $ErrorActionPreference
+# Python runs: hand Python.NET its DLL and put the launcher build directory on
+# the embedded interpreter's path (AlgorithmImports.py lives there; the working
+# directory is the run directory, not Launcher\bin\<Configuration>). Both
+# variables are set for this process only and restored afterwards; the caller's
+# environment is not changed.
+$previousPythonDll = $env:PYTHONNET_PYDLL
+$previousPythonPath = $env:PYTHONPATH
+if ($AlgorithmLanguage -eq 'Python') {
+    if (-not [string]::IsNullOrEmpty($previousPythonPath) -and $previousPythonPath -ne $launcherDir) {
+        Write-WarningLine "Inherited PYTHONPATH `"$previousPythonPath`" is replaced by `"$launcherDir`" for the launcher process. Use the config key python-additional-paths for extra import paths."
+    }
+    $env:PYTHONNET_PYDLL = $pythonDllPath
+    $env:PYTHONPATH = $launcherDir
+}
 Push-Location -LiteralPath $runDir
 try {
     $ErrorActionPreference = 'Continue'
@@ -638,6 +787,8 @@ try {
 }
 finally {
     $ErrorActionPreference = $previousErrorActionPreference
+    $env:PYTHONNET_PYDLL = $previousPythonDll
+    $env:PYTHONPATH = $previousPythonPath
     Pop-Location
 }
 $elapsed = [DateTime]::UtcNow - $startedUtc
@@ -698,6 +849,87 @@ else {
                 else {
                     Write-ErrorLine "LEAN's own exit code $leanExitCode is propagated unchanged."
                 }
+            }
+        }
+    }
+}
+
+# ----------------------------------------------------------------------------
+# Post-run engine-error check (ERROR:: lines in the engine log)
+# ----------------------------------------------------------------------------
+# LEAN exits 0 whenever the algorithm reaches Completed, even when the engine
+# logged errors along the way and carried on: a corrupt data file is skipped
+# (Engine/DataFeeds/ZipDataCacheProvider.cs logs "Corrupt zip file/entry" and
+# fill-forward covers the gap; the data monitor still counts the request as
+# succeeded), an existing file that yields no data is reported only as
+# "InvalidSource(): File not found" (Engine/DataFeeds/SubscriptionDataSourceReader.cs;
+# the data monitor counted the request as succeeded because the file opened),
+# and a statistics failure leaves the statistics block empty
+# (Engine/Results/BaseResultsHandler.cs GenerateStatisticsResults). All were
+# observed in Batch C with helper exit code 0. Every qualified clean run has
+# zero ERROR:: lines. Two kinds of ERROR:: line are NOT engine errors and are
+# not counted:
+#  - lines whose message starts with the algorithm time ("2013-10-07 09:31:00 ..."):
+#    LEAN routes the algorithm's own Error() output and handled simulation
+#    errors such as rejected orders through Log.Error with that prefix
+#    (Messaging/Messaging.cs HandledError; BaseResultsHandler.cs
+#    PrefixWithAlgorithmTime). They are the algorithm's messages and appear in
+#    its result packet; a completed backtest with them is still a clean run;
+#  - "InvalidSource(): File not found" lines whose path is in the run's
+#    failed-data-requests list: those files do not exist and the data-monitor
+#    check above already owns them (exit 3 / -AllowMissingData). The same line
+#    for a file that is NOT in that list means the file exists but produced no
+#    data (empty entry, unreadable content) and is counted.
+if ($leanExitCode -eq 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+    $missingFiles = @()
+    $missingList = Get-ChildItem -LiteralPath $runDir -Filter 'failed-data-requests-*.txt' -File -ErrorAction SilentlyContinue |
+        Sort-Object -Property Name -Descending | Select-Object -First 1
+    if ($null -ne $missingList) {
+        try { $missingFiles = @(Get-Content -LiteralPath $missingList.FullName | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.Trim().Replace('/', '\') }) }
+        catch { $missingFiles = @() }
+    }
+    $missingMarker = 'SubscriptionDataSourceReader.InvalidSource(): File not found: '
+    $engineErrors = @()
+    try {
+        $engineErrors = @([System.IO.File]::ReadAllLines($logPath) | Where-Object {
+            $index = $_.IndexOf(' ERROR:: ', [System.StringComparison]::Ordinal)
+            if ($index -lt 0) { return $false }
+            $message = $_.Substring($index + 9)
+            if ($message -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ') { return $false }
+            $markerIndex = $message.IndexOf($missingMarker, [System.StringComparison]::Ordinal)
+            if ($markerIndex -ge 0) {
+                $path = $message.Substring($markerIndex + $missingMarker.Length).Trim().Replace('/', '\')
+                foreach ($missing in $missingFiles) {
+                    if ($path.EndsWith($missing, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+                }
+            }
+            return $true
+        })
+    }
+    catch {
+        Write-WarningLine "Could not read `"$logPath`" for the engine-error check: $($_.Exception.Message)."
+    }
+    if ($engineErrors.Count -gt 0) {
+        $lines = @(
+            "$($engineErrors.Count) engine ERROR:: line(s) in `"$logPath`" although LEAN exited 0: the algorithm completed, but the engine reported errors on the way (for example a corrupt or empty data file it skipped, or a failure while generating the statistics), so the results are not a clean backtest.",
+            "Fix: read the ERROR:: lines in the log and correct the cause; rerun with -AllowEngineErrors only if the errors are understood and acceptable."
+        )
+        $shown = 0
+        foreach ($e in $engineErrors) {
+            if ($shown -ge 5) { $lines += "  ... ($($engineErrors.Count - $shown) more in the log)"; break }
+            $text = $e
+            if ($text.Length -gt 240) { $text = $text.Substring(0, 240) + ' ...' }
+            $lines += "  $text"
+            $shown++
+        }
+        if ($AllowEngineErrors) {
+            foreach ($l in $lines) { Write-WarningLine $l }
+            Write-WarningLine "-AllowEngineErrors was given; not changing the exit code."
+        }
+        else {
+            foreach ($l in $lines) { Write-ErrorLine $l }
+            if ($exitCode -eq 0) {
+                $exitCode = $script:ExitEngineErrors
             }
         }
     }
