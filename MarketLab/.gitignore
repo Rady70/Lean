@@ -1,0 +1,3 @@
+# Generated backtest runs (results, log.txt, storage/, data-monitor files).
+# Kept out of Git without touching the upstream .gitignore.
+output/
