@@ -107,6 +107,27 @@ loads, passed to the launcher process as PYTHONNET_PYDLL. Default: the
 PYTHONNET_PYDLL environment variable. The interpreter next to it must have the
 packages from Algorithm.Python/readme.md installed (pandas, wrapt).
 
+.PARAMETER Parameters
+Algorithm parameters, one `key:value` string each (for example
+-Parameters ema-fast:10,ema-slow:20), passed to LEAN as its own
+`--parameters key:value,key:value` option (Configuration/LeanArgumentParser.cs)
+and read by the algorithm through QCAlgorithm.GetParameter / the [Parameter]
+attribute. LEAN merges them over the config file's "parameters" object
+(Configuration/Config.cs), so a key given here overrides the same key in the
+file and the file's other keys stay in effect. LEAN's parser splits the option
+value on ',' and each pair on ':' and keeps only the text after the first ':'
+(Configuration/ApplicationParser.cs); the script splits the same way (one
+string with commas or several strings both work), so ',' can never be part of
+a key or value, and a value containing ':' is refused in pre-flight (exit 2),
+as are an empty key or value, a key or value with leading or trailing
+whitespace (neither LEAN nor this script trims, so " ema-slow" would never
+match the algorithm's "ema-slow" and the default would be used silently), an
+entry containing a double quote, a list that contains whitespace anywhere
+and whose last entry ends with a backslash (Windows PowerShell 5.1 does not
+pass either to the launcher intact, so both are refused on every shell) and
+a repeated key, compared exactly as LEAN compares keys (LEAN logs an engine
+ERROR:: for an empty value and silently keeps the last duplicate). Default: none.
+
 .PARAMETER DataFolder
 Historical data root (`--data-folder`). Must contain
 market-hours\market-hours-database.json and
@@ -142,6 +163,11 @@ pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Debug -AlgorithmLan
 Runs the Python representative algorithm against the Debug build.
 
 .EXAMPLE
+pwsh -File MarketLab\scripts\run-backtest.ps1 -AlgorithmTypeName ParameterizedAlgorithm -Parameters ema-fast:10,ema-slow:20
+Runs a parameterized algorithm with two parameter values passed through LEAN's
+--parameters option (read by GetParameter / [Parameter("ema-fast")]).
+
+.EXAMPLE
 pwsh -File MarketLab\scripts\run-backtest.ps1 -DryRun
 Shows what would be run without launching LEAN (a Python dry run still runs
 the pandas probe).
@@ -161,6 +187,7 @@ param(
     [string]$AlgorithmLanguage = 'CSharp',
     [string]$AlgorithmLocation,
     [string]$PythonDll,
+    [string[]]$Parameters,
     [string]$DataFolder,
     [string]$OutputRoot,
     [switch]$AllowMissingData,
@@ -572,6 +599,77 @@ if ($AlgorithmLanguage -eq 'Python') {
     }
 }
 
+# Algorithm parameters (-Parameters), rendered as LEAN's own
+# `--parameters key:value,key:value` (Configuration/LeanArgumentParser.cs).
+# LEAN splits that single value on ',' and each pair on ':' and keeps only the
+# text after the first ':' (Configuration/ApplicationParser.cs). The same
+# splitting is done here first: a `-File` invocation delivers
+# `-Parameters ema-fast:10,ema-slow:20` as one string, an in-session caller
+# may pass an array, and both must mean the same pairs. A pair whose value
+# contains ':' would be truncated by LEAN, an empty value makes
+# ParameterAttribute.ApplyAttributes log an engine ERROR:: and skip the key
+# (which the post-run check would turn into exit code 4), a whitespace-only
+# value fails the [Parameter] conversion instead (the algorithm-time "Error
+# applying parameter values" of the README), a repeated key is silently
+# overwritten, and a '"' anywhere, or a list with whitespace anywhere whose
+# last entry ends in '\', is not delivered intact to the launcher by Windows
+# PowerShell 5.1 (it does not escape embedded quotes for native executables;
+# observed: q:a"b arrived as q:ab and p:hello world\ as p:hello world"); all
+# of these are refused. Keys are compared ordinally, as LEAN's dictionaries
+# do (A and a are two keys).
+$parameterPairs = @()
+if ($null -ne $Parameters -and $Parameters.Count -gt 0) {
+    $seenKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($text in @($Parameters | ForEach-Object { ([string]$_).Split(',') })) {
+        $colon = $text.IndexOf(':')
+        $key = if ($colon -ge 0) { $text.Substring(0, $colon) } else { $text }
+        $value = if ($colon -ge 0) { $text.Substring($colon + 1) } else { '' }
+        if ($colon -lt 0 -or [string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
+            $problems.Add("-Parameters entry `"$text`" is not key:value with a non-empty key and value. LEAN reads --parameters as comma-separated key:value pairs (Configuration/ApplicationParser.cs); it logs an engine ERROR:: for an empty value and fails the [Parameter] conversion for a whitespace-only one; write for example -Parameters ema-fast:10,ema-slow:20.")
+            continue
+        }
+        # Neither LEAN's parser nor this script trims: "ema-fast:10, ema-slow:20"
+        # would hand the algorithm the key " ema-slow", which [Parameter("ema-slow")]
+        # and GetParameter("ema-slow") never match, so the in-code default would be
+        # used with exit code 0 and no message (observed in Batch D). Refuse it
+        # instead of silently rewriting what LEAN receives.
+        if ($key -ne $key.Trim() -or $value -ne $value.Trim()) {
+            $problems.Add("-Parameters entry `"$text`" has leading or trailing whitespace in its key or value. LEAN keeps the text exactly as given (Configuration/ApplicationParser.cs), so the algorithm would look up a different key or receive a padded value and silently use its default; write the pairs without spaces, for example -Parameters ema-fast:10,ema-slow:20.")
+            continue
+        }
+        if ($value.IndexOf(':') -ge 0) {
+            $problems.Add("-Parameters entry `"$text`" has a second ':' in its value. LEAN keeps only the text between the first and the second ':' (Configuration/ApplicationParser.cs), so this value cannot be passed on the command line; put it in the `"parameters`" object of a config copy passed with -Config instead.")
+            continue
+        }
+        # Windows PowerShell 5.1 passes arguments to native executables without
+        # escaping embedded double quotes, so q:a"b would reach LEAN as q:ab with
+        # exit code 0 and no message (observed in Batch D; pwsh 7 delivers it
+        # intact). The value is refused on both shells so the helper behaves the
+        # same everywhere; a quote has no place in a LEAN parameter value anyway.
+        if ($text.IndexOf('"') -ge 0) {
+            $problems.Add("-Parameters entry `"$text`" contains a double quote. Windows PowerShell 5.1 does not deliver an embedded `"`"`" intact to the launcher (the algorithm would receive a different value with exit code 0), so quotes are refused on every shell; put such a value in the `"parameters`" object of a config copy passed with -Config instead.")
+            continue
+        }
+        if (-not $seenKeys.Add($key)) {
+            $problems.Add("-Parameters entry `"$text`" repeats the key `"$key`" (keys are compared exactly, as LEAN does). LEAN would silently keep the last value; pass each key once.")
+            continue
+        }
+        $parameterPairs += $text
+    }
+    # The pairs travel as ONE launcher argument. When that argument contains
+    # whitespace anywhere, Windows PowerShell 5.1 wraps the whole of it in
+    # quotes, and a trailing backslash then escapes the closing quote
+    # (observed in Batch D: p:hello world\ arrived as p:hello world", and
+    # ema-fast:10,p:hello world,z:dir\ delivered z as dir"; pwsh 7 delivers
+    # both intact). Refused on every shell, on the joined value.
+    if ($parameterPairs.Count -gt 0) {
+        $joined = $parameterPairs -join ','
+        if ($joined.EndsWith('\') -and $joined -match '\s') {
+            $problems.Add("-Parameters list `"$joined`" contains whitespace and its last entry ends with a backslash. Windows PowerShell 5.1 quotes the whole --parameters argument when it contains whitespace, and the trailing backslash then escapes the closing quote, so the algorithm would receive a different value with exit code 0; it is refused on every shell. Drop the trailing backslash, move that entry away from the end, or use the `"parameters`" object of a config copy passed with -Config.")
+        }
+    }
+}
+
 if (-not (Test-Path -LiteralPath $dataFolderPath -PathType Container)) {
     $problems.Add("Data folder `"$dataFolderPath`" is not a directory. Pass -DataFolder <LEAN data root> (the checkout ships one at <LeanRoot>\Data).")
 }
@@ -719,6 +817,9 @@ $launcherArgs = @(
     '--algorithm-location', $algorithmLocationPath,
     '--close-automatically', 'true'
 )
+if ($parameterPairs.Count -gt 0) {
+    $launcherArgs += @('--parameters', ($parameterPairs -join ','))
+}
 $commandLine = Format-CommandLine $dotnet $launcherArgs
 
 Write-Info 'MarketLab LEAN local backtest'
@@ -728,6 +829,9 @@ Write-Info "  dotnet:           $dotnet"
 Write-Info "  launcher:         $launcherDll"
 Write-Info "  config file:      $configPath"
 Write-Info "  algorithm:        $AlgorithmTypeName ($AlgorithmLanguage) from $algorithmLocationPath"
+if ($parameterPairs.Count -gt 0) {
+    Write-Info "  parameters:       $($parameterPairs -join ',')"
+}
 Write-Info "  data folder:      $dataFolderPath"
 if ($AlgorithmLanguage -eq 'Python') {
     Write-Info "  PYTHONNET_PYDLL:  $pythonDllPath (from $pythonDllSource)"

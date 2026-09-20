@@ -31,11 +31,23 @@ codes you can read from `$LASTEXITCODE` when invoked with `-File`.
 
 ## 1. Prerequisites (established in Batch A)
 
-- Windows, Git checkout of this fork.
+- Windows, Git, and a checkout of this fork (`git clone
+  https://github.com/Rady70/Lean.git`, about 850 MB including `.git`; the
+  clone is the first of the setup-time network steps below).
 - .NET SDK 10.x (`dotnet`). The scripts look for it on `PATH`, then
   `$env:DOTNET_ROOT`, then `%ProgramFiles%\dotnet\dotnet.exe`, and stop with an
   `ERROR:` if none exists.
-- Network access to the NuGet feed for `dotnet restore` only.
+- Network access to the NuGet feed for `dotnet restore`. Which feed is
+  machine state, not repository state: `dotnet restore` applies the
+  user-level `%APPDATA%\NuGet\NuGet.Config` (or NuGet's built-in nuget.org
+  default when none exists) and does **not** apply the repository's tracked
+  `.nuget\NuGet.config` (an upstream artefact pointing at an empty
+  `LocalPackages\`). A fresh package cache pulls about 650 MB (86 package
+  versions) from `api.nuget.org`; NuGet also keeps an HTTP cache under
+  `%LOCALAPPDATA%\NuGet\v3-cache` (about 130 MB).
+- Disk: about 3.4 GB for a clean setup — the clone, both build
+  configurations (`bin\`/`obj\` about 1.8 GB), the package cache and the
+  HTTP cache — plus the run directories you keep (section 8).
 - For Python algorithms only (section 9): a CPython 3.11 installation with the
   packages named in `Algorithm.Python\readme.md` (pandas, wrapt) and the
   **Debug** build (section 2). Obtaining CPython and installing those packages
@@ -182,9 +194,11 @@ The helper, in order:
        --algorithm-location <abs dll> --close-automatically true
    ```
 
-   The printed line is exactly this call, rendered so it can be pasted into a
-   PowerShell prompt (arguments with spaces or PowerShell-special characters are
-   single-quoted). All options are declared in
+   With `-Parameters` (section 9) the call ends with one more option,
+   `--parameters key:value,key:value`. The printed line is exactly this call,
+   rendered so it can be pasted into a PowerShell prompt (arguments with
+   spaces or PowerShell-special characters are single-quoted). All options
+   are declared in
    [`Configuration/LeanArgumentParser.cs`](../Configuration/LeanArgumentParser.cs);
    there is no `live-mode` option, that key comes from the validated file only;
 5. reads the engine's own `data-monitor-report-*.json` from the run directory
@@ -261,7 +275,7 @@ One key drives all of this: `results-destination-folder`
 | Kind | Location | Git |
 |---|---|---|
 | Tracked source and configuration | everything under `MarketLab\` except `output\`; upstream source; tracked sample files under `Data\` | tracked |
-| Local mutable data | files you add under `Data\` (or any `-DataFolder`); NuGet package cache | ignored (`*Data/*` upstream) / outside the repo |
+| Local mutable data | files you add under `Data\` (or any `-DataFolder`); NuGet package cache (`%USERPROFILE%\.nuget\packages`, or `$env:NUGET_PACKAGES`) and NuGet's HTTP cache (`%LOCALAPPDATA%\NuGet\v3-cache`) | ignored (`*Data/*` upstream) / outside the repo |
 | Build output | `*\bin\`, `*\obj\`, `Launcher\bin\Release\` | ignored (upstream `.gitignore`) |
 | Generated runs | `MarketLab\output\` (results, logs, `storage\`, data-monitor files) | ignored (`MarketLab\.gitignore`) |
 | Temporary test scratch | `%TEMP%\marketlab-tests-<guid>\` (fixtures and the `-IncludeSmoke` run of `tests\Test-MarketLabBacktesting.ps1`); removed by the test when it ends | outside the repo |
@@ -273,7 +287,7 @@ none exists to protect.
 ## 9. Changing the algorithm
 
 Only supported LEAN inputs are used (`--algorithm-type-name`,
-`--algorithm-language`, `--algorithm-location`):
+`--algorithm-language`, `--algorithm-location`, `--parameters`):
 
 - Another C# algorithm from the shipped assembly:
   `-AlgorithmTypeName BasicTemplateAlgorithm` (any class in
@@ -281,12 +295,91 @@ Only supported LEAN inputs are used (`--algorithm-type-name`,
   `Algorithm.CSharp\`).
 - Your own C# assembly: `-AlgorithmLocation <path\to\YourAlgorithms.dll>` with
   the matching `-AlgorithmTypeName`.
-- Algorithm parameters: the `parameters` object in the config file (read
-  through `QCAlgorithm.GetParameter`); copy `config\backtesting.json` and pass
-  `-Config <copy>` to keep the tracked file unchanged.
-- Python algorithms: see below.
+- Algorithm parameters (`QCAlgorithm.GetParameter`, `self.get_parameter`,
+  or a C# field with `[Parameter("name")]`): see the next subsection.
+- Python algorithms: see the subsection after it.
+
+### Algorithm parameters (qualified in Batch D)
+
+LEAN hands an algorithm a flat string dictionary
+(`AlgorithmNodePacket.Parameters`, built in
+[`Queues/JobQueue.cs`](../Queues/JobQueue.cs) from the config key
+`parameters` and applied by `BacktestingSetupHandler` through
+`QCAlgorithm.SetParameters`). Two supported ways feed it:
+
+- **Config file** (upstream's mechanism): the `parameters` object of the
+  config file, `"parameters": { "ema-fast": 10, "ema-slow": 20 }`. The
+  tracked `config\backtesting.json` carries an empty object; copy it, edit
+  the copy and pass `-Config <copy>` so the tracked file stays unchanged.
+- **`-Parameters`** (helper option): `-Parameters ema-fast:10,ema-slow:20`,
+  rendered as LEAN's own command-line option `--parameters
+  ema-fast:10,ema-slow:20`
+  ([`Configuration/LeanArgumentParser.cs`](../Configuration/LeanArgumentParser.cs)).
+  LEAN merges command-line values over the config file's object
+  ([`Configuration/Config.cs`](../Configuration/Config.cs),
+  `MergeCommandLineArgumentsWithConfiguration`): a key given here overrides
+  the same key in the file, the file's other keys stay in effect. The dry
+  run prints a `parameters:` line and the option in the command line.
+
+Both routes deliver the same dictionary; the result packet's
+`algorithmConfiguration.parameters` (in `<Algorithm>.json` and
+`-summary.json`) is exactly what the algorithm received, which is the way to
+confirm a value arrived. Values are strings: `[Parameter]` fields are
+converted to the field type, `GetParameter(name, default)` parses to the
+default's type and returns the default when parsing fails.
+
+What the command line cannot carry intact, and what pre-flight therefore
+refuses (exit 2, LEAN not launched): LEAN splits the option value on `,` and
+each pair on `:` and keeps only the text after the first `:`
+([`Configuration/ApplicationParser.cs`](../Configuration/ApplicationParser.cs)),
+so a value containing `:` is refused (use the config route), as are an entry
+without `:`, an empty key or value (LEAN logs an engine `ERROR::` for an
+empty value and skips it, which the post-run check would report as exit
+code 4; a whitespace-only value fails the `[Parameter]` conversion instead),
+a key or value with leading or trailing whitespace (neither LEAN nor the
+helper trims: `ema-fast:10, ema-slow:20` would hand the algorithm the key
+`" ema-slow"`, which `[Parameter("ema-slow")]` and `GetParameter("ema-slow")`
+never match, so the in-code default would be used with exit code 0 and no
+message — observed in Batch D before the refusal was added), an entry
+containing a double quote, a list that contains whitespace anywhere and
+whose last entry ends with a backslash (Windows PowerShell 5.1 passes
+neither to the launcher intact: `q:a"b` arrived as `q:ab`, `p:hello world\`
+as `p:hello world"` and `ema-fast:10,p:hello world,z:dir\` delivered `z` as
+`dir"`, each with exit code 0 — also observed in Batch D; PowerShell 7
+delivers all of them correctly, but the helper behaves the same on both
+shells, because the pairs travel as one quoted argument), and a repeated key (LEAN
+silently keeps the last; keys are compared exactly, as LEAN compares them,
+so `A` and `a` are two keys). Everything else is delivered as typed: values
+with spaces, `=`, `;`, `|`, `&`, parentheses, braces, `$`, backticks,
+non-ASCII text and a backslash not at the end were checked in Batch D. The
+helper splits on `,` the same way LEAN does, so `-Parameters a:1,b:2` from a
+`-File` command line and `-Parameters 'a:1','b:2'` from inside PowerShell
+mean the same pairs; with `-File`, quote a list that contains a space
+(`-Parameters "name:hello world,ema-fast:10"`), otherwise the shell splits it
+into separate arguments and the second part binds to the next positional
+parameter (`-LeanRoot`), which the helper then rejects with a confusing
+message.
+
+Behaviour observed in Batch D that the helper does not change:
+
+- a key the algorithm never reads is accepted silently and still listed in
+  `algorithmConfiguration.parameters`;
+- a value a C# `[Parameter]` field cannot convert (`ema-fast:abc`) makes
+  `SetParameters` log `Error applying parameter values: ...` as an
+  algorithm-time-prefixed error (exit code stays 0) and **stops applying the
+  remaining attributed fields**, which keep their in-code defaults
+  ([`Common/Parameters/ParameterAttribute.cs`](../Common/Parameters/ParameterAttribute.cs));
+  a Python `get_parameter(name, default)` with the same input returns the
+  default for that key only, with no message at all;
+- upstream's shipped `Launcher/config.json` (which the MarketLab path does
+  not read) sets `ema-fast: 10, ema-slow: 20`, and upstream's regression
+  expectations for `ParameterizedAlgorithm` were produced with those
+  values, not with the algorithm's in-code defaults (100/200).
 
 ### Python algorithms (qualified in Batch C on the Debug build)
+
+`-Parameters` applies to Python runs unchanged (the same `--parameters`
+option; `self.get_parameter("ema-fast", 100)`).
 
 LEAN runs Python algorithms through its embedded Python.NET runtime
 (`QuantConnect.pythonnet`, [`AlgorithmFactory/Loader.cs`](../AlgorithmFactory/Loader.cs),
@@ -389,6 +482,27 @@ The MarketLab path makes this visible in three places:
 
 A data folder that is missing the auxiliary databases, or that does not exist,
 is rejected in pre-flight (exit 2) before anything runs.
+
+Two further shapes were observed in Batch D:
+
+- **History requests** for files that do not exist behave the same way: the
+  `History(...)` call returns an empty result (no exception) and each probed
+  file is one failed data request, so the run exits 3 although the
+  algorithm completed. The shipped `HistoryAlgorithm` shows this: its demo
+  custom-data type builds minute-resolution paths that do not exist, and its
+  deliberate history request for the user-defined universe symbols probes
+  `qc-universe-userdefined-*` files (39 failed requests, all 28
+  upstream-expected statistics still reproduced); `-AllowMissingData` gives
+  exit 0 when that is understood.
+- **A symbol whose map file starts after the backtest period** (for
+  example `GOOG` in October 2013, `map_files\goog.csv` first date
+  2014-03-27) is silently moved to that start date: no file is requested,
+  no data request fails, the algorithm just never receives the symbol and
+  the only signal is the pair of `Debug` lines at the end of the algorithm
+  log (`The starting dates for the following symbols have been adjusted to
+  match their map files first date`). A symbol whose map file covers the
+  period but whose files are absent (`AAPL` minute data in October 2013)
+  produces the missing-file lines and exit 3 as described above.
 
 ### Corrupt data and other errors LEAN carries on from (exit code 4)
 
@@ -500,10 +614,26 @@ unchanged and unused; nothing claims it was removed.
   IDE route in upstream's readme is not covered.
 - Outbound network traffic is not instrumented; the absence of remote calls is
   read from the configuration, the handler set and the logs.
-- Two representative backtests exercise this path (`BasicTemplateAlgorithm`
-  in C# and Python, and the Batch A `BasicTemplateFrameworkAlgorithm`), all on
-  SPY minute data for one week; other algorithms, symbols and resolutions are
-  not qualified here.
+- The representative backtests are `BasicTemplateAlgorithm` (C# and Python)
+  and the Batch A `BasicTemplateFrameworkAlgorithm`, on SPY minute data for
+  one week. Batch D added shipped upstream algorithms, each in C# and Python
+  where a twin exists and checked against upstream's own expected
+  statistics, for history requests (`HistoryAlgorithm`), indicators
+  (`IndicatorSuiteAlgorithm`, SPY/GOOG/IBM daily 2013-2014), scheduled
+  events (`ScheduledEventsAlgorithm`,
+  `ScheduledEventsOrderRegressionAlgorithm`), parameters
+  (`ParameterizedAlgorithm`), several securities
+  (`AddRemoveSecurityRegressionAlgorithm`, SPY/AIG/BAC minute) and custom
+  data read from the local object store
+  (`CustomDataObjectStoreRegressionAlgorithm`); the record is in
+  `Rady70/Market_Lab`, `docs/LEAN_FINAL_QUALIFICATION.md`. Optimization
+  (`Optimizer.Launcher`) and the Jupyter research route (`Research\`) are
+  present in the checkout and were not exercised: the console optimizer
+  starts launcher processes that read `config.json` from the launcher
+  directory rather than the validated MarketLab config, and the research
+  route needs Jupyter with Python hosting .NET (`clr-loader`), a different
+  runtime model from the one qualified here. Other algorithms, symbols,
+  resolutions and asset classes are not qualified.
 - Exit code 1 is also what LEAN returns after an upstream cosmetic error: when
   an algorithm fails to load, `BacktestingResultHandler.SendFinalResult()` logs
   a `NullReferenceException` from `ParameterCountAnalysis` after the real
