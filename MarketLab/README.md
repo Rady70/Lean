@@ -328,22 +328,35 @@ confirm a value arrived. Values are strings: `[Parameter]` fields are
 converted to the field type, `GetParameter(name, default)` parses to the
 default's type and returns the default when parsing fails.
 
-What the command-line syntax cannot carry, and what pre-flight therefore
+What the command line cannot carry intact, and what pre-flight therefore
 refuses (exit 2, LEAN not launched): LEAN splits the option value on `,` and
 each pair on `:` and keeps only the text after the first `:`
 ([`Configuration/ApplicationParser.cs`](../Configuration/ApplicationParser.cs)),
 so a value containing `:` is refused (use the config route), as are an entry
 without `:`, an empty key or value (LEAN logs an engine `ERROR::` for an
 empty value and skips it, which the post-run check would report as exit
-code 4), a key or value with leading or trailing whitespace (neither LEAN
-nor the helper trims: `ema-fast:10, ema-slow:20` would hand the algorithm
-the key `" ema-slow"`, which `[Parameter("ema-slow")]` and
-`GetParameter("ema-slow")` never match, so the in-code default would be
-used with exit code 0 and no message — observed in Batch D before the
-refusal was added) and a repeated key (LEAN silently keeps the last). The
+code 4; a whitespace-only value fails the `[Parameter]` conversion instead),
+a key or value with leading or trailing whitespace (neither LEAN nor the
+helper trims: `ema-fast:10, ema-slow:20` would hand the algorithm the key
+`" ema-slow"`, which `[Parameter("ema-slow")]` and `GetParameter("ema-slow")`
+never match, so the in-code default would be used with exit code 0 and no
+message — observed in Batch D before the refusal was added), an entry
+containing a double quote, an entry that contains whitespace and ends with
+a backslash (Windows PowerShell 5.1 passes neither to the launcher intact:
+`q:a"b` arrived as `q:ab` and `p:hello world\` as `p:hello world"`, with exit
+code 0 — also observed in Batch D; PowerShell 7 delivers both correctly, but
+the helper behaves the same on both shells), and a repeated key (LEAN
+silently keeps the last; keys are compared exactly, as LEAN compares them,
+so `A` and `a` are two keys). Everything else is delivered as typed: values
+with spaces, `=`, `;`, `|`, `&`, parentheses, braces, `$`, backticks,
+non-ASCII text and a backslash not at the end were checked in Batch D. The
 helper splits on `,` the same way LEAN does, so `-Parameters a:1,b:2` from a
 `-File` command line and `-Parameters 'a:1','b:2'` from inside PowerShell
-mean the same pairs.
+mean the same pairs; with `-File`, quote a list that contains a space
+(`-Parameters "name:hello world,ema-fast:10"`), otherwise the shell splits it
+into separate arguments and the second part binds to the next positional
+parameter (`-LeanRoot`), which the helper then rejects with a confusing
+message.
 
 Behaviour observed in Batch D that the helper does not change:
 

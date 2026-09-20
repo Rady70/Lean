@@ -121,9 +121,12 @@ string with commas or several strings both work), so ',' can never be part of
 a key or value, and a value containing ':' is refused in pre-flight (exit 2),
 as are an empty key or value, a key or value with leading or trailing
 whitespace (neither LEAN nor this script trims, so " ema-slow" would never
-match the algorithm's "ema-slow" and the default would be used silently) and
-a repeated key (LEAN logs an engine ERROR:: for an empty value and silently
-keeps the last duplicate). Default: none.
+match the algorithm's "ema-slow" and the default would be used silently), an
+entry containing a double quote or containing whitespace and ending with a
+backslash (Windows PowerShell 5.1 does not pass either to the launcher
+intact, so both are refused on every shell) and a repeated key, compared
+exactly as LEAN compares keys (LEAN logs an engine ERROR:: for an empty value
+and silently keeps the last duplicate). Default: none.
 
 .PARAMETER DataFolder
 Historical data root (`--data-folder`). Must contain
@@ -605,17 +608,23 @@ if ($AlgorithmLanguage -eq 'Python') {
 # may pass an array, and both must mean the same pairs. A pair whose value
 # contains ':' would be truncated by LEAN, an empty value makes
 # ParameterAttribute.ApplyAttributes log an engine ERROR:: and skip the key
-# (which the post-run check would turn into exit code 4), and a repeated key
-# is silently overwritten; all of these are refused.
+# (which the post-run check would turn into exit code 4), a whitespace-only
+# value fails the [Parameter] conversion instead (the algorithm-time "Error
+# applying parameter values" of the README), a repeated key is silently
+# overwritten, and a '"' or a whitespace-containing value ending in '\' is
+# not delivered intact to the launcher by Windows PowerShell 5.1 (it does not
+# escape embedded quotes for native executables; observed: q:a"b arrived as
+# q:ab and p:hello world\ as p:hello world"); all of these are refused. Keys
+# are compared ordinally, as LEAN's dictionaries do (A and a are two keys).
 $parameterPairs = @()
 if ($null -ne $Parameters -and $Parameters.Count -gt 0) {
-    $seenKeys = @{}
+    $seenKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
     foreach ($text in @($Parameters | ForEach-Object { ([string]$_).Split(',') })) {
         $colon = $text.IndexOf(':')
         $key = if ($colon -ge 0) { $text.Substring(0, $colon) } else { $text }
         $value = if ($colon -ge 0) { $text.Substring($colon + 1) } else { '' }
         if ($colon -lt 0 -or [string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
-            $problems.Add("-Parameters entry `"$text`" is not key:value with a non-empty key and value. LEAN reads --parameters as comma-separated key:value pairs (Configuration/ApplicationParser.cs) and logs an engine ERROR:: for an empty value; write for example -Parameters ema-fast:10,ema-slow:20.")
+            $problems.Add("-Parameters entry `"$text`" is not key:value with a non-empty key and value. LEAN reads --parameters as comma-separated key:value pairs (Configuration/ApplicationParser.cs); it logs an engine ERROR:: for an empty value and fails the [Parameter] conversion for a whitespace-only one; write for example -Parameters ema-fast:10,ema-slow:20.")
             continue
         }
         # Neither LEAN's parser nor this script trims: "ema-fast:10, ema-slow:20"
@@ -631,11 +640,27 @@ if ($null -ne $Parameters -and $Parameters.Count -gt 0) {
             $problems.Add("-Parameters entry `"$text`" has a second ':' in its value. LEAN keeps only the text between the first and the second ':' (Configuration/ApplicationParser.cs), so this value cannot be passed on the command line; put it in the `"parameters`" object of a config copy passed with -Config instead.")
             continue
         }
-        if ($seenKeys.ContainsKey($key)) {
-            $problems.Add("-Parameters names the key `"$key`" more than once. LEAN would silently keep the last value; pass each key once.")
+        # Windows PowerShell 5.1 passes arguments to native executables without
+        # escaping embedded double quotes, so q:a"b would reach LEAN as q:ab with
+        # exit code 0 and no message (observed in Batch D; pwsh 7 delivers it
+        # intact). The value is refused on both shells so the helper behaves the
+        # same everywhere; a quote has no place in a LEAN parameter value anyway.
+        if ($text.IndexOf('"') -ge 0) {
+            $problems.Add("-Parameters entry `"$text`" contains a double quote. Windows PowerShell 5.1 does not deliver an embedded `"`"`" intact to the launcher (the algorithm would receive a different value with exit code 0), so quotes are refused on every shell; put such a value in the `"parameters`" object of a config copy passed with -Config instead.")
             continue
         }
-        $seenKeys[$key] = $true
+        # An argument with whitespace is wrapped in quotes for the launcher, and
+        # a trailing backslash then escapes the closing quote under Windows
+        # PowerShell 5.1 (observed in Batch D: p:hello world\ arrived as
+        # p:hello world"; pwsh 7 delivers it intact). Refused on every shell.
+        if ($text.EndsWith('\') -and $text -match '\s') {
+            $problems.Add("-Parameters entry `"$text`" contains whitespace and ends with a backslash. Windows PowerShell 5.1 quotes such an argument and the trailing backslash escapes the closing quote, so the algorithm would receive a different value with exit code 0; it is refused on every shell. Drop the trailing backslash or use the `"parameters`" object of a config copy passed with -Config.")
+            continue
+        }
+        if (-not $seenKeys.Add($key)) {
+            $problems.Add("-Parameters entry `"$text`" repeats the key `"$key`" (keys are compared exactly, as LEAN does). LEAN would silently keep the last value; pass each key once.")
+            continue
+        }
         $parameterPairs += $text
     }
 }

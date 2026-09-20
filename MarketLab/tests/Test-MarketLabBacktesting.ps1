@@ -188,7 +188,13 @@ function Get-AllPropertyNames($Object) {
 
 function Format-ProcessArgument([string]$Value) {
     if ($Value -match '[\s"]') {
-        return '"' + ($Value -replace '"', '\"') + '"'
+        # Windows argv rules: a quote inside a quoted argument is \", and a run
+        # of backslashes immediately before a quote (or before the closing
+        # quote) must be doubled, otherwise a trailing backslash escapes the
+        # closing quote and the argument swallows what follows.
+        $escaped = [regex]::Replace($Value, '(\\*)"', { param($m) ($m.Groups[1].Value * 2) + '\"' })
+        $escaped = [regex]::Replace($escaped, '(\\+)$', { param($m) $m.Groups[1].Value * 2 })
+        return '"' + $escaped + '"'
     }
     return $Value
 }
@@ -501,10 +507,17 @@ try {
     Assert-PreflightFailure '-Parameters entry without a colon' @('-Parameters', 'ema-fast', '-DryRun') 'not key:value'
     Assert-PreflightFailure '-Parameters entry with an empty value' @('-Parameters', 'ema-fast:', '-DryRun') 'not key:value'
     Assert-PreflightFailure '-Parameters entry with an empty key' @('-Parameters', ':10', '-DryRun') 'not key:value'
-    Assert-PreflightFailure '-Parameters with a repeated key' @('-Parameters', 'ema-fast:10,ema-fast:20', '-DryRun') 'more than once'
+    Assert-PreflightFailure '-Parameters with a repeated key' @('-Parameters', 'ema-fast:10,ema-fast:20', '-DryRun') 'repeats the key "ema-fast"'
     # A space after the comma is the natural typo; LEAN would receive the key " ema-slow" and the algorithm would silently keep its default.
     Assert-PreflightFailure '-Parameters entry with a padded key' @('-Parameters', 'ema-fast:10, ema-slow:20', '-DryRun') 'leading or trailing whitespace'
     Assert-PreflightFailure '-Parameters entry with a padded value' @('-Parameters', 'ema-fast:10 ', '-DryRun') 'leading or trailing whitespace'
+    # Windows PowerShell 5.1 does not deliver an embedded quote, or a trailing backslash inside a quoted argument, to the launcher intact.
+    Assert-PreflightFailure '-Parameters entry with a double quote' @('-Parameters', 'ema-fast:10,q:a"b', '-DryRun') 'contains a double quote'
+    Assert-PreflightFailure '-Parameters entry with whitespace and a trailing backslash' @('-Parameters', 'ema-fast:10,p:hello world\', '-DryRun') 'ends with a backslash'
+    # Keys are compared exactly, as LEAN does: A and a are two keys; a plain backslash without whitespace is delivered intact.
+    $paramsCase = Invoke-Helper @('-AlgorithmTypeName', 'ParameterizedAlgorithm', '-Parameters', 'A:1,a:2,p:dir\', '-DryRun')
+    Assert-Equal 0 $paramsCase.ExitCode '-Parameters keys differing only in case and a backslash value: exit code 0'
+    Assert-Contains $paramsCase.StdOut "--parameters 'A:1,a:2,p:dir\'" '-Parameters keys differing only in case: both keys rendered' -CaseSensitive
 
     # ------------------------------------------------------------------------
     # Optional smoke run
