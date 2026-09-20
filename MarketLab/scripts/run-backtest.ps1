@@ -107,6 +107,24 @@ loads, passed to the launcher process as PYTHONNET_PYDLL. Default: the
 PYTHONNET_PYDLL environment variable. The interpreter next to it must have the
 packages from Algorithm.Python/readme.md installed (pandas, wrapt).
 
+.PARAMETER Parameters
+Algorithm parameters, one `key:value` string each (for example
+-Parameters ema-fast:10,ema-slow:20), passed to LEAN as its own
+`--parameters key:value,key:value` option (Configuration/LeanArgumentParser.cs)
+and read by the algorithm through QCAlgorithm.GetParameter / the [Parameter]
+attribute. LEAN merges them over the config file's "parameters" object
+(Configuration/Config.cs), so a key given here overrides the same key in the
+file and the file's other keys stay in effect. LEAN's parser splits the option
+value on ',' and each pair on ':' and keeps only the text after the first ':'
+(Configuration/ApplicationParser.cs); the script splits the same way (one
+string with commas or several strings both work), so ',' can never be part of
+a key or value, and a value containing ':' is refused in pre-flight (exit 2),
+as are an empty key or value, a key or value with leading or trailing
+whitespace (neither LEAN nor this script trims, so " ema-slow" would never
+match the algorithm's "ema-slow" and the default would be used silently) and
+a repeated key (LEAN logs an engine ERROR:: for an empty value and silently
+keeps the last duplicate). Default: none.
+
 .PARAMETER DataFolder
 Historical data root (`--data-folder`). Must contain
 market-hours\market-hours-database.json and
@@ -142,6 +160,11 @@ pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Debug -AlgorithmLan
 Runs the Python representative algorithm against the Debug build.
 
 .EXAMPLE
+pwsh -File MarketLab\scripts\run-backtest.ps1 -AlgorithmTypeName ParameterizedAlgorithm -Parameters ema-fast:10,ema-slow:20
+Runs a parameterized algorithm with two parameter values passed through LEAN's
+--parameters option (read by GetParameter / [Parameter("ema-fast")]).
+
+.EXAMPLE
 pwsh -File MarketLab\scripts\run-backtest.ps1 -DryRun
 Shows what would be run without launching LEAN (a Python dry run still runs
 the pandas probe).
@@ -161,6 +184,7 @@ param(
     [string]$AlgorithmLanguage = 'CSharp',
     [string]$AlgorithmLocation,
     [string]$PythonDll,
+    [string[]]$Parameters,
     [string]$DataFolder,
     [string]$OutputRoot,
     [switch]$AllowMissingData,
@@ -572,6 +596,50 @@ if ($AlgorithmLanguage -eq 'Python') {
     }
 }
 
+# Algorithm parameters (-Parameters), rendered as LEAN's own
+# `--parameters key:value,key:value` (Configuration/LeanArgumentParser.cs).
+# LEAN splits that single value on ',' and each pair on ':' and keeps only the
+# text after the first ':' (Configuration/ApplicationParser.cs). The same
+# splitting is done here first: a `-File` invocation delivers
+# `-Parameters ema-fast:10,ema-slow:20` as one string, an in-session caller
+# may pass an array, and both must mean the same pairs. A pair whose value
+# contains ':' would be truncated by LEAN, an empty value makes
+# ParameterAttribute.ApplyAttributes log an engine ERROR:: and skip the key
+# (which the post-run check would turn into exit code 4), and a repeated key
+# is silently overwritten; all of these are refused.
+$parameterPairs = @()
+if ($null -ne $Parameters -and $Parameters.Count -gt 0) {
+    $seenKeys = @{}
+    foreach ($text in @($Parameters | ForEach-Object { ([string]$_).Split(',') })) {
+        $colon = $text.IndexOf(':')
+        $key = if ($colon -ge 0) { $text.Substring(0, $colon) } else { $text }
+        $value = if ($colon -ge 0) { $text.Substring($colon + 1) } else { '' }
+        if ($colon -lt 0 -or [string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
+            $problems.Add("-Parameters entry `"$text`" is not key:value with a non-empty key and value. LEAN reads --parameters as comma-separated key:value pairs (Configuration/ApplicationParser.cs) and logs an engine ERROR:: for an empty value; write for example -Parameters ema-fast:10,ema-slow:20.")
+            continue
+        }
+        # Neither LEAN's parser nor this script trims: "ema-fast:10, ema-slow:20"
+        # would hand the algorithm the key " ema-slow", which [Parameter("ema-slow")]
+        # and GetParameter("ema-slow") never match, so the in-code default would be
+        # used with exit code 0 and no message (observed in Batch D). Refuse it
+        # instead of silently rewriting what LEAN receives.
+        if ($key -ne $key.Trim() -or $value -ne $value.Trim()) {
+            $problems.Add("-Parameters entry `"$text`" has leading or trailing whitespace in its key or value. LEAN keeps the text exactly as given (Configuration/ApplicationParser.cs), so the algorithm would look up a different key or receive a padded value and silently use its default; write the pairs without spaces, for example -Parameters ema-fast:10,ema-slow:20.")
+            continue
+        }
+        if ($value.IndexOf(':') -ge 0) {
+            $problems.Add("-Parameters entry `"$text`" has a second ':' in its value. LEAN keeps only the text between the first and the second ':' (Configuration/ApplicationParser.cs), so this value cannot be passed on the command line; put it in the `"parameters`" object of a config copy passed with -Config instead.")
+            continue
+        }
+        if ($seenKeys.ContainsKey($key)) {
+            $problems.Add("-Parameters names the key `"$key`" more than once. LEAN would silently keep the last value; pass each key once.")
+            continue
+        }
+        $seenKeys[$key] = $true
+        $parameterPairs += $text
+    }
+}
+
 if (-not (Test-Path -LiteralPath $dataFolderPath -PathType Container)) {
     $problems.Add("Data folder `"$dataFolderPath`" is not a directory. Pass -DataFolder <LEAN data root> (the checkout ships one at <LeanRoot>\Data).")
 }
@@ -719,6 +787,9 @@ $launcherArgs = @(
     '--algorithm-location', $algorithmLocationPath,
     '--close-automatically', 'true'
 )
+if ($parameterPairs.Count -gt 0) {
+    $launcherArgs += @('--parameters', ($parameterPairs -join ','))
+}
 $commandLine = Format-CommandLine $dotnet $launcherArgs
 
 Write-Info 'MarketLab LEAN local backtest'
@@ -728,6 +799,9 @@ Write-Info "  dotnet:           $dotnet"
 Write-Info "  launcher:         $launcherDll"
 Write-Info "  config file:      $configPath"
 Write-Info "  algorithm:        $AlgorithmTypeName ($AlgorithmLanguage) from $algorithmLocationPath"
+if ($parameterPairs.Count -gt 0) {
+    Write-Info "  parameters:       $($parameterPairs -join ',')"
+}
 Write-Info "  data folder:      $dataFolderPath"
 if ($AlgorithmLanguage -eq 'Python') {
     Write-Info "  PYTHONNET_PYDLL:  $pythonDllPath (from $pythonDllSource)"

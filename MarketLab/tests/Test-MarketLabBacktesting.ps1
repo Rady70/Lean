@@ -7,9 +7,10 @@ Asserts the backtesting-only invariants of MarketLab\config\backtesting.json,
 the -DryRun behaviour of MarketLab\scripts\run-backtest.ps1, and that the helper
 exits 2 with an ERROR: line for each pre-flight failure it guards against
 (missing build/config/data/output, live-mode, foreign or nested environments,
-live handler names, ApiDataProvider, wrong JSON types, and the Python runtime
+live handler names, ApiDataProvider, wrong JSON types, the Python runtime
 requirements: -AlgorithmLocation, -Configuration Debug, an existing
--PythonDll / PYTHONNET_PYDLL).
+-PythonDll / PYTHONNET_PYDLL, and malformed -Parameters entries), and that
+-Parameters is rendered as LEAN's --parameters option.
 Every helper invocation is a child process of the same PowerShell executable
 that runs this script, so exit codes are the real process exit codes.
 
@@ -19,9 +20,10 @@ never launched (the only other process is the helper's pandas probe when
 backtests are run into a temporary output root that is deleted afterwards: the
 Batch A representative C# algorithm on the shipped sample data, the same
 algorithm on a temporary copy of that data with one corrupted zip file (helper
-exit code 4, and 0 with -AllowEngineErrors), and, when -PythonDll is given and
-the Debug build exists, the Python representative algorithm
-(Algorithm.Python\BasicTemplateAlgorithm.py). All fixtures live under
+exit code 4, and 0 with -AllowEngineErrors), the shipped ParameterizedAlgorithm
+with -Parameters (the values are read back from the result packet), and, when
+-PythonDll is given and the Debug build exists, the Python representative
+algorithm (Algorithm.Python\BasicTemplateAlgorithm.py). All fixtures live under
 %TEMP%\marketlab-tests-<guid>, which is removed when the script ends.
 
 Prints PASS:/FAIL: per assertion and a final count. Exit code 0 when every
@@ -487,6 +489,24 @@ try {
     Assert-NotContains $emptyName.All 'Launching LEAN' 'empty -AlgorithmTypeName -> LEAN not launched'
 
     # ------------------------------------------------------------------------
+    # Algorithm parameters (-Parameters -> LEAN --parameters, Batch D)
+    # ------------------------------------------------------------------------
+    Assert-NotContains $dry.StdOut '--parameters' 'default dry run: no --parameters without -Parameters'
+    $paramsDry = Invoke-Helper @('-AlgorithmTypeName', 'ParameterizedAlgorithm', '-Parameters', 'ema-fast:10,ema-slow:20', '-DryRun')
+    Assert-Equal 0 $paramsDry.ExitCode '-Parameters dry run: exit code 0'
+    Assert-Contains $paramsDry.StdOut "--parameters 'ema-fast:10,ema-slow:20'" '-Parameters dry run: command line ends with --parameters and the comma-joined pairs' -CaseSensitive
+    Assert-Contains $paramsDry.StdOut 'parameters:       ema-fast:10,ema-slow:20' '-Parameters dry run: parameters line is printed'
+    Assert-NotContains $paramsDry.All 'Launching LEAN' '-Parameters dry run: LEAN not launched'
+    Assert-PreflightFailure '-Parameters entry with a second colon in the value' @('-Parameters', 'ema-fast:1:2', '-DryRun') 'second '':'' in its value'
+    Assert-PreflightFailure '-Parameters entry without a colon' @('-Parameters', 'ema-fast', '-DryRun') 'not key:value'
+    Assert-PreflightFailure '-Parameters entry with an empty value' @('-Parameters', 'ema-fast:', '-DryRun') 'not key:value'
+    Assert-PreflightFailure '-Parameters entry with an empty key' @('-Parameters', ':10', '-DryRun') 'not key:value'
+    Assert-PreflightFailure '-Parameters with a repeated key' @('-Parameters', 'ema-fast:10,ema-fast:20', '-DryRun') 'more than once'
+    # A space after the comma is the natural typo; LEAN would receive the key " ema-slow" and the algorithm would silently keep its default.
+    Assert-PreflightFailure '-Parameters entry with a padded key' @('-Parameters', 'ema-fast:10, ema-slow:20', '-DryRun') 'leading or trailing whitespace'
+    Assert-PreflightFailure '-Parameters entry with a padded value' @('-Parameters', 'ema-fast:10 ', '-DryRun') 'leading or trailing whitespace'
+
+    # ------------------------------------------------------------------------
     # Optional smoke run
     # ------------------------------------------------------------------------
     if ($IncludeSmoke) {
@@ -596,6 +616,29 @@ try {
         Assert-Match $both.StdErr '(?m)^ERROR:   missing: \\equity\\usa\\minute\\spy\\20131010_quote\.zip' 'missing + corrupt: the missing file is named'
         Assert-Match $both.StdErr '(?m)^ERROR: 2 engine ERROR:: line\(s\) in ' 'missing + corrupt: engine-error block counts only the corrupt file''s two lines'
         Assert-NotMatch $both.StdErr '(?m)^ERROR:   .*InvalidSource\(\): File not found: .*20131010_quote\.zip' 'missing + corrupt: the missing file''s InvalidSource line is not quoted as an engine error'
+
+        # --------------------------------------------------------------------
+        # -Parameters reaches the algorithm (Batch D): the result packet's
+        # algorithmConfiguration.parameters is QCAlgorithm.GetParameters(),
+        # exactly the dictionary the algorithm received.
+        # --------------------------------------------------------------------
+        $paramOutput = Join-Path $script:TempRoot 'parameters-output'
+        $param = Invoke-Helper @('-AlgorithmTypeName', 'ParameterizedAlgorithm', '-Parameters', 'ema-fast:10,ema-slow:20', '-OutputRoot', $paramOutput)
+        Assert-Equal 0 $param.ExitCode 'parameters smoke: helper exit code 0'
+        $paramRunDirs = @()
+        if (Test-Path -LiteralPath $paramOutput -PathType Container) { $paramRunDirs = @(Get-ChildItem -LiteralPath $paramOutput -Directory) }
+        Assert-Equal 1 $paramRunDirs.Count 'parameters smoke: exactly one run directory created'
+        if ($paramRunDirs.Count -eq 1) {
+            $paramSummary = Join-Path $paramRunDirs[0].FullName 'ParameterizedAlgorithm-summary.json'
+            Assert-True (Test-Path -LiteralPath $paramSummary -PathType Leaf) 'parameters smoke: summary JSON exists'
+            if (Test-Path -LiteralPath $paramSummary -PathType Leaf) {
+                $paramConfig = Get-JsonProperty (ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($paramSummary))) 'algorithmConfiguration'
+                $received = Get-JsonProperty $paramConfig 'parameters'
+                Assert-Equal '10' ([string](Get-JsonProperty $received 'ema-fast')) 'parameters smoke: algorithmConfiguration.parameters.ema-fast is "10"'
+                Assert-Equal '20' ([string](Get-JsonProperty $received 'ema-slow')) 'parameters smoke: algorithmConfiguration.parameters.ema-slow is "20"'
+                Assert-Equal 2 @($received.PSObject.Properties).Count 'parameters smoke: exactly the two passed parameters reached the algorithm'
+            }
+        }
 
         # --------------------------------------------------------------------
         # Python representative (Debug build + qualified runtime only).
