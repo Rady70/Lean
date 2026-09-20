@@ -1,91 +1,88 @@
 # SingleAnchor vNext Strategy Specification
 
-## 1. Strategy summary
+## 1. Purpose and plain-English summary
 
-SingleAnchor trades one basket around one fixed anchor price.
+SingleAnchor manages one basket around one fixed anchor price.
 
 For each basket:
 
-- one anchor is created;
-- one fixed upper level and one fixed lower level are calculated from that anchor;
-- the first trade opens when price reaches either level;
-- after the first trade, entries must alternate strictly between BUY and SELL;
-- trades 1 through 4 use the original arithmetic lot progression;
-- from trade 5 onward, arithmetic sizing stops and a hard fixed breakeven ceiling controls every new lot;
-- once hard-BE mode starts, breakeven is not allowed to drift beyond the configured ceiling;
-- the whole basket is managed and closed as one unit using escape, fixed take-profit, or basket trailing.
+- create one anchor;
+- create one fixed upper level and one fixed lower level around that anchor;
+- open the first trade when price reaches one of those levels;
+- after the first trade, BUY and SELL entries must alternate strictly;
+- trades 1 through 4 use arithmetic lot sizing;
+- trade 5 and every later trade use hard fixed-breakeven sizing;
+- once hard-BE mode is active, breakeven is not allowed to drift beyond the configured ceiling;
+- manage and close the whole basket as one unit using escape, fixed take-profit, or basket trailing.
 
-The strategy is intended to let ordinary short baskets behave normally, while forcing long-lived baskets to keep their recovery breakeven within a fixed distance from the original anchor.
+The intent is simple: ordinary baskets keep the original early-trade behavior, while long-lived baskets switch to lot sizes calculated specifically to keep recovery breakeven within a fixed distance from the original anchor.
 
 ---
 
-## 2. Basket anchor and fixed grid levels
+## 2. Anchor and fixed grid levels
 
-When no basket is active, create the basket anchor from the current midpoint:
+When no basket is active, create the anchor from the current midpoint:
 
-[
-A = rac{Bid + Ask}{2}
-]
+```text
+A = (Bid + Ask) / 2
+```
 
 where:
 
-- (A) = basket anchor price;
+- `A` = basket anchor price;
 - `Bid` = current bid price;
 - `Ask` = current ask price.
 
-Calculate the grid step distance:
+Calculate the grid-step distance:
 
-[
-S = A 	imes rac{P}{100}
-]
+```text
+S = A * P / 100
+```
 
 where:
 
-- (S) = grid step distance in price units;
-- (A) = basket anchor price;
-- (P) = configured grid-step percentage of the anchor.
+- `S` = grid-step distance in price units;
+- `A` = basket anchor price;
+- `P` = configured grid-step percentage of the anchor.
 
-Then calculate the two fixed entry levels:
+Calculate the fixed upper and lower levels:
 
-[
+```text
 Upper = A + S
-]
-
-[
 Lower = A - S
-]
+```
 
 where:
 
 - `Upper` = fixed upper entry level;
 - `Lower` = fixed lower entry level;
-- (A) = basket anchor price;
-- (S) = grid step distance.
+- `A` = basket anchor price;
+- `S` = grid-step distance.
 
 ### Plain English
 
-Each basket gets one anchor and two fixed boundaries. Those three prices do not move while the basket remains open.
+Each basket gets one anchor and two boundaries. The anchor, upper level, and lower level stay fixed until that basket closes.
 
 ---
 
 ## 3. Entry rules
 
-A BUY entry is triggered when:
+Open a BUY when:
 
-[
-Ask ge Upper
-]
+```text
+Ask >= Upper
+```
 
 where:
 
 - `Ask` = current ask price;
 - `Upper` = fixed upper basket level.
 
-A SELL entry is triggered when:
+Open a SELL when:
 
-[
-Bid le Lower
-]
+```text
+Bid <= Lower
+```
 
 where:
 
@@ -104,7 +101,7 @@ or:
 SELL -> BUY -> SELL -> BUY -> ...
 ```
 
-A BUY cannot directly follow a BUY, and a SELL cannot directly follow a SELL.
+A BUY cannot directly follow a BUY. A SELL cannot directly follow a SELL.
 
 ### Plain English
 
@@ -112,21 +109,21 @@ The basket grows only when price moves back and forth between the same two fixed
 
 ---
 
-## 4. Trades 1-4: normal arithmetic sizing
+## 4. Trades 1 through 4: arithmetic lot sizing
 
 For the first four trades:
 
-[
-Q_n = B 	imes n
-]
+```text
+Q_n = B * n
+```
 
 where:
 
-- (Q_n) = requested lot size for trade number (n);
-- (B) = configured base lot size;
-- (n) = trade number in the basket, starting from 1.
+- `Q_n` = requested lot size for trade number `n`;
+- `B` = configured base lot size;
+- `n` = trade number inside the basket, starting from 1.
 
-Example with (B = 0.01) lots:
+Example when `B = 0.01` lots:
 
 ```text
 Trade 1 = 0.01
@@ -135,11 +132,11 @@ Trade 3 = 0.03
 Trade 4 = 0.04
 ```
 
-The requested lot is normalized upward as needed to a valid broker volume step.
+Normalize the requested lot to a valid broker volume step.
 
 ### Plain English
 
-Normal baskets keep the simple increasing lot sequence for the first four trades.
+The first four trades use the simple increasing sequence based on trade number.
 
 ---
 
@@ -153,50 +150,50 @@ Nnormal = 4
 
 where:
 
-- `Nnormal` = number of trades that use arithmetic sizing.
+- `Nnormal` = number of trades that use arithmetic lot sizing.
 
 If trade 5 is required, hard-BE mode becomes active for the remainder of that basket.
 
 From trade 5 onward:
 
-- arithmetic sizing is no longer used;
+- arithmetic lot sizing stops;
 - every new lot is calculated from the hard breakeven target;
-- the hard-BE rule remains active until the basket closes;
-- no intentional BE drift beyond the ceiling is permitted.
+- hard-BE mode remains active until the basket closes;
+- no intentional BE drift beyond the configured ceiling is permitted.
 
 ### Plain English
 
-Reaching trade 5 means the basket has entered the tail. From that point, lot size is determined by where basket breakeven must be, not by trade number.
+Reaching trade 5 means the basket has entered the tail. From then on, lot size is determined by where basket breakeven must be, not by trade number.
 
 ---
 
 ## 6. Hard fixed breakeven ceiling
 
-Let (C) be the configured maximum breakeven distance from the original anchor, expressed as a percentage.
+Let `C` be the configured maximum breakeven distance from the original anchor, expressed as a percentage.
 
 For an upward recovery target:
 
-[
-T_{up} = A 	imes left(1 + rac{C}{100}ight)
-]
+```text
+T_up = A * (1 + C / 100)
+```
 
 where:
 
-- (T_{up}) = maximum permitted upper-side basket breakeven price;
-- (A) = original basket anchor price;
-- (C) = configured hard-BE ceiling percentage.
+- `T_up` = maximum permitted upper-side basket breakeven price;
+- `A` = original basket anchor price;
+- `C` = configured hard-BE ceiling percentage.
 
 For a downward recovery target:
 
-[
-T_{down} = A 	imes left(1 - rac{C}{100}ight)
-]
+```text
+T_down = A * (1 - C / 100)
+```
 
 where:
 
-- (T_{down}) = maximum permitted lower-side basket breakeven price;
-- (A) = original basket anchor price;
-- (C) = configured hard-BE ceiling percentage.
+- `T_down` = maximum permitted lower-side basket breakeven price;
+- `A` = original basket anchor price;
+- `C` = configured hard-BE ceiling percentage.
 
 Current research starting value:
 
@@ -204,123 +201,128 @@ Current research starting value:
 C ~= 4.478%
 ```
 
-This value is a test/calibration parameter, not a permanently proven optimum.
+This is a calibration starting value, not a permanently proven optimum.
 
-### Which target applies
+Target selection:
 
-- if the next required tail trade is BUY, use (T_{up});
-- if the next required tail trade is SELL, use (T_{down}).
+- if the next required tail trade is BUY, use `T_up`;
+- if the next required tail trade is SELL, use `T_down`.
 
 ### Plain English
 
-Once tail mode starts, the strategy fixes the farthest acceptable recovery point relative to the original anchor. Every later order must be large enough to keep basket breakeven within that limit.
+Once tail mode starts, the strategy fixes the farthest acceptable recovery point from the original anchor. Every later order must be large enough to keep basket breakeven at or inside that limit.
 
 ---
 
-## 7. Tail lot calculation
+## 7. Tail lot sizing: hard-BE requirement
 
-For every trade from trade 5 onward, calculate the minimum lot required to make the full basket reach breakeven at or before the applicable hard target.
+For trade 5 and every later trade, choose the smallest new lot that makes the full basket break even at or before the applicable hard target.
 
-Conceptually:
+The authoritative requirement is:
 
-[
-Q_{BE} = rac{-PL_{existing}(T)}{PL_{1lot}(T)}
-]
+```text
+PL_after(T, Q) >= 0
+```
 
 where:
 
-- (Q_{BE}) = lot size required for the next tail order;
-- (PL_{existing}(T)) = projected profit/loss of all already-open basket positions if price reaches target (T);
-- (PL_{1lot}(T)) = projected profit/loss at target (T) contributed by one lot of the new required side;
-- (T) = applicable hard target, either (T_{up}) or (T_{down});
+- `PL_after(T, Q)` = projected executable profit/loss of the complete basket at target price `T` after adding a new order of size `Q`;
+- `T` = applicable hard target, either `T_up` or `T_down`;
+- `Q` = candidate lot size for the new required BUY or SELL order.
+
+The strategy must choose the smallest valid `Q` that satisfies that condition.
+
+When projected P/L is linear in the new lot size, the required lot can be calculated as:
+
+```text
+Q_BE = -PL_existing(T) / PL_1lot(T)
+```
+
+where:
+
+- `Q_BE` = mathematically required lot size for the next tail order;
+- `PL_existing(T)` = projected executable profit/loss of all already-open basket positions at target price `T`;
+- `PL_1lot(T)` = projected executable profit/loss at `T` contributed by one lot of the new required side;
+- `T` = applicable hard target;
 - `PL` = profit/loss in account currency.
 
-The formula is valid when (PL_{1lot}(T) > 0).
+This ratio is valid only when:
 
-The requested next tail lot is:
-
-[
-Q_{next} = Q_{BE}
-]
+```text
+PL_1lot(T) > 0
+```
 
 where:
 
-- (Q_{next}) = requested lot size of the next tail order;
-- (Q_{BE}) = lot size required to satisfy the hard-BE target.
+- `PL_1lot(T)` = profit/loss contribution at the target from one lot of the proposed new side.
 
-The calculation should use executable basket economics, including the configured bid/ask side, spread, commission, slippage, swap/financing, and any other enabled execution costs.
+The tail calculation must use executable basket economics, including configured bid/ask execution side, spread, commission, slippage, swap/financing, and other enabled execution costs.
 
 ### Plain English
 
-There is no fixed tail sequence such as 0.05, 0.06, 0.07. The strategy calculates exactly how much volume is needed to pull basket breakeven back to the hard limit.
+There is no fixed tail sequence such as 0.05, 0.06, 0.07. Each tail order is calculated specifically to pull the basket's recovery point back to the hard BE limit.
 
 ---
 
-## 8. Volume normalization under a hard ceiling
-
-Tail volume must never be rounded downward if that would violate the BE ceiling.
+## 8. Volume normalization under the hard ceiling
 
 Let:
 
-- (Q_{BE}) = mathematically required lot size;
-- (V_{step}) = broker volume step;
-- (Q_{normalized}) = actual broker-valid lot size.
+- `Q_BE` = mathematically required tail lot;
+- `V_step` = broker volume step;
+- `Q_normalized` = actual broker-valid tail lot.
 
-Use upward normalization:
+Round upward:
 
-[
-Q_{normalized}
-=
-leftlceil
-rac{Q_{BE}}{V_{step}}
-ightceil
-	imes V_{step}
-]
+```text
+Q_normalized = ceil(Q_BE / V_step) * V_step
+```
 
 where:
 
-- (lceil x ceil) = round (x) upward to the next integer;
-- (Q_{BE}) = exact required lot size;
-- (V_{step}) = minimum broker lot increment;
-- (Q_{normalized}) = final broker-valid lot size.
+- `ceil(x)` = round `x` upward to the next integer;
+- `Q_BE` = exact required lot size;
+- `V_step` = minimum broker lot increment;
+- `Q_normalized` = final broker-valid lot size.
 
-After normalization, recalculate projected basket P/L at the target and verify that the hard-BE condition still holds.
+After normalization, recalculate:
 
-### Hard-BE acceptance condition
-
-At the applicable target (T):
-
-[
-PL_{basket}(T) ge 0
-]
+```text
+PL_after(T, Q_normalized) >= 0
+```
 
 where:
 
-- (PL_{basket}(T)) = projected executable profit/loss of the full basket after the new order at target (T);
-- (T) = applicable upper or lower hard-BE target.
+- `PL_after(T, Q_normalized)` = projected executable basket profit/loss at target `T` using the normalized lot;
+- `T` = applicable hard target;
+- `Q_normalized` = actual broker-valid lot.
 
-If this condition is not satisfied, the lot must be increased to the next valid broker volume step and checked again.
+If the condition is not satisfied, increase the lot to the next valid volume step and check again.
+
+There is no fallback to a smaller lot that permits BE drift beyond the hard ceiling.
+
+If broker constraints make the required hard-BE lot impossible to place, that is an infeasible hard-BE condition and must be surfaced explicitly; it must not be silently converted into BE drift.
 
 ### Plain English
 
-Because the BE limit is hard, lot rounding is always conservative. If 0.1234 lots are required and the broker trades in 0.01 steps, 0.13 is used, not 0.12.
+Because the BE limit is hard, volume rounding must be conservative. If 0.1234 lots are required and the broker allows 0.01-lot increments, use 0.13, not 0.12.
 
 ---
 
 ## 9. Basket profit used for exits
 
-Raw basket profit is the combined profit of all positions in the basket, including swap/financing where applicable.
+Raw basket profit is the combined current profit of all positions in the basket, including swap/financing where configured.
 
 If an optional commission buffer is enabled:
 
-[
+```text
 Profit = RawProfit - CommissionBuffer
-]
+```
 
 where:
 
 - `Profit` = basket profit used for exit decisions;
-- `RawProfit` = current combined basket profit before the optional buffer;
+- `RawProfit` = combined basket profit before the optional commission buffer;
 - `CommissionBuffer` = configured estimated commission deduction.
 
 ### Plain English
@@ -333,55 +335,55 @@ Escape, take-profit, and trailing decisions are based on the basket as a whole, 
 
 Calculate signed net exposure:
 
-[
+```text
 N = BuyLots - SellLots
-]
+```
 
 where:
 
-- (N) = signed net basket exposure in lots;
+- `N` = signed net basket exposure in lots;
 - `BuyLots` = total open BUY volume;
 - `SellLots` = total open SELL volume.
 
 When net exposure is meaningfully non-zero:
 
-[
-E = |N|
-]
+```text
+E = abs(N)
+```
 
 where:
 
-- (E) = exit-sensitivity lot size;
-- (N) = signed net exposure;
-- (|N|) = absolute value of net exposure.
+- `E` = exit-sensitivity lot size;
+- `N` = signed net basket exposure;
+- `abs(N)` = absolute value of `N`.
 
-If the basket is effectively net-flat, use:
+If the basket is effectively net-flat:
 
-[
+```text
 E = MinLot
-]
+```
 
 where:
 
-- (E) = exit-sensitivity lot size;
+- `E` = exit-sensitivity lot size;
 - `MinLot` = smallest currently open position size.
 
-Then calculate one strategy step in account currency:
+Calculate one strategy step in account currency:
 
-[
-M_{step} = S 	imes E 	imes V
-]
+```text
+M_step = S * E * V
+```
 
 where:
 
-- (M_{step}) = money value of one strategy step;
-- (S) = fixed grid-step distance in price units;
-- (E) = exit-sensitivity lot size;
-- (V) = money value of a one-price-unit move for one lot.
+- `M_step` = money value of one strategy step;
+- `S` = fixed grid-step distance in price units;
+- `E` = exit-sensitivity lot size;
+- `V` = money value of a one-price-unit move for one lot.
 
 ### Plain English
 
-All basket exit thresholds scale with the basket's current directional exposure.
+The basket's exit thresholds scale with its current directional exposure.
 
 ---
 
@@ -397,32 +399,32 @@ Minimum open positions = 2
 
 Calculate the escape threshold:
 
-[
-M_{escape} = U_{escape} 	imes M_{step}
-]
+```text
+M_escape = U_escape * M_step
+```
 
 where:
 
-- (M_{escape}) = basket profit required for an escape close;
-- (U_{escape}) = configured escape-profit units;
-- (M_{step}) = current money value of one strategy step.
+- `M_escape` = basket profit required for an escape close;
+- `U_escape` = configured escape-profit units;
+- `M_step` = current money value of one strategy step.
 
 Close the whole basket when:
 
-[
-Profit ge M_{escape}
-]
+```text
+Profit >= M_escape
+```
 
 where:
 
 - `Profit` = current basket profit;
-- (M_{escape}) = escape threshold.
+- `M_escape` = escape threshold.
 
 Escape applies only when the basket has at least two open positions.
 
 ### Plain English
 
-After the basket has more than one trade, a small positive recovery is enough to exit the whole basket.
+Once the basket contains multiple trades, a small positive recovery can be enough to close the complete basket.
 
 ---
 
@@ -436,32 +438,32 @@ Fixed TP units = 0.0
 
 A value of 0 disables fixed TP.
 
-When enabled:
+When fixed TP is enabled:
 
-[
-M_{TP} = U_{TP} 	imes M_{step}
-]
+```text
+M_TP = U_TP * M_step
+```
 
 where:
 
-- (M_{TP}) = money profit required for fixed take-profit;
-- (U_{TP}) = configured fixed-TP units;
-- (M_{step}) = current money value of one strategy step.
+- `M_TP` = money profit required for fixed take-profit;
+- `U_TP` = configured fixed-TP units;
+- `M_step` = current money value of one strategy step.
 
 Close the whole basket when:
 
-[
-Profit ge M_{TP}
-]
+```text
+Profit >= M_TP
+```
 
 where:
 
 - `Profit` = current basket profit;
-- (M_{TP}) = fixed take-profit threshold.
+- `M_TP` = fixed take-profit threshold.
 
 ### Plain English
 
-Fixed TP closes the complete basket when total basket profit reaches the configured target.
+Fixed TP closes the complete basket once total basket profit reaches the configured target.
 
 ---
 
@@ -477,32 +479,37 @@ Trailing drop units = 0.25
 
 Calculate the trailing activation threshold:
 
-[
-M_{activate} = U_{activate} 	imes M_{step}
-]
+```text
+M_activate = U_activate * M_step
+```
 
 where:
 
-- (M_{activate}) = basket profit required to activate trailing;
-- (U_{activate}) = configured trailing-activation units;
-- (M_{step}) = current money value of one strategy step.
+- `M_activate` = basket profit required to activate trailing;
+- `U_activate` = configured trailing-activation units;
+- `M_step` = current money value of one strategy step.
 
 Trailing activates when:
 
-[
-Profit ge M_{activate}
-]
+```text
+Profit >= M_activate
+```
 
 where:
 
 - `Profit` = current basket profit;
-- (M_{activate}) = trailing activation threshold.
+- `M_activate` = trailing activation threshold.
 
 At activation:
 
 ```text
 PeakProfit = current Profit
 ```
+
+where:
+
+- `PeakProfit` = highest basket profit recorded since trailing activation;
+- `Profit` = current basket profit.
 
 Whenever basket profit reaches a new high:
 
@@ -512,33 +519,33 @@ PeakProfit = new higher Profit
 
 Calculate the permitted trailing drop:
 
-[
-M_{drop} = U_{drop} 	imes M_{step}
-]
+```text
+M_drop = U_drop * M_step
+```
 
 where:
 
-- (M_{drop}) = permitted decline from peak basket profit;
-- (U_{drop}) = configured trailing-drop units;
-- (M_{step}) = current money value of one strategy step.
+- `M_drop` = permitted decline from peak basket profit;
+- `U_drop` = configured trailing-drop units;
+- `M_step` = current money value of one strategy step.
 
 Close the whole basket when:
 
-[
-Profit le PeakProfit - M_{drop}
-]
+```text
+Profit <= PeakProfit - M_drop
+```
 
 where:
 
 - `Profit` = current basket profit;
 - `PeakProfit` = highest basket profit observed since trailing activated;
-- (M_{drop}) = allowed decline from the peak.
+- `M_drop` = allowed decline from that peak.
 
-Opening another grid trade does not by itself reset trailing state. Trailing state is reset when the basket is closed/reset.
+Opening another grid trade does not by itself reset trailing state. Trailing state resets when the basket closes/resets.
 
 ### Plain English
 
-After the basket earns enough profit, trailing begins protecting that profit. It remembers the best basket profit reached and closes when profit falls far enough from that peak.
+After the basket earns enough profit, trailing begins protecting that profit. It remembers the best basket profit reached and closes the basket when profit falls far enough from that peak.
 
 ---
 
@@ -553,7 +560,7 @@ On every tick with an active basket, evaluate in this order:
 4. If no exit closes the basket, evaluate the next grid entry
 ```
 
-If any exit closes the basket successfully, stop processing that basket for the tick.
+If any exit closes the basket successfully, stop processing that basket for the current tick. Do not initialize a replacement basket on the same tick.
 
 ### Plain English
 
@@ -563,18 +570,20 @@ The strategy always asks whether it should close the basket before it considers 
 
 ## 15. Basket lifecycle
 
-When an exit condition closes the basket:
+When an exit closes the basket:
 
 - close all basket positions;
 - reset basket state;
 - reset trailing state;
-- reset trade sequence state.
+- reset trade-sequence state.
 
-A new basket then starts from a fresh anchor when normal basket initialization occurs again.
+A later tick may initialize a new basket from a fresh anchor.
+
+At the end of historical data, an open basket is marked to market rather than force-closed.
 
 ### Plain English
 
-All open trades belong to one basket. The basket is managed and closed as one unit.
+All trades belong to one basket. The basket is managed and closed as one unit. A finished basket does not immediately restart on the same market tick.
 
 ---
 
@@ -600,7 +609,7 @@ Strictly alternate sides
         |
         +-- Trades 1-4
         |      arithmetic sizing
-        |      base lot x trade number
+        |      base lot * trade number
         |
         +-- Trade 5+
                HARD-BE MODE
@@ -628,14 +637,14 @@ Reset basket state
 
 ## 17. Principal research parameters
 
-The key parameters to expose for testing are:
+Expose at least these strategy parameters:
 
 ```text
 StepPercent
     grid-step percentage of anchor
 
 BaseLot
-    lot size used to build trades 1-4
+    base lot used to construct trades 1-4
 
 Nnormal
     number of arithmetic-sized trades
@@ -658,6 +667,8 @@ TrailingDropUnits
     current default: 0.25
 ```
 
+Execution-cost, commission-buffer, volume-step, and instrument money-value settings must also remain explicit inputs rather than hidden assumptions.
+
 ---
 
 ## 18. Core design rule
@@ -675,4 +686,4 @@ Trade 5 onward
 -> no BE drift beyond the configured ceiling
 ```
 
-The grid geometry and basket exit logic remain unchanged when tail mode activates. Only the lot-sizing rule changes.
+The grid geometry and basket exit logic do not change when tail mode activates. Only the lot-sizing rule changes.
