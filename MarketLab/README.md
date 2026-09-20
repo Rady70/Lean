@@ -24,6 +24,10 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `scripts\build.ps1` | runs the two Batch A build commands verbatim |
 | `scripts\run-backtest.ps1` | pre-flight checks, direct Launcher invocation, post-run data check |
 | `tests\Test-MarketLabBacktesting.ps1` | self-contained assertions for the above |
+| `SINGLE_ANCHOR_VNEXT_STRATEGY.md` | the SingleAnchor vNext strategy specification (authoritative behaviour) |
+| `SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` | where its C# implementation lives, how it is built, tested and run, what is deferred |
+| `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
+| `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
 | `.gitignore` | ignores `output\` (generated runs) |
 
 All scripts run on Windows PowerShell 5.1 and PowerShell 7 and use `exit`
@@ -460,6 +464,17 @@ The qualified Python runtime is the one in the table above. Python.NET 2.0.66
 also loaded this machine's python.org 3.14.5 with pandas 3.0.3 and produced
 the same statistics once; that is an observation, not a qualified
 configuration.
+
+### The SingleAnchor vNext strategy (MarketLab-owned C#)
+
+`src\SingleAnchor\` holds the strategy assembly and `tests\SingleAnchor\` its
+tests; both are built with plain `dotnet build` / `dotnet test` on top of the
+engine build and run through this helper with `-AlgorithmLocation
+MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll
+-AlgorithmTypeName SingleAnchorVNextAlgorithm` plus the `single-anchor-*`
+parameters. [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md)
+has the commands, the parameter names and the deferred items; no XAUUSD data
+ships with the fork, so a run today ends with exit code 3 (section 10).
 
 ## 10. When required data is missing
 

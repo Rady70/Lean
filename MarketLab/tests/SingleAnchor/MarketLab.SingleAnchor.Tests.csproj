@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Behaviour tests for the SingleAnchor vNext strategy engine on deterministic synthetic quotes.
+    No LEAN engine run and no market data: the engine is driven directly and orders are filled by
+    a synthetic executor. Package versions match the upstream Tests project so no new package
+    is introduced. Run: dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj -c Release
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MarketLab.SingleAnchor.Tests</RootNamespace>
+    <AssemblyName>MarketLab.SingleAnchor.Tests</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.9.4" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SingleAnchor\MarketLab.SingleAnchor.csproj" />
+  </ItemGroup>
+</Project>
