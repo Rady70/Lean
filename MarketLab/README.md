@@ -341,11 +341,13 @@ helper trims: `ema-fast:10, ema-slow:20` would hand the algorithm the key
 `" ema-slow"`, which `[Parameter("ema-slow")]` and `GetParameter("ema-slow")`
 never match, so the in-code default would be used with exit code 0 and no
 message — observed in Batch D before the refusal was added), an entry
-containing a double quote, an entry that contains whitespace and ends with
-a backslash (Windows PowerShell 5.1 passes neither to the launcher intact:
-`q:a"b` arrived as `q:ab` and `p:hello world\` as `p:hello world"`, with exit
-code 0 — also observed in Batch D; PowerShell 7 delivers both correctly, but
-the helper behaves the same on both shells), and a repeated key (LEAN
+containing a double quote, a list that contains whitespace anywhere and
+whose last entry ends with a backslash (Windows PowerShell 5.1 passes
+neither to the launcher intact: `q:a"b` arrived as `q:ab`, `p:hello world\`
+as `p:hello world"` and `ema-fast:10,p:hello world,z:dir\` delivered `z` as
+`dir"`, each with exit code 0 — also observed in Batch D; PowerShell 7
+delivers all of them correctly, but the helper behaves the same on both
+shells, because the pairs travel as one quoted argument), and a repeated key (LEAN
 silently keeps the last; keys are compared exactly, as LEAN compares them,
 so `A` and `a` are two keys). Everything else is delivered as typed: values
 with spaces, `=`, `;`, `|`, `&`, parentheses, braces, `$`, backticks,

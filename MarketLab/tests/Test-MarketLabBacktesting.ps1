@@ -514,6 +514,8 @@ try {
     # Windows PowerShell 5.1 does not deliver an embedded quote, or a trailing backslash inside a quoted argument, to the launcher intact.
     Assert-PreflightFailure '-Parameters entry with a double quote' @('-Parameters', 'ema-fast:10,q:a"b', '-DryRun') 'contains a double quote'
     Assert-PreflightFailure '-Parameters entry with whitespace and a trailing backslash' @('-Parameters', 'ema-fast:10,p:hello world\', '-DryRun') 'ends with a backslash'
+    # The rule applies to the joined --parameters argument: whitespace in any entry, backslash at the very end.
+    Assert-PreflightFailure '-Parameters list with whitespace elsewhere and a trailing backslash' @('-Parameters', 'ema-fast:10,p:hello world,z:dir\', '-DryRun') 'ends with a backslash'
     # Keys are compared exactly, as LEAN does: A and a are two keys; a plain backslash without whitespace is delivered intact.
     $paramsCase = Invoke-Helper @('-AlgorithmTypeName', 'ParameterizedAlgorithm', '-Parameters', 'A:1,a:2,p:dir\', '-DryRun')
     Assert-Equal 0 $paramsCase.ExitCode '-Parameters keys differing only in case and a backslash value: exit code 0'

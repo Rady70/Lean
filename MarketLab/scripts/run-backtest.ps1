@@ -122,11 +122,11 @@ a key or value, and a value containing ':' is refused in pre-flight (exit 2),
 as are an empty key or value, a key or value with leading or trailing
 whitespace (neither LEAN nor this script trims, so " ema-slow" would never
 match the algorithm's "ema-slow" and the default would be used silently), an
-entry containing a double quote or containing whitespace and ending with a
-backslash (Windows PowerShell 5.1 does not pass either to the launcher
-intact, so both are refused on every shell) and a repeated key, compared
-exactly as LEAN compares keys (LEAN logs an engine ERROR:: for an empty value
-and silently keeps the last duplicate). Default: none.
+entry containing a double quote, a list that contains whitespace anywhere
+and whose last entry ends with a backslash (Windows PowerShell 5.1 does not
+pass either to the launcher intact, so both are refused on every shell) and
+a repeated key, compared exactly as LEAN compares keys (LEAN logs an engine
+ERROR:: for an empty value and silently keeps the last duplicate). Default: none.
 
 .PARAMETER DataFolder
 Historical data root (`--data-folder`). Must contain
@@ -611,11 +611,12 @@ if ($AlgorithmLanguage -eq 'Python') {
 # (which the post-run check would turn into exit code 4), a whitespace-only
 # value fails the [Parameter] conversion instead (the algorithm-time "Error
 # applying parameter values" of the README), a repeated key is silently
-# overwritten, and a '"' or a whitespace-containing value ending in '\' is
-# not delivered intact to the launcher by Windows PowerShell 5.1 (it does not
-# escape embedded quotes for native executables; observed: q:a"b arrived as
-# q:ab and p:hello world\ as p:hello world"); all of these are refused. Keys
-# are compared ordinally, as LEAN's dictionaries do (A and a are two keys).
+# overwritten, and a '"' anywhere, or a list with whitespace anywhere whose
+# last entry ends in '\', is not delivered intact to the launcher by Windows
+# PowerShell 5.1 (it does not escape embedded quotes for native executables;
+# observed: q:a"b arrived as q:ab and p:hello world\ as p:hello world"); all
+# of these are refused. Keys are compared ordinally, as LEAN's dictionaries
+# do (A and a are two keys).
 $parameterPairs = @()
 if ($null -ne $Parameters -and $Parameters.Count -gt 0) {
     $seenKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
@@ -649,19 +650,23 @@ if ($null -ne $Parameters -and $Parameters.Count -gt 0) {
             $problems.Add("-Parameters entry `"$text`" contains a double quote. Windows PowerShell 5.1 does not deliver an embedded `"`"`" intact to the launcher (the algorithm would receive a different value with exit code 0), so quotes are refused on every shell; put such a value in the `"parameters`" object of a config copy passed with -Config instead.")
             continue
         }
-        # An argument with whitespace is wrapped in quotes for the launcher, and
-        # a trailing backslash then escapes the closing quote under Windows
-        # PowerShell 5.1 (observed in Batch D: p:hello world\ arrived as
-        # p:hello world"; pwsh 7 delivers it intact). Refused on every shell.
-        if ($text.EndsWith('\') -and $text -match '\s') {
-            $problems.Add("-Parameters entry `"$text`" contains whitespace and ends with a backslash. Windows PowerShell 5.1 quotes such an argument and the trailing backslash escapes the closing quote, so the algorithm would receive a different value with exit code 0; it is refused on every shell. Drop the trailing backslash or use the `"parameters`" object of a config copy passed with -Config.")
-            continue
-        }
         if (-not $seenKeys.Add($key)) {
             $problems.Add("-Parameters entry `"$text`" repeats the key `"$key`" (keys are compared exactly, as LEAN does). LEAN would silently keep the last value; pass each key once.")
             continue
         }
         $parameterPairs += $text
+    }
+    # The pairs travel as ONE launcher argument. When that argument contains
+    # whitespace anywhere, Windows PowerShell 5.1 wraps the whole of it in
+    # quotes, and a trailing backslash then escapes the closing quote
+    # (observed in Batch D: p:hello world\ arrived as p:hello world", and
+    # ema-fast:10,p:hello world,z:dir\ delivered z as dir"; pwsh 7 delivers
+    # both intact). Refused on every shell, on the joined value.
+    if ($parameterPairs.Count -gt 0) {
+        $joined = $parameterPairs -join ','
+        if ($joined.EndsWith('\') -and $joined -match '\s') {
+            $problems.Add("-Parameters list `"$joined`" contains whitespace and its last entry ends with a backslash. Windows PowerShell 5.1 quotes the whole --parameters argument when it contains whitespace, and the trailing backslash then escapes the closing quote, so the algorithm would receive a different value with exit code 0; it is refused on every shell. Drop the trailing backslash, move that entry away from the end, or use the `"parameters`" object of a config copy passed with -Config.")
+        }
     }
 }
 
