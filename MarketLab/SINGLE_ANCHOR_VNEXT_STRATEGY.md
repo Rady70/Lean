@@ -103,9 +103,35 @@ SELL -> BUY -> SELL -> BUY -> ...
 
 A BUY cannot directly follow a BUY. A SELL cannot directly follow a SELL.
 
+After the first entry, strict alternation has absolute priority. Only the opposite side of the previous trade is eligible:
+
+```text
+previous trade BUY  -> evaluate only the SELL condition
+previous trade SELL -> evaluate only the BUY condition
+```
+
+Even if a later quote also satisfies the other numerical boundary inequality, that other side cannot open; the opposite side of the previous trade is the only eligible side.
+
+Before the first entry the basket is empty and has no previous side. If one quote satisfies both rules at the same time:
+
+```text
+Ask >= Upper
+AND
+Bid <= Lower
+```
+
+the basket must not start on that quote:
+
+- no BUY priority;
+- no SELL priority;
+- no double entry;
+- a single quote does not establish which side crossed first.
+
+The basket stays with zero trades and waits for a later quote that satisfies exactly one rule and therefore determines the first side unambiguously. Skipping such a quote is a validity condition for starting the basket, not a trade decision, and it never ends the run.
+
 ### Plain English
 
-The basket grows only when price moves back and forth between the same two fixed boundaries.
+The basket grows only when price moves back and forth between the same two fixed boundaries. If one quote is wide enough to touch both boundaries at once, the basket simply does not start on that quote.
 
 ---
 
@@ -169,31 +195,54 @@ Reaching trade 5 means the basket has entered the tail. From then on, lot size i
 
 ## 6. Hard fixed breakeven ceiling
 
-Let `C` be the configured maximum breakeven distance from the original anchor, expressed as a percentage.
+Basket breakeven (BE) means:
 
-For an upward recovery target:
+> the market level at which every currently open BUY and SELL position is closed at the same instant and the total executable basket P/L is exactly zero.
+
+Let `C` be the configured maximum BE distance from the original anchor, expressed as a percentage.
+
+For an upper basket recovery:
 
 ```text
 T_up = A * (1 + C / 100)
+
+Bid = T_up
 ```
 
 where:
 
-- `T_up` = maximum permitted upper-side basket breakeven price;
+- `T_up` = maximum permitted upper basket-BE **Bid** level;
 - `A` = original basket anchor price;
-- `C` = configured hard-BE ceiling percentage.
+- `C` = configured hard-BE ceiling percentage;
+- `Bid = T_up` = the hard-BE market level: the upper basket BE may not be above it.
 
-For a downward recovery target:
+At that instant the complete basket closes: BUY positions close using the Bid-side executable price at `Bid = T_up`, and SELL positions close at the same instant using the Ask-side executable price of that same quote.
+
+For a downward recovery:
 
 ```text
 T_down = A * (1 - C / 100)
+
+Ask = T_down
 ```
 
 where:
 
-- `T_down` = maximum permitted lower-side basket breakeven price;
-- `A` = original basket anchor price;
-- `C` = configured hard-BE ceiling percentage.
+- `T_down` = maximum permitted lower basket-BE **Ask** level;
+- `Ask = T_down` = the hard-BE market level: the lower basket BE may not be below it.
+
+At that instant the complete basket closes: SELL positions close using the Ask-side executable price at `Ask = T_down`, and BUY positions close at the same instant using the Bid-side executable price of that same quote.
+
+The hard-BE target itself is exactly `T_up` on the Bid or `T_down` on the Ask. Spread, slippage and commission are execution economics used to calculate the executable P/L of that simultaneous basket closure; they do not shift or redefine the target.
+
+For forward projection under a configured target spread `W` (used only to reconstruct the opposite quote side of the projected simultaneous closure):
+
+```text
+upper recovery projection: Bid = T_up, Ask = T_up + W
+lower recovery projection: Ask = T_down, Bid = T_down - W
+```
+
+`W` is never added to or subtracted from the BE level. `T_up + W` and `T_down - W` are projected quote sides, not BE levels.
 
 Current research starting value:
 
@@ -205,12 +254,12 @@ This is a calibration starting value, not a permanently proven optimum.
 
 Target selection:
 
-- if the next required tail trade is BUY, use `T_up`;
-- if the next required tail trade is SELL, use `T_down`.
+- if the next required tail trade is BUY, use `T_up` (upper recovery, Bid side);
+- if the next required tail trade is SELL, use `T_down` (lower recovery, Ask side).
 
 ### Plain English
 
-Once tail mode starts, the strategy fixes the farthest acceptable recovery point from the original anchor. Every later order must be large enough to keep basket breakeven at or inside that limit.
+Once tail mode starts, the strategy fixes the farthest acceptable recovery point from the original anchor. Every later order must be large enough that the basket's true zero-loss breakeven stays at or inside that limit.
 
 ---
 
@@ -256,7 +305,11 @@ where:
 
 - `PL_1lot(T)` = profit/loss contribution at the target from one lot of the proposed new side.
 
-The tail calculation must use executable basket economics, including configured bid/ask execution side, spread, commission, slippage, swap/financing, and other enabled execution costs.
+The ratio is a convenience, not the rule. When `PL_1lot(T) <= 0` the primary requirement (`PL_after(T, Q) >= 0`, smallest valid `Q`) still governs directly: if the basket already projects at or inside the ceiling, the minimum broker lot is the smallest valid positive order; if the minimum lot makes `PL_after` negative, no larger lot can help, because the marginal contribution of the required side is not positive, so the sizing is infeasible. This is a consequence of the primary rule, not a separate strategy decision.
+
+The tail calculation must use executable basket economics: the configured target spread `W` reconstructs the opposite quote side at the projected simultaneous close, and configured slippage and commission are applied to the executable close of every position. The target level itself is never shifted by them.
+
+Financing (swap) is not supported in this revision: the value of a basket's projected P/L at the hard target can change after the entry when financing accrues, so a strategy-qualified run requires a zero financing configuration (see sections 9 and 17).
 
 ### Plain English
 
@@ -311,7 +364,9 @@ Because the BE limit is hard, volume rounding must be conservative. If 0.1234 lo
 
 ## 9. Basket profit used for exits
 
-Raw basket profit is the combined current profit of all positions in the basket, including swap/financing where configured.
+Raw basket profit is the combined current profit of all positions in the basket.
+
+Financing (swap) is not supported in this revision: only a zero financing configuration can produce a strategy-qualified run (sections 7 and 17).
 
 If an optional commission buffer is enabled:
 
@@ -420,7 +475,7 @@ where:
 - `Profit` = current basket profit;
 - `M_escape` = escape threshold.
 
-Escape applies only when the basket has at least two open positions.
+Escape applies only when the basket has at least two open positions. The minimum-open-positions input may be raised above two for research, but it must never be configured below two.
 
 ### Plain English
 
@@ -599,13 +654,18 @@ Create fixed anchor
         +-- Lower = anchor - step
         |
         v
-Wait for first boundary
+Wait for a usable first boundary
         |
-        v
-Open first BUY or SELL
+        +-- exactly one boundary satisfied
+        |      open the first BUY or SELL
+        |
+        +-- both boundaries satisfied on the same quote
+               open nothing, stay empty, wait for a later quote
         |
         v
 Strictly alternate sides
+        |
+        +-- only the opposite side of the previous trade is eligible
         |
         +-- Trades 1-4
         |      arithmetic sizing
@@ -652,10 +712,14 @@ Nnormal
 
 HardBECeilingPercent
     maximum permitted BE distance from original anchor
+    T_up is the maximum upper BE Bid level, T_down the maximum lower BE Ask level
     current research starting value: approximately 4.478%
 
 EscapeProfitUnits
     current default: 0.05
+
+EscapeMinimumOpenPositions
+    at least 2; the default is 2
 
 FixedTPUnits
     current default: 0.0 (disabled)
@@ -667,7 +731,9 @@ TrailingDropUnits
     current default: 0.25
 ```
 
-Execution-cost, commission-buffer, volume-step, and instrument money-value settings must also remain explicit inputs rather than hidden assumptions.
+Execution-cost, commission-buffer, volume-step, and instrument money-value settings must also remain explicit inputs rather than hidden assumptions. The hard-BE projection uses a configured target spread to reconstruct the opposite quote side of the projected simultaneous basket closure (section 6); the target level itself is `Bid = T_up` or `Ask = T_down`.
+
+Financing settings must be explicit inputs and must be zero for a strategy-qualified run. A non-zero financing configuration is rejected until continuous financing behaviour is specified: financing accrued after a tail entry can move the projected P/L at the hard target without any re-verification, which would violate the hard ceiling.
 
 ---
 
