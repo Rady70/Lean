@@ -11,10 +11,9 @@ namespace MarketLab.SingleAnchor
     /// </summary>
     /// <remarks>
     /// Besides the leg list (kept for audit and reporting) the basket maintains the aggregates
-    /// that make every per-quote valuation constant-time: BUY and SELL lots, the entry-price
-    /// notionals (sum of entry price times lots per side) and the accrued swap total. Every leg
-    /// is a whole number of volume steps, so the signed net exposure is exact and "net-flat" is
-    /// exactly zero.
+    /// that make every per-quote valuation constant-time: BUY and SELL lots and the entry-price
+    /// notionals (sum of entry price times lots per side). Every leg is a whole number of volume
+    /// steps, so the signed net exposure is exact and "net-flat" is exactly zero.
     /// </remarks>
     public sealed class Basket
     {
@@ -96,9 +95,6 @@ namespace MarketLab.SingleAnchor
         /// <summary>Sum of entry price times lots over the SELL legs.</summary>
         public decimal SellNotional { get; private set; }
 
-        /// <summary>Swap credited (positive) or charged (negative) to all legs so far, account currency.</summary>
-        public decimal AccruedSwapTotal { get; private set; }
-
         /// <summary>BuyLots + SellLots.</summary>
         public decimal GrossLots => BuyLots + SellLots;
 
@@ -139,16 +135,17 @@ namespace MarketLab.SingleAnchor
         public decimal PeakProfit { get; private set; }
 
         /// <summary>
-        /// Next rollover instant at which swap is evaluated, or null while swap is not configured
-        /// or the basket has no legs.
-        /// </summary>
-        public DateTime? NextRolloverTime { get; internal set; }
-
-        /// <summary>
         /// The most recent rejected entry attempt for this basket, kept so an unchanged
         /// situation is reported once rather than on every quote; cleared by a filled entry.
         /// </summary>
         public EntryRejection? LastRejection { get; internal set; }
+
+        /// <summary>
+        /// The quotes on which this basket, still empty, satisfied both first-entry boundaries and
+        /// therefore could not start (specification section 3). Null until the first such quote.
+        /// One compact row per basket; no per-tick records.
+        /// </summary>
+        public SkippedFirstEntryRecord? SkippedFirstEntry { get; private set; }
 
         internal void AddLeg(BasketLeg leg)
         {
@@ -177,10 +174,17 @@ namespace MarketLab.SingleAnchor
             _rejections.Add(record);
         }
 
-        internal void AddSwap(BasketLeg leg, decimal amount)
+        internal SkippedFirstEntryRecord RecordSkippedFirstEntry(long quoteSequence, in Quote quote)
         {
-            leg.AccruedSwap += amount;
-            AccruedSwapTotal += amount;
+            if (SkippedFirstEntry == null)
+            {
+                SkippedFirstEntry = new SkippedFirstEntryRecord(Sequence, quoteSequence, quote);
+            }
+            else
+            {
+                SkippedFirstEntry.Repeat(quoteSequence, quote);
+            }
+            return SkippedFirstEntry;
         }
 
         internal void ActivateHardBreakevenMode()

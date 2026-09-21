@@ -66,10 +66,11 @@ namespace MarketLab.SingleAnchor
         public Quote TriggerQuote { get; }
 
         /// <summary>
-        /// Swap/financing credited (positive) or charged (negative) to this leg so far, in account
-        /// currency. Zero unless swap is configured.
+        /// The raw requested lot of an arithmetic leg (B * trade number), before broker
+        /// normalization; null for a hard-BE leg. Kept so the traces can distinguish the raw
+        /// request from the normalized required lot and the placed lot.
         /// </summary>
-        public decimal AccruedSwap { get; internal set; }
+        public decimal? RawRequestedLots { get; internal set; }
 
         /// <summary>The hard-BE sizing that produced this leg; null for an arithmetic leg.</summary>
         public HardBreakevenSizing? Sizing { get; internal set; }
@@ -77,7 +78,7 @@ namespace MarketLab.SingleAnchor
         /// <inheritdoc />
         public override string ToString()
         {
-            return $"#{TradeNumber} {Side} {Lots} @ {EntryPrice} ({Regime}, swap {AccruedSwap})";
+            return $"#{TradeNumber} {Side} {Lots} @ {EntryPrice} ({Regime})";
         }
     }
 }

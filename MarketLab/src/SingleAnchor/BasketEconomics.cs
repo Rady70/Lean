@@ -5,31 +5,31 @@ namespace MarketLab.SingleAnchor
     /// <summary>
     /// Basket-level money arithmetic (specification sections 7, 9 and 10). Pure functions over the
     /// basket ledger; nothing here reads host holdings. Every valuation uses the basket's
-    /// aggregates (BUY/SELL lots, entry notionals, swap total), so it costs the same whether the
+    /// aggregates (BUY/SELL lots, entry notionals), so it costs the same whether the
     /// basket holds one leg or fifty; the per-leg helpers exist for audit and tests.
     /// </summary>
     public static class BasketEconomics
     {
         /// <summary>
         /// Current profit of one leg marked at the side it would close on: a BUY at the Bid, a
-        /// SELL at the Ask, plus the leg's accrued swap. No commission (see the commission buffer).
+        /// SELL at the Ask. No commission (see the commission buffer).
         /// </summary>
         public static decimal CurrentLegProfit(BasketLeg leg, in Quote quote, decimal pointValuePerLot)
         {
             if (leg == null) throw new ArgumentNullException(nameof(leg));
             var priceMove = leg.Side == TradeSide.Buy ? quote.Bid - leg.EntryPrice : leg.EntryPrice - quote.Ask;
-            return priceMove * leg.Lots * pointValuePerLot + leg.AccruedSwap;
+            return priceMove * leg.Lots * pointValuePerLot;
         }
 
         /// <summary>
         /// RawProfit: the combined current profit of every leg, BUY legs marked at the Bid and
-        /// SELL legs at the Ask, plus accrued swap (section 9). Constant time.
+        /// SELL legs at the Ask (section 9). Constant time.
         /// </summary>
         public static decimal RawProfit(Basket basket, in Quote quote, SingleAnchorParameters parameters)
         {
             if (basket == null) throw new ArgumentNullException(nameof(basket));
             if (parameters == null) throw new ArgumentNullException(nameof(parameters));
-            return PriceProfit(basket, quote.Bid, quote.Ask, parameters.PointValuePerLot) + basket.AccruedSwapTotal;
+            return PriceProfit(basket, quote.Bid, quote.Ask, parameters.PointValuePerLot);
         }
 
         /// <summary>
@@ -106,31 +106,30 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// Executable profit of the whole basket closed at the given per-side prices: price P/L,
-        /// plus accrued swap, less the round-trip commission on the gross volume. Used for the
-        /// projection at a hard target (section 7), for the realized result of a close and for
-        /// the executable mark-to-market of an open basket. Constant time.
+        /// Executable profit of the whole basket closed at the given per-side prices: price P/L
+        /// less the round-trip commission on the gross volume. Used for the projection at a hard
+        /// target (section 7), for the realized result of a close and for the executable
+        /// mark-to-market of an open basket. Constant time.
         /// </summary>
         public static decimal ExecutableProfit(Basket basket, decimal buyClosePrice, decimal sellClosePrice, SingleAnchorParameters parameters)
         {
             if (basket == null) throw new ArgumentNullException(nameof(basket));
             if (parameters == null) throw new ArgumentNullException(nameof(parameters));
             return PriceProfit(basket, buyClosePrice, sellClosePrice, parameters.PointValuePerLot)
-                + basket.AccruedSwapTotal
                 - parameters.CommissionPerLot * basket.GrossLots;
         }
 
         /// <summary>
         /// Projected executable profit of one leg closed at the hard target: a BUY closes at the
-        /// projected Bid less slippage, a SELL at the projected Ask plus slippage; accrued swap is
-        /// kept and the round-trip commission for the leg's volume is deducted (section 7).
+        /// projected Bid less slippage, a SELL at the projected Ask plus slippage; the round-trip
+        /// commission for the leg's volume is deducted (section 7).
         /// </summary>
-        public static decimal ProjectedLegProfit(TradeSide side, decimal lots, decimal entryPrice, decimal accruedSwap, in TargetPrices target, SingleAnchorParameters parameters)
+        public static decimal ProjectedLegProfit(TradeSide side, decimal lots, decimal entryPrice, in TargetPrices target, SingleAnchorParameters parameters)
         {
             if (parameters == null) throw new ArgumentNullException(nameof(parameters));
             var closePrice = side == TradeSide.Buy ? target.Bid - parameters.Slippage : target.Ask + parameters.Slippage;
             var priceMove = side == TradeSide.Buy ? closePrice - entryPrice : entryPrice - closePrice;
-            return priceMove * lots * parameters.PointValuePerLot + accruedSwap - parameters.CommissionPerLot * lots;
+            return priceMove * lots * parameters.PointValuePerLot - parameters.CommissionPerLot * lots;
         }
 
         /// <summary>
@@ -150,33 +149,52 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
-    /// Executable prices assumed at a hard target. The specification defines T_up / T_down as the
-    /// "maximum permitted ... basket breakeven price" without saying which price; this
-    /// implementation treats T as a midpoint and splits the configured target spread
-    /// symmetrically around it (Bid = T - spread / 2, Ask = T + spread / 2). That reading is an
-    /// implementation choice pending owner approval, not a rule of the specification.
+    /// Executable prices of the simultaneous basket closure at a hard target (specification
+    /// section 6). The basket-BE level itself is the Bid at an upper recovery (<c>Bid = T_up</c>)
+    /// and the Ask at a lower recovery (<c>Ask = T_down</c>); the configured target spread is used
+    /// only to reconstruct the opposite quote side of that same instant. It never shifts the BE
+    /// level.
     /// </summary>
     public readonly record struct TargetPrices
     {
-        /// <summary>Builds the projected Bid/Ask around a mid target with the given spread.</summary>
-        public TargetPrices(decimal target, decimal spread)
+        private TargetPrices(decimal target, decimal spread, bool upperRecovery)
         {
             Target = target;
             Spread = spread;
-            Bid = target - spread / 2m;
-            Ask = target + spread / 2m;
+            if (upperRecovery)
+            {
+                Bid = target;
+                Ask = target + spread;
+            }
+            else
+            {
+                Ask = target;
+                Bid = target - spread;
+            }
         }
 
-        /// <summary>T, the hard target, read as a midpoint (pending owner approval).</summary>
+        /// <summary>Upper recovery projection: the BE level is the Bid; the Sell side is reconstructed as Ask = T_up + spread.</summary>
+        public static TargetPrices ForUpperRecovery(decimal target, decimal spread)
+        {
+            return new TargetPrices(target, spread, upperRecovery: true);
+        }
+
+        /// <summary>Lower recovery projection: the BE level is the Ask; the Buy side is reconstructed as Bid = T_down - spread.</summary>
+        public static TargetPrices ForLowerRecovery(decimal target, decimal spread)
+        {
+            return new TargetPrices(target, spread, upperRecovery: false);
+        }
+
+        /// <summary>T_up (upper recovery) or T_down (lower recovery), the hard basket-BE level.</summary>
         public decimal Target { get; }
 
-        /// <summary>Spread assumed at the target.</summary>
+        /// <summary>Spread assumed at the target for the opposite quote side.</summary>
         public decimal Spread { get; }
 
-        /// <summary>Projected Bid at the target, the close price of BUY legs before slippage.</summary>
+        /// <summary>Projected Bid of the simultaneous closing quote, the close price of BUY legs before slippage.</summary>
         public decimal Bid { get; }
 
-        /// <summary>Projected Ask at the target, the close price of SELL legs before slippage.</summary>
+        /// <summary>Projected Ask of the simultaneous closing quote, the close price of SELL legs before slippage.</summary>
         public decimal Ask { get; }
 
         /// <summary>True when both projected prices are positive.</summary>

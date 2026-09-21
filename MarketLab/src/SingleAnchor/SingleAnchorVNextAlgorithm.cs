@@ -28,8 +28,9 @@ namespace MarketLab.SingleAnchor
     /// not carry instrument economics for anything else. A strategy invariant failure
     /// (<see cref="StrategyInvariantException"/>) or a data-quality failure
     /// (<see cref="DataQualityException"/>) writes the results with the failure recorded and then
-    /// stops the run as a LEAN runtime error. The results also carry the hard-BE guarantee
-    /// metadata and the strategy-definition decisions still open with the owner.
+    /// stops the run as a LEAN runtime error. The results also carry the hard-BE verification
+    /// metadata (strategy definition resolved, requirement verified at each tail entry under the
+    /// configured execution model).
     /// </summary>
     /// <remarks>
     /// The default dates cover the 13-day Oanda XAUUSD tick sample that upstream ships under
@@ -74,8 +75,6 @@ namespace MarketLab.SingleAnchor
         [Parameter("single-anchor-projected-spread")] private string _projectedSpread = "";
         [Parameter("single-anchor-buy-swap-per-lot-per-day")] private decimal _buySwapPerLotPerDay = 0m;
         [Parameter("single-anchor-sell-swap-per-lot-per-day")] private decimal _sellSwapPerLotPerDay = 0m;
-        [Parameter("single-anchor-swap-rollover-time")] private string _swapRolloverTime = "1700";
-        [Parameter("single-anchor-triple-swap-day")] private string _tripleSwapDay = "Wednesday";
 
         private Symbol _symbol = null!;
         private SingleAnchorEngine _engine = null!;
@@ -144,9 +143,7 @@ namespace MarketLab.SingleAnchor
                 Slippage = _slippage,
                 ProjectedSpread = ParameterParsing.ParseOptionalDecimal(_projectedSpread, "single-anchor-projected-spread"),
                 BuySwapPerLotPerDay = _buySwapPerLotPerDay,
-                SellSwapPerLotPerDay = _sellSwapPerLotPerDay,
-                SwapRolloverTimeOfDay = ParameterParsing.ParseTimeOfDay(_swapRolloverTime, "single-anchor-swap-rollover-time"),
-                TripleSwapDay = ParameterParsing.ParseOptionalDayOfWeek(_tripleSwapDay, "single-anchor-triple-swap-day")
+                SellSwapPerLotPerDay = _sellSwapPerLotPerDay
             };
             var errors = _parameters.GetValidationErrors();
             if (errors.Count > 0)
@@ -157,13 +154,8 @@ namespace MarketLab.SingleAnchor
             _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters));
             WireEvents();
 
-            var guarantee = _engine.HardBreakevenGuarantee;
-            Log($"SingleAnchor hard-BE guarantee: qualified={guarantee.Qualified}; scope: {guarantee.Scope} Assumptions: {string.Join("; ", guarantee.Assumptions)}. Not covered: {string.Join("; ", guarantee.NotCovered)}." +
-                (guarantee.UnqualifiedReasons.Count > 0 ? " Not qualified because: " + string.Join(" ", guarantee.UnqualifiedReasons) : string.Empty));
-            foreach (var decision in OpenDecisions)
-            {
-                Log($"SingleAnchor open owner decision ({decision["id"]}): {decision["question"]} Current behaviour: {decision["currentBehaviour"]}");
-            }
+            var verification = _engine.HardBreakevenStatus;
+            Log($"SingleAnchor hard-BE verification: strategyDefinitionResolved={verification.StrategyDefinitionResolved}; hardBEVerifiedUnderConfiguredExecutionModel={verification.HardBEVerifiedUnderConfiguredExecutionModel}; scope: {verification.Scope} Assumptions: {string.Join("; ", verification.Assumptions)}. Not covered: {string.Join("; ", verification.NotCovered)}.");
 
             Log($"SingleAnchor vNext on {_symbol} ({_securityType}, {_market}) tick quotes; LEAN is the data host, fills are the research executor's, no LEAN order is placed.");
             var p = _parameters;
@@ -173,7 +165,7 @@ namespace MarketLab.SingleAnchor
                 $"trailing {(p.TrailingEnabled ? F(p.TrailingActivationUnits) + "/" + F(p.TrailingDropUnits) + " units" : "off")}, " +
                 $"commission buffer {F(p.CommissionBuffer)}, point value {F(p.PointValuePerLot)}/lot, volume step {F(p.VolumeStep)} [{F(p.MinimumVolume)}, {F(p.MaximumVolume)}], " +
                 $"commission {F(p.CommissionPerLot)}/lot round trip, slippage {F(p.Slippage)}, target spread {F(p.ProjectedSpread!.Value)}, " +
-                $"swap buy {F(p.BuySwapPerLotPerDay)} / sell {F(p.SellSwapPerLotPerDay)} per lot per day at {p.SwapRolloverTimeOfDay} (triple: {(p.TripleSwapDay.HasValue ? p.TripleSwapDay.Value.ToString() : "none")}).");
+                $"swap buy {F(p.BuySwapPerLotPerDay)} / sell {F(p.SellSwapPerLotPerDay)} per lot per day (financing not supported; both must be 0).");
         }
 
         /// <inheritdoc />
@@ -212,7 +204,8 @@ namespace MarketLab.SingleAnchor
             }
             else if (basket.OpenPositions == 0)
             {
-                Log($"SingleAnchor end of data: basket #{snapshot.Sequence} anchored at {F(snapshot.Anchor)} (upper {F(snapshot.Upper)}, lower {F(snapshot.Lower)}) with no open leg.");
+                Log($"SingleAnchor end of data: basket #{snapshot.Sequence} anchored at {F(snapshot.Anchor)} (upper {F(snapshot.Upper)}, lower {F(snapshot.Lower)}) with no open leg" +
+                    (snapshot.SkippedFirstEntryTrace != null ? $"; {snapshot.SkippedFirstEntryTrace.Attempts} first-entry quote(s) skipped as ambiguous" : string.Empty) + ".");
             }
             else
             {
@@ -228,27 +221,6 @@ namespace MarketLab.SingleAnchor
 
         private sealed record RunFailure(string Kind, string Condition, Quote Quote, string Message);
 
-        /// <summary>
-        /// Strategy-definition questions the specification leaves open and the owner has not yet
-        /// decided. They are written into every results file so no run is read as if they were
-        /// settled. The current behaviour is not the strategy; it is what the code does meanwhile.
-        /// </summary>
-        public static readonly IReadOnlyList<IReadOnlyDictionary<string, string>> OpenDecisions = new[]
-        {
-            new Dictionary<string, string>
-            {
-                ["id"] = "BothBoundariesOnOneQuote",
-                ["question"] = "How is a first-entry quote that satisfies both entry rules (Ask >= Upper and Bid <= Lower) to be treated? The specification defines no rule; no priority, no skip and no double entry has been approved.",
-                ["currentBehaviour"] = "the engine stops the run (StrategyInvariant BothBoundariesSatisfied) rather than choose; this stop is not an approved strategy rule."
-            },
-            new Dictionary<string, string>
-            {
-                ["id"] = "HardTargetPriceMeaning",
-                ["question"] = "Is T_up / T_down a midpoint target, with the configured target spread split around it (Bid = T - spread/2, Ask = T + spread/2) to obtain the executable prices of the projection? The specification defines T only as the maximum permitted breakeven price.",
-                ["currentBehaviour"] = "T is treated as a midpoint and the configured spread is split symmetrically around it; this reading is not yet approved."
-            }
-        };
-
         private BasketSnapshot? CurrentBasketSnapshot()
         {
             return _engine.Basket != null && _engine.LastProcessedQuote.HasValue ? _engine.MarkToMarket(_engine.LastProcessedQuote.Value) : null;
@@ -260,8 +232,7 @@ namespace MarketLab.SingleAnchor
             {
                 ["completed"] = failure == null,
                 ["failure"] = failure,
-                ["hardBreakevenGuarantee"] = _engine.HardBreakevenGuarantee,
-                ["openOwnerDecisions"] = OpenDecisions,
+                ["hardBreakevenVerification"] = _engine.HardBreakevenStatus,
                 ["symbol"] = _symbol.Value,
                 ["market"] = _market,
                 ["quoteTimeZone"] = Securities[_symbol].Exchange.TimeZone.Id,
@@ -272,13 +243,13 @@ namespace MarketLab.SingleAnchor
                 ["nonQuoteTicksUnused"] = _feed.NonQuoteTicks,
                 ["lastProcessedQuote"] = _engine.LastProcessedQuote,
                 ["legsOpened"] = _engine.EntriesOpened,
+                ["skippedFirstEntryQuotes"] = _engine.SkippedFirstEntryQuotes,
                 ["distinctRejectedEntries"] = _engine.EntriesRejected,
                 ["rejectedEntryAttempts"] = _engine.RejectedEntryAttempts,
                 ["basketsClosed"] = _engine.BasketsClosed,
                 ["realizedProfit"] = _engine.RealizedProfit,
                 ["closedBaskets"] = _engine.ClosedBaskets,
-                ["openBasket"] = CurrentBasketSnapshot(),
-                ["openBasketLegs"] = _engine.OpenBasketLegTrace()
+                ["openBasket"] = CurrentBasketSnapshot()
             };
             var settings = new JsonSerializerSettings { Formatting = Formatting.Indented, Converters = { new StringEnumConverter() } };
             if (ObjectStore.SaveJson(ResultsKey, results, settings: settings))
@@ -294,11 +265,12 @@ namespace MarketLab.SingleAnchor
         private void WireEvents()
         {
             _engine.AnchorCreated += e => Log($"SingleAnchor basket #{e.Basket.Sequence} anchor {F(e.Basket.Anchor)} at {e.Quote}: upper {F(e.Basket.Upper)}, lower {F(e.Basket.Lower)}, hard-BE targets {F(e.Basket.LowerTarget)} / {F(e.Basket.UpperTarget)}.");
+            _engine.FirstEntrySkipped += e => Log($"SingleAnchor basket #{e.Basket.Sequence} first entry skipped at {e.Quote} (spread {F(e.Quote.Spread)} satisfies both boundaries); the basket stays empty and waits for an unambiguous quote.");
             _engine.EntryOpened += e => Log($"SingleAnchor leg opened: {e.Leg}; basket buy {F(e.Basket.BuyLots)} / sell {F(e.Basket.SellLots)} / net {F(e.Basket.NetLots)} lots" + (e.Sizing != null ? "; " + e.Sizing.Message : string.Empty));
             _engine.EntryRejected += e => Error($"SingleAnchor entry rejected ({e.Rejection.Reason}) for trade {e.Rejection.TradeNumber} {e.Rejection.Side} of basket #{e.Basket.Sequence} at {e.Quote}: {e.Rejection.Message}");
             _engine.HardBreakevenViolated += e => Error($"SingleAnchor hard-BE violated by the fill of {e.Leg} in basket #{e.Basket.Sequence}: projected executable P/L at target {F(e.Sizing.Target.Target)} is {F(e.ProjectedProfitAfterFill)} after the fill (sizing expected {F(e.Sizing.ProjectedProfitAfter)}); the run stops.");
             _engine.TrailingActivated += e => Log($"SingleAnchor trailing activated at profit {F(e.Profit)} (threshold {F(e.ActivationThreshold)}) at {e.Quote}.");
-            _engine.BasketClosed += e => Log($"SingleAnchor basket #{e.Record.Sequence} closed by {e.Record.Reason} at {e.Quote}: {e.Record.Legs} legs, raw profit {F(e.Record.RawProfit)}, exit profit {F(e.Record.ExitProfit)} vs threshold {F(e.Record.Threshold)}, realized {F(e.Record.RealizedProfit)} (buys closed {F(e.Record.BuyClosePrice)}, sells closed {F(e.Record.SellClosePrice)}, swap {F(e.Record.Swap)}, commission {F(e.Record.Commission)}); realized total {F(_engine.RealizedProfit)}.");
+            _engine.BasketClosed += e => Log($"SingleAnchor basket #{e.Record.Sequence} closed by {e.Record.Reason} at {e.Quote}: {e.Record.Legs} legs, raw profit {F(e.Record.RawProfit)}, exit profit {F(e.Record.ExitProfit)} vs threshold {F(e.Record.Threshold)}, realized {F(e.Record.RealizedProfit)} (buys closed {F(e.Record.BuyClosePrice)}, sells closed {F(e.Record.SellClosePrice)}, commission {F(e.Record.Commission)}); realized total {F(_engine.RealizedProfit)}.");
             _engine.BasketCloseFailed += e => Error($"SingleAnchor close ({e.Reason}) failed at {e.Quote}: {e.Message}");
         }
 

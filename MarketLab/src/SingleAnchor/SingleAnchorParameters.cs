@@ -41,7 +41,7 @@ namespace MarketLab.SingleAnchor
         /// <summary>U_escape: escape threshold in strategy-step units. Default 0.05.</summary>
         public decimal EscapeProfitUnits { get; init; } = 0.05m;
 
-        /// <summary>Minimum open positions for the escape exit to apply. Default 2.</summary>
+        /// <summary>Minimum open positions for the escape exit to apply. The specification allows escape only with at least two open positions; values above two stay available for research, lower values are rejected.</summary>
         public int EscapeMinimumOpenPositions { get; init; } = 2;
 
         // ---- Fixed basket take-profit (section 12) ----
@@ -99,38 +99,29 @@ namespace MarketLab.SingleAnchor
         public decimal Slippage { get; init; }
 
         /// <summary>
-        /// The configured spread assumed at the hard target (section 7: "configured bid/ask
-        /// execution side, spread"). The implementation splits it around T to obtain the
-        /// projected executable Bid/Ask (T -/+ half; whether T is such a midpoint is an
-        /// interpretation pending owner approval). The hard-BE requirement is verified at each
-        /// tail entry under this assumption only; a wider spread at the target is not covered.
-        /// Must be supplied; zero is a valid sensitivity case (no arithmetic depends on a
-        /// positive spread), negative is not.
+        /// The configured spread assumed at the hard target. It reconstructs only the opposite
+        /// quote side of the projected simultaneous basket closure (upper: Bid = T_up,
+        /// Ask = T_up + W; lower: Ask = T_down, Bid = T_down - W); the hard-BE level itself is
+        /// always Bid = T_up or Ask = T_down, exactly as the specification defines it. Must be
+        /// supplied; zero is a valid sensitivity case, negative is not.
         /// </summary>
         public decimal? ProjectedSpread { get; init; }
 
-        // ---- Swap / financing (sections 7 and 9, "where configured") ----
+        // ---- Financing (sections 7, 9 and 17) ----
 
-        /// <summary>Swap per lot per charged rollover for BUY legs, account currency (negative = cost). Default 0.</summary>
+        /// <summary>
+        /// Swap per lot per day for BUY legs. The specification does not support financing in
+        /// this revision: accrued financing can move the projected P/L at the hard target after
+        /// the entry, which the engine does not re-verify, so a strategy-qualified run requires
+        /// zero. Non-zero values are rejected by <see cref="GetValidationErrors"/>.
+        /// </summary>
         public decimal BuySwapPerLotPerDay { get; init; }
 
-        /// <summary>Swap per lot per charged rollover for SELL legs, account currency (negative = cost). Default 0.</summary>
+        /// <summary>
+        /// Swap per lot per day for SELL legs. See <see cref="BuySwapPerLotPerDay"/>: must be
+        /// zero in a strategy-qualified run.
+        /// </summary>
         public decimal SellSwapPerLotPerDay { get; init; }
-
-        /// <summary>
-        /// Time of day, in the quote clock, at which a trading day rolls over. Rollovers that end a
-        /// Monday-to-Friday trading day are charged; those ending a Saturday or Sunday are not.
-        /// Default 17:00 (the New York close; LEAN's Oanda XAUUSD quotes are stamped in New York time).
-        /// </summary>
-        public TimeSpan SwapRolloverTimeOfDay { get; init; } = new TimeSpan(17, 0, 0);
-
-        /// <summary>
-        /// Trading day whose rollover charges three days of swap, or null for none. Default Wednesday.
-        /// </summary>
-        public DayOfWeek? TripleSwapDay { get; init; } = DayOfWeek.Wednesday;
-
-        /// <summary>True when either swap rate is non-zero, i.e. swap accrual is configured.</summary>
-        public bool SwapConfigured => BuySwapPerLotPerDay != 0m || SellSwapPerLotPerDay != 0m;
 
         /// <summary>
         /// Returns every problem with this parameter set, in a fixed order; empty when valid.
@@ -146,7 +137,7 @@ namespace MarketLab.SingleAnchor
             if (HardBreakevenCeilingPercent <= 0m || HardBreakevenCeilingPercent >= 100m) errors.Add($"{nameof(HardBreakevenCeilingPercent)} must be > 0 and < 100 (got {F(HardBreakevenCeilingPercent)}).");
 
             if (EscapeProfitUnits < 0m) errors.Add($"{nameof(EscapeProfitUnits)} must be >= 0 (got {F(EscapeProfitUnits)}).");
-            if (EscapeMinimumOpenPositions < 1) errors.Add($"{nameof(EscapeMinimumOpenPositions)} must be >= 1 (got {EscapeMinimumOpenPositions}).");
+            if (EscapeMinimumOpenPositions < 2) errors.Add($"{nameof(EscapeMinimumOpenPositions)} must be >= 2 (got {EscapeMinimumOpenPositions}); the specification allows escape only when the basket has at least two open positions.");
             if (FixedTakeProfitUnits < 0m) errors.Add($"{nameof(FixedTakeProfitUnits)} must be >= 0, 0 disables fixed TP (got {F(FixedTakeProfitUnits)}).");
             if (TrailingActivationUnits < 0m) errors.Add($"{nameof(TrailingActivationUnits)} must be >= 0 (got {F(TrailingActivationUnits)}).");
             if (TrailingDropUnits < 0m) errors.Add($"{nameof(TrailingDropUnits)} must be >= 0 (got {F(TrailingDropUnits)}).");
@@ -163,8 +154,10 @@ namespace MarketLab.SingleAnchor
             if (!ProjectedSpread.HasValue) errors.Add($"{nameof(ProjectedSpread)} must be supplied; the target spread of the hard-BE projection is an explicit input (zero is allowed).");
             else if (ProjectedSpread.Value < 0m) errors.Add($"{nameof(ProjectedSpread)} must be >= 0 (got {F(ProjectedSpread.Value)}).");
 
-            if (SwapRolloverTimeOfDay < TimeSpan.Zero || SwapRolloverTimeOfDay >= TimeSpan.FromDays(1)) errors.Add($"{nameof(SwapRolloverTimeOfDay)} must be a time of day in [00:00, 24:00) (got {SwapRolloverTimeOfDay}).");
-            if (TripleSwapDay == DayOfWeek.Saturday || TripleSwapDay == DayOfWeek.Sunday) errors.Add($"{nameof(TripleSwapDay)} must be a weekday or null (got {TripleSwapDay}); weekend rollovers are never charged.");
+            if (BuySwapPerLotPerDay != 0m || SellSwapPerLotPerDay != 0m)
+            {
+                errors.Add($"{nameof(BuySwapPerLotPerDay)} and {nameof(SellSwapPerLotPerDay)} must both be 0 (got {F(BuySwapPerLotPerDay)} / {F(SellSwapPerLotPerDay)}): financing accrued after a tail entry can move the projected P/L at the hard target without re-verification and would violate the hard ceiling; the specification does not support financing in this revision.");
+            }
 
             return errors;
         }

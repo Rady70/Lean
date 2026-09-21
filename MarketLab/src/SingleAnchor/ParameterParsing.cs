@@ -20,24 +20,6 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// A time of day. Accepts HH:mm, HH:mm:ss and, because LEAN's command-line --parameters
-        /// option splits on ':', the colon-free forms HHmm and HHmmss (for example 1700 or 170000).
-        /// </summary>
-        public static TimeSpan ParseTimeOfDay(string value, string name)
-        {
-            var text = value?.Trim() ?? string.Empty;
-            string[] formats = { "hh\\:mm\\:ss", "hh\\:mm", "hhmmss", "hhmm" };
-            foreach (var format in formats)
-            {
-                if (TimeSpan.TryParseExact(text, format, CultureInfo.InvariantCulture, out var time) && time >= TimeSpan.Zero && time < TimeSpan.FromDays(1))
-                {
-                    return time;
-                }
-            }
-            throw new ArgumentException($"{name} must be a time of day as HH:mm, HH:mm:ss, HHmm or HHmmss (got '{value}'); use a colon-free form with -Parameters.");
-        }
-
-        /// <summary>
         /// A decimal in invariant culture, or null when the value is empty (not supplied). An
         /// unparsable value is an error naming the parameter.
         /// </summary>
@@ -52,20 +34,6 @@ namespace MarketLab.SingleAnchor
                 return parsed;
             }
             throw new ArgumentException($"{name} must be a decimal number (got '{value}').");
-        }
-
-        /// <summary>A day name (any case), or null for 'none' / empty.</summary>
-        public static DayOfWeek? ParseOptionalDayOfWeek(string value, string name)
-        {
-            if (string.IsNullOrWhiteSpace(value) || string.Equals(value.Trim(), "none", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
-            if (Enum.TryParse<DayOfWeek>(value.Trim(), true, out var day))
-            {
-                return day;
-            }
-            throw new ArgumentException($"{name} must be a day name or 'none' (got '{value}').");
         }
     }
 }
