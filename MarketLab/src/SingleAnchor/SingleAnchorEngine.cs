@@ -408,12 +408,13 @@ namespace MarketLab.SingleAnchor
         {
             RejectedEntryAttempts++;
             basket.LastRejection = rejection;
-            // The episode key (trade number, side, reason, hard-BE outcome) is quote-independent, so
-            // an episode that reappears after another one appends to its existing row rather than
-            // starting a new one. The number of rows is therefore bounded by the distinct keys, not
-            // by the number of ticks; every attempt is folded into the row (count, last quote,
-            // parity digest and min/max values). Matching before formatting keeps a persisting
-            // requirement free of per-tick message construction.
+            // The episode key (trade number, side, reason, hard-BE outcome) contains no raw quote
+            // values and no normalized requirement, so an episode that reappears after another one
+            // appends to its existing row rather than starting a new one. The number of rows is
+            // bounded by the finite set of trade/reason/outcome combinations, not by the number of
+            // ticks; every attempt is folded into the row (count, last quote, parity digest and
+            // min/max values). Matching before formatting keeps a persisting requirement free of
+            // per-tick message construction.
             var row = FindEpisode(basket, rejection);
             if (row == null)
             {

@@ -186,9 +186,9 @@ namespace MarketLab.SingleAnchor
         /// runs when decimal rounding left that estimate one or more steps short. It is exposed
         /// internally so that fallback branch can be tested with a deliberately short start.
         /// Requires PL_1lot(T) &gt; 0, which makes the sequence strictly increasing and terminating
-        /// for every input the sizer can produce. A no-progress guard stops a start so far outside
-        /// the sizer's range that <c>lot + step</c> is a decimal no-op; such a start cannot come from
-        /// <see cref="Size"/>.
+        /// for every input the sizer can produce. A no-progress condition (a start so far outside the
+        /// sizer's range that <c>lot + step</c> is a decimal no-op) cannot be turned into a verified
+        /// lot, so it fails explicitly instead of returning a negative projection.
         /// </summary>
         internal static decimal SmallestVerifiedLot(
             decimal existing,
@@ -205,7 +205,8 @@ namespace MarketLab.SingleAnchor
             {
                 if (lot + parameters.VolumeStep <= lot)
                 {
-                    break;
+                    throw new InvalidOperationException(
+                        $"The hard-BE verification fallback cannot make progress: lot {lot} + volume step {parameters.VolumeStep} does not increase the lot while PL_after is {after}. The starting lot is outside the range the sizer can produce.");
                 }
                 lot += parameters.VolumeStep;
                 after = ProjectedAfter(existing, side, lot, candidateEntry, target, parameters);

@@ -621,9 +621,11 @@ namespace MarketLab.SingleAnchor
     /// (attempt count, last quote, parity digest and min/max values, including the min/max
     /// broker-normalized requirement) rather than stored as its own row, so a requirement that
     /// stays infeasible for hours, or oscillates between adjacent volume steps, does not produce a
-    /// row per tick. The key is quote-independent, so an episode that reappears after another
-    /// episode appends to its existing row instead of starting a new one. The digest makes every
-    /// compressed attempt comparable with a port.
+    /// row per tick. The key contains no raw quote values or normalized requirement, and matching
+    /// scans the basket's rows, so an episode that reappears after another appends to its existing
+    /// row instead of starting a new one. A quote can select a different episode by changing the
+    /// outcome, but once an episode exists its later recurrences append to it. The digest makes
+    /// every compressed attempt comparable with a port.
     /// </summary>
     public sealed class EntryRejectionRecord
     {

@@ -753,6 +753,48 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void TheVerificationFallbackFailsExplicitlyWhenItCannotMakeProgress()
+        {
+            // A start so far outside the sizer's range that lot + step is a decimal no-op must never
+            // be returned as a negative-P/L "verified" lot: it fails explicitly.
+            var p = Harness.Defaults() with { ProjectedSpread = 0m, VolumeStep = 0.001m, MinimumVolume = 0.001m, MaximumVolume = 1e28m };
+            var target = TargetPrices.ForUpperRecovery(1.0000001m, 0m);
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                HardBreakevenSizer.SmallestVerifiedLot(-1e26m, TradeSide.Buy, 1m, target, p, 1e27m, out _));
+
+            Assert.That(error!.Message, Does.Contain("cannot make progress"));
+        }
+
+        [Test]
+        public void EveryFeasibleSizingHasANonNegativeVerifiedProjection()
+        {
+            // General invariant over a quote sweep on both sides: whenever the sizer reports
+            // Feasible, the reported normalized requirement equals the placed lot and the direct
+            // recomputation at the boundary is non-negative.
+            var p = Harness.Defaults();
+            var basket = ReferenceBasket(p);
+            for (var i = 0; i <= 120; i++)
+            {
+                var ask = 2020m + i * 0.5m; // 2020..2080, the upper-recovery region
+                var buy = HardBreakevenSizer.Size(basket, TradeSide.Buy, new Quote(Time, ask - 0.2m, ask), p);
+                if (buy.IsFeasible)
+                {
+                    Assert.That(buy.ProjectedProfitAfter, Is.GreaterThanOrEqualTo(0m), $"buy at {ask}");
+                    Assert.That(buy.NormalizedRequiredLot, Is.EqualTo(buy.NormalizedLot), $"buy at {ask}");
+                }
+
+                var bid = 1980m - i * 0.5m; // 1980..1920, the lower-recovery region
+                var sell = HardBreakevenSizer.Size(basket, TradeSide.Sell, new Quote(Time, bid, bid + 0.2m), p);
+                if (sell.IsFeasible)
+                {
+                    Assert.That(sell.ProjectedProfitAfter, Is.GreaterThanOrEqualTo(0m), $"sell at {bid}");
+                    Assert.That(sell.NormalizedRequiredLot, Is.EqualTo(sell.NormalizedLot), $"sell at {bid}");
+                }
+            }
+        }
+
+        [Test]
         public void ProjectedClosePricesBelowZeroAfterSlippageAreInvalid()
         {
             // The target itself is valid (Bid 2089.56) but the executable BUY close, Bid less

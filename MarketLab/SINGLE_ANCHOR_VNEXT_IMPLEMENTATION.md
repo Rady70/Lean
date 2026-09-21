@@ -162,6 +162,9 @@ culture; `true`/`false` for booleans.
   rounding makes the ceil estimate one or more steps short, the verification
   fallback moves the reported requirement with the verified lot (the placed lot
   and the reported requirement are always the same number on a feasible sizing).
+  A fallback start outside the range the sizer can produce, where a further volume
+  step cannot even increase the lot, fails explicitly instead of being reported as
+  a verified sizing.
   `NormalizedLot` is 0 when nothing can be placed.
   The rejection trace carries both, so no infeasible case hides the needed lot.
   `ExactRequired` (and the leg/rejection traces' `ExactRequiredLot`) is null
@@ -190,18 +193,22 @@ culture; `true`/`false` for booleans.
   and no swap fields; zero is the only accepted configuration until continuous
   financing behaviour is specified.
 - **Infeasible hard-BE and other rejected entries are traced (bounded
-  episodes).** Every basket keeps one row per rejected-entry episode, keyed by a
-  **quote-independent** tuple: trade number, side, reason and hard-BE outcome.
+  episodes).** Every basket keeps one row per rejected-entry episode: trade
+  number, side, reason and hard-BE outcome. The key contains no raw quote values
+  and no normalized required volume.
   The first attempt's quote (sequence,
   time, Bid, Ask) and full sizing figures are kept, the last attempt's quote and
   the attempt count are updated, and every attempt of the episode is
   folded into that row, never stored per tick. Matching scans the basket's rows
   (newest first), so an episode that reappears after another episode appends to
-  its existing row; the number of rows is bounded by the finite set of episode
-  keys, not by the number of ticks. The key includes the trade number, so a new
-  key requires a state change (a fill, a different outcome, or a different
-  side/reason), never a mere tick; a basket therefore carries only a handful of
-  rows. Two quote-dependent quantities deliberately
+  its existing row. For a given trade/side, only the finite reason/outcome
+  combinations can create rows; a quote may change the outcome and therefore
+  select another episode, but once that episode exists, later recurrence appends
+  to it rather than creating another row, so a hovering price cannot grow the row
+  count with the tick count. Across trades the trace grows with the number of
+  filled trades (each trade number is its own key), which is bounded by the
+  basket's own trade sequence and the broker maximum-volume limit.
+  Two quote-dependent quantities deliberately
   stay out of the key: the broker-normalized requirement (it moves with every
   quote, so 0.06, 0.07, 0.06 stays one row) and the economic figures. The
   hard-BE outcome itself is quote-dependent (PL_1lot crosses zero at
@@ -380,7 +387,7 @@ sample's data quality or of a sensible parameter choice. The target spread
   upstream projects print their own analyzer warnings, as recorded for the
   engine build).
 - `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`:
-  137 passed, 0 failed, 0 skipped.
+  139 passed, 0 failed, 0 skipped.
 - `MarketLab\tests\Test-MarketLabBacktesting.ps1` (fast mode): 150 passed,
   0 failed.
 - `pwsh -File MarketLab\scripts\run-backtest.ps1 -AlgorithmTypeName SingleAnchorVNextAlgorithm
