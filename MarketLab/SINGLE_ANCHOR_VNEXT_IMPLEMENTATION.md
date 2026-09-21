@@ -193,9 +193,10 @@ culture; `true`/`false` for booleans.
   and no swap fields; zero is the only accepted configuration until continuous
   financing behaviour is specified.
 - **Infeasible hard-BE and other rejected entries are traced (bounded
-  episodes).** Every basket keeps one row per rejected-entry episode: trade
-  number, side, reason and hard-BE outcome. The key contains no raw quote values
-  and no normalized required volume.
+  episodes).** Every basket keeps one row per rejected-entry episode. The episode
+  key consists of trade number, side, rejection reason and hard-BE outcome; raw
+  Bid/Ask values and the broker-normalized required volume are not part of the
+  key.
   The first attempt's quote (sequence,
   time, Bid, Ask) and full sizing figures are kept, the last attempt's quote and
   the attempt count are updated, and every attempt of the episode is
@@ -205,9 +206,10 @@ culture; `true`/`false` for booleans.
   combinations can create rows; a quote may change the outcome and therefore
   select another episode, but once that episode exists, later recurrence appends
   to it rather than creating another row, so a hovering price cannot grow the row
-  count with the tick count. Across trades the trace grows with the number of
-  filled trades (each trade number is its own key), which is bounded by the
-  basket's own trade sequence and the broker maximum-volume limit.
+  count with the tick count. Across trades, the rejection trace can grow with the
+  number of distinct filled trade numbers reached by the basket, but repeated
+  ticks for an already-known trade/reason/outcome episode append to the existing
+  row instead of creating a row per tick.
   Two quote-dependent quantities deliberately
   stay out of the key: the broker-normalized requirement (it moves with every
   quote, so 0.06, 0.07, 0.06 stays one row) and the economic figures. The
