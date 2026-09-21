@@ -29,8 +29,9 @@ namespace MarketLab.SingleAnchor
 
     /// <summary>
     /// Full record of one hard-BE sizing, feasible or not, so the decision can be logged and tested.
-    /// <see cref="RequiredLot"/> is the exact Q_BE (0 when the basket is already at or inside the
-    /// ceiling); <see cref="NormalizedLot"/> is the broker-valid lot to place, 0 when infeasible.
+    /// <see cref="RequiredLot"/> is the exact Q_BE, or 0 when the ratio is not applicable (the
+    /// basket already projects at or inside the ceiling, or PL_1lot(T) is not positive);
+    /// <see cref="NormalizedLot"/> is the broker-valid lot to place, 0 when infeasible.
     /// </summary>
     public sealed record HardBreakevenSizing(
         TradeSide Side,

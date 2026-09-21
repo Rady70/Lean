@@ -148,7 +148,8 @@ specified rules.
   non-default fill model) is pending until its later order events; partial
   fills, including any already on the ticket, are accumulated into one
   volume-weighted fill, and an entry cancelled after a partial fill records the
-  filled part. The last valid quote tick of each slice is the decision quote
+  filled part (this carry-over relies on the single-threaded backtest sequence;
+  live trading is out of scope). The last valid quote tick of each slice is the decision quote
   (LEAN fills against it; earlier same-timestamp ticks and invalid ticks are
   counted separately in the end-of-data line). LEAN delivers only ticks inside
   the market-hours sessions of its database (for Oanda XAUUSD: not the New York
@@ -177,7 +178,9 @@ specified rules.
 Software-use evidence only: nothing here is evidence of profitability, of the
 sample's data quality or of a sensible parameter choice.
 
-- `dotnet build ...MarketLab.SingleAnchor.csproj --configuration Release`: 0 errors, 0 compiler warnings.
+- `dotnet build ...MarketLab.SingleAnchor.csproj --configuration Release`: 0 errors; 0 compiler
+  warnings from the two MarketLab projects (the referenced upstream projects print their own
+  analyzer warnings, as recorded for the engine build).
 - `dotnet test ...MarketLab.SingleAnchor.Tests.csproj --configuration Release`: 126 passed, 0 failed, 0 skipped.
 - `MarketLab\scripts\run-backtest.ps1` with the assembly on the shipped sample,
   `-Parameters "single-anchor-step-percent:0.1,single-anchor-base-lot:0.01"`

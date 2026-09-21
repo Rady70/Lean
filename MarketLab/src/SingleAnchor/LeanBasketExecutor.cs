@@ -44,6 +44,9 @@ namespace MarketLab.SingleAnchor
     /// closed, a partial fill under a non-default fill model, or another host) is reported as
     /// <see cref="ExecutionStatus.Pending"/> and resolved from the later order events, with the
     /// quantity already filled at submission time carried over into the volume-weighted total.
+    /// That carry-over assumes the single-threaded backtest sequence (no fill can land between
+    /// reading the ticket and tracking the order); live trading, where LEAN's transaction thread
+    /// updates the ticket concurrently, is outside this implementation's scope.
     /// </remarks>
     public sealed class LeanBasketExecutor : IBasketExecutor
     {
