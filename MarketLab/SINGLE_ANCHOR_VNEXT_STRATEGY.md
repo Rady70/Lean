@@ -103,9 +103,35 @@ SELL -> BUY -> SELL -> BUY -> ...
 
 A BUY cannot directly follow a BUY. A SELL cannot directly follow a SELL.
 
+After the first entry, strict alternation has absolute priority. Only the opposite side of the previous trade is eligible:
+
+```text
+previous trade BUY  -> evaluate only the SELL condition
+previous trade SELL -> evaluate only the BUY condition
+```
+
+Even if a later quote also satisfies the other numerical boundary inequality, that other side cannot open; the opposite side of the previous trade is the only eligible side.
+
+Before the first entry the basket is empty and has no previous side. If one quote satisfies both rules at the same time:
+
+```text
+Ask >= Upper
+AND
+Bid <= Lower
+```
+
+the basket must not start on that quote:
+
+- no BUY priority;
+- no SELL priority;
+- no double entry;
+- a single quote does not establish which side crossed first.
+
+The basket stays with zero trades and waits for a later quote that satisfies exactly one rule and therefore determines the first side unambiguously. Skipping such a quote is a validity condition for starting the basket, not a trade decision, and it never ends the run.
+
 ### Plain English
 
-The basket grows only when price moves back and forth between the same two fixed boundaries.
+The basket grows only when price moves back and forth between the same two fixed boundaries. If one quote is wide enough to touch both boundaries at once, the basket simply does not start on that quote.
 
 ---
 
@@ -157,7 +183,7 @@ If trade 5 is required, hard-BE mode becomes active for the remainder of that ba
 From trade 5 onward:
 
 - arithmetic lot sizing stops;
-- every new lot is calculated from the hard breakeven target;
+- every new lot is calculated from the hard breakeven boundary;
 - hard-BE mode remains active until the basket closes;
 - no intentional BE drift beyond the configured ceiling is permitted.
 
@@ -169,31 +195,61 @@ Reaching trade 5 means the basket has entered the tail. From then on, lot size i
 
 ## 6. Hard fixed breakeven ceiling
 
-Let `C` be the configured maximum breakeven distance from the original anchor, expressed as a percentage.
+Basket breakeven (BE) is the market level at which every currently open BUY and SELL position is closed at the same instant and the total executable basket P/L is exactly zero.
 
-For an upward recovery target:
+Let `C` be the configured maximum BE distance from the original anchor, expressed as a percentage.
+
+For an upper basket recovery, define the actual upper BE as the Bid level at which that simultaneous executable closure gives P/L exactly zero, and the hard ceiling:
 
 ```text
 T_up = A * (1 + C / 100)
 ```
 
+The requirement is that the actual upper BE stays at or inside the ceiling:
+
+```text
+actual upper BE <= T_up
+```
+
 where:
 
-- `T_up` = maximum permitted upper-side basket breakeven price;
+- `T_up` = maximum permitted upper basket-BE **Bid** level (hard ceiling);
 - `A` = original basket anchor price;
 - `C` = configured hard-BE ceiling percentage.
 
-For a downward recovery target:
+Equivalently, at `Bid = T_up` the projected executable basket P/L must be non-negative:
+
+```text
+PL(T_up) >= 0
+```
+
+For a lower recovery, define the actual lower BE as the Ask level at which the simultaneous executable closure gives P/L exactly zero, and the hard floor:
 
 ```text
 T_down = A * (1 - C / 100)
 ```
 
+The requirement is that the actual lower BE stays at or inside the floor:
+
+```text
+actual lower BE >= T_down
+```
+
 where:
 
-- `T_down` = maximum permitted lower-side basket breakeven price;
-- `A` = original basket anchor price;
-- `C` = configured hard-BE ceiling percentage.
+- `T_down` = minimum permitted lower basket-BE **Ask** level (hard floor).
+
+Equivalently, at `Ask = T_down` the projected executable basket P/L must be non-negative:
+
+```text
+PL(T_down) >= 0
+```
+
+`T_up` and `T_down` are hard boundaries, not necessarily the actual zero-loss BE. After a tail order is normalized upward to a broker lot, the actual BE is normally inside the boundary (the basket projects a positive P/L exactly at the boundary), and that is acceptable: the requirement is only that the actual BE never lies outside the boundary.
+
+`T_up` and `T_down` are used as a hypothetical simultaneous basket valuation for sizing. They are not a separate exit rule: the basket is closed only by the exit rules of sections 11-14 (escape, fixed take-profit, trailing), never automatically at its BE boundary. Section 14's exit priority is unchanged.
+
+Execution economics at a boundary: an upper valuation closes BUY legs on the Bid (`Bid = T_up`) and SELL legs at the same instant on the Ask side of that same quote (`Ask = T_up + W`); a lower valuation closes SELL legs on the Ask (`Ask = T_down`) and BUY legs at the same instant on the Bid side (`Bid = T_down - W`). `W` is the configured target spread and only reconstructs the opposite quote side; spread, slippage and commission never shift `T_up` or `T_down` themselves, nor redefine the boundary as an exit price.
 
 Current research starting value:
 
@@ -205,18 +261,18 @@ This is a calibration starting value, not a permanently proven optimum.
 
 Target selection:
 
-- if the next required tail trade is BUY, use `T_up`;
-- if the next required tail trade is SELL, use `T_down`.
+- if the next required tail trade is BUY, use the upper boundary `T_up` (Bid side);
+- if the next required tail trade is SELL, use the lower boundary `T_down` (Ask side).
 
 ### Plain English
 
-Once tail mode starts, the strategy fixes the farthest acceptable recovery point from the original anchor. Every later order must be large enough to keep basket breakeven at or inside that limit.
+Once tail mode starts, the strategy fixes the farthest acceptable recovery point from the original anchor. Every later order must be large enough that the basket's true zero-loss breakeven stays inside that boundary; the boundary itself is not the exit price and does not necessarily equal the true zero-loss breakeven.
 
 ---
 
 ## 7. Tail lot sizing: hard-BE requirement
 
-For trade 5 and every later trade, choose the smallest new lot that makes the full basket break even at or before the applicable hard target.
+For trade 5 and every later trade, choose the smallest new lot that makes the full basket break even at or inside the applicable hard boundary.
 
 The authoritative requirement is:
 
@@ -226,8 +282,8 @@ PL_after(T, Q) >= 0
 
 where:
 
-- `PL_after(T, Q)` = projected executable profit/loss of the complete basket at target price `T` after adding a new order of size `Q`;
-- `T` = applicable hard target, either `T_up` or `T_down`;
+- `PL_after(T, Q)` = projected executable profit/loss of the complete basket at boundary price `T` after adding a new order of size `Q`;
+- `T` = applicable hard boundary, either `T_up` or `T_down`;
 - `Q` = candidate lot size for the new required BUY or SELL order.
 
 The strategy must choose the smallest valid `Q` that satisfies that condition.
@@ -241,9 +297,9 @@ Q_BE = -PL_existing(T) / PL_1lot(T)
 where:
 
 - `Q_BE` = mathematically required lot size for the next tail order;
-- `PL_existing(T)` = projected executable profit/loss of all already-open basket positions at target price `T`;
+- `PL_existing(T)` = projected executable profit/loss of all already-open basket positions at boundary price `T`;
 - `PL_1lot(T)` = projected executable profit/loss at `T` contributed by one lot of the new required side;
-- `T` = applicable hard target;
+- `T` = applicable hard boundary;
 - `PL` = profit/loss in account currency.
 
 This ratio is valid only when:
@@ -254,13 +310,17 @@ PL_1lot(T) > 0
 
 where:
 
-- `PL_1lot(T)` = profit/loss contribution at the target from one lot of the proposed new side.
+- `PL_1lot(T)` = profit/loss contribution at the boundary from one lot of the proposed new side.
 
-The tail calculation must use executable basket economics, including configured bid/ask execution side, spread, commission, slippage, swap/financing, and other enabled execution costs.
+The ratio is a convenience, not the rule. When `PL_1lot(T) <= 0` the primary requirement (`PL_after(T, Q) >= 0`, smallest valid `Q`) still governs directly: if the basket already projects at or inside the ceiling, the minimum broker lot is the smallest valid positive order; if the minimum lot makes `PL_after` negative, no larger lot can help, because the marginal contribution of the required side is not positive, so the sizing is infeasible. This is a consequence of the primary rule, not a separate strategy decision.
+
+The tail calculation must use executable basket economics: the configured target spread `W` reconstructs the opposite quote side at the projected simultaneous close, and configured slippage and commission are applied to the executable close of every position. The boundary itself is never shifted by them.
+
+Financing (swap) is not supported in this revision: the value of a basket's projected P/L at the hard boundary can change after the entry when financing accrues, so a strategy-qualified run requires a zero financing configuration (see sections 9 and 17).
 
 ### Plain English
 
-There is no fixed tail sequence such as 0.05, 0.06, 0.07. Each tail order is calculated specifically to pull the basket's recovery point back to the hard BE limit.
+There is no fixed tail sequence such as 0.05, 0.06, 0.07. Each tail order is calculated specifically to pull the basket's recovery point inside the hard boundary.
 
 ---
 
@@ -293,8 +353,8 @@ PL_after(T, Q_normalized) >= 0
 
 where:
 
-- `PL_after(T, Q_normalized)` = projected executable basket profit/loss at target `T` using the normalized lot;
-- `T` = applicable hard target;
+- `PL_after(T, Q_normalized)` = projected executable basket profit/loss at boundary `T` using the normalized lot;
+- `T` = applicable hard boundary;
 - `Q_normalized` = actual broker-valid lot.
 
 If the condition is not satisfied, increase the lot to the next valid volume step and check again.
@@ -311,7 +371,9 @@ Because the BE limit is hard, volume rounding must be conservative. If 0.1234 lo
 
 ## 9. Basket profit used for exits
 
-Raw basket profit is the combined current profit of all positions in the basket, including swap/financing where configured.
+Raw basket profit is the combined current profit of all positions in the basket.
+
+Financing (swap) is not supported in this revision: only a zero financing configuration can produce a strategy-qualified run (sections 7 and 17).
 
 If an optional commission buffer is enabled:
 
@@ -420,7 +482,7 @@ where:
 - `Profit` = current basket profit;
 - `M_escape` = escape threshold.
 
-Escape applies only when the basket has at least two open positions.
+Escape applies only when the basket has at least two open positions. The minimum-open-positions input may be raised above two for research, but it must never be configured below two.
 
 ### Plain English
 
@@ -599,13 +661,18 @@ Create fixed anchor
         +-- Lower = anchor - step
         |
         v
-Wait for first boundary
+Wait for a usable first boundary
         |
-        v
-Open first BUY or SELL
+        +-- exactly one boundary satisfied
+        |      open the first BUY or SELL
+        |
+        +-- both boundaries satisfied on the same quote
+               open nothing, stay empty, wait for a later quote
         |
         v
 Strictly alternate sides
+        |
+        +-- only the opposite side of the previous trade is eligible
         |
         +-- Trades 1-4
         |      arithmetic sizing
@@ -652,10 +719,14 @@ Nnormal
 
 HardBECeilingPercent
     maximum permitted BE distance from original anchor
+    T_up is the maximum upper BE Bid level, T_down the maximum lower BE Ask level
     current research starting value: approximately 4.478%
 
 EscapeProfitUnits
     current default: 0.05
+
+EscapeMinimumOpenPositions
+    at least 2; the default is 2
 
 FixedTPUnits
     current default: 0.0 (disabled)
@@ -667,7 +738,9 @@ TrailingDropUnits
     current default: 0.25
 ```
 
-Execution-cost, commission-buffer, volume-step, and instrument money-value settings must also remain explicit inputs rather than hidden assumptions.
+Execution-cost, commission-buffer, volume-step, and instrument money-value settings must also remain explicit inputs rather than hidden assumptions. The hard-BE projection uses a configured target spread to reconstruct the opposite quote side of the projected simultaneous basket valuation (section 6); the boundary itself is `Bid = T_up` or `Ask = T_down`.
+
+Financing settings must be explicit inputs and must be zero for a strategy-qualified run. A non-zero financing configuration is rejected until continuous financing behaviour is specified: financing accrued after a tail entry can move the projected P/L at the hard boundary without any re-verification, which would violate the hard ceiling.
 
 ---
 

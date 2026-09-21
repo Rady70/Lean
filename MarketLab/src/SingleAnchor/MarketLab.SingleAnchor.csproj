@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    MarketLab-owned strategy assembly: SingleAnchor vNext (see
+    MarketLab\SINGLE_ANCHOR_VNEXT_STRATEGY.md). Built outside
+    QuantConnect.Lean.sln so no upstream project or solution file changes;
+    it references the unchanged upstream Algorithm and Common projects.
+    Run with MarketLab\scripts\run-backtest.ps1 -AlgorithmLocation <this bin>\MarketLab.SingleAnchor.dll
+    -AlgorithmTypeName SingleAnchorVNextAlgorithm.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MarketLab.SingleAnchor</RootNamespace>
+    <AssemblyName>MarketLab.SingleAnchor</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- NuGet audit warnings come from upstream-pinned transitive packages (recorded in the
+         MarketLab tool record); they stay visible as warnings and are not this project's to fix. -->
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Description>MarketLab SingleAnchor vNext strategy (LEAN algorithm plus host-independent strategy engine)</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MarketLab.SingleAnchor.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Algorithm\QuantConnect.Algorithm.csproj" />
+    <ProjectReference Include="..\..\..\Common\QuantConnect.csproj" />
+  </ItemGroup>
+</Project>

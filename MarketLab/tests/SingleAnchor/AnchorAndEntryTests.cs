@@ -1,0 +1,569 @@
+using System;
+using NUnit.Framework;
+
+namespace MarketLab.SingleAnchor.Tests
+{
+    [TestFixture]
+    public class AnchorAndLevelTests
+    {
+        [Test]
+        public void AnchorIsMidpointAndLevelsDeriveFromIt()
+        {
+            var h = new Harness();
+            var quote = h.Anchor();
+
+            var basket = h.Engine.Basket;
+            Assert.That(basket, Is.Not.Null);
+            Assert.That(basket!.Anchor, Is.EqualTo(2000m));
+            Assert.That(basket.Anchor, Is.EqualTo(quote.Mid));
+            Assert.That(basket.Step, Is.EqualTo(20m));
+            Assert.That(basket.Upper, Is.EqualTo(2020m));
+            Assert.That(basket.Lower, Is.EqualTo(1980m));
+            Assert.That(basket.UpperTarget, Is.EqualTo(2089.56m));
+            Assert.That(basket.LowerTarget, Is.EqualTo(1910.44m));
+            Assert.That(basket.CreatedTime, Is.EqualTo(quote.Time));
+            Assert.That(basket.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.AnchorsCreated, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void AnchorAndLevelsStayFixedWhilePriceMoves()
+        {
+            var h = new Harness();
+            h.Anchor();
+            var basket = h.Engine.Basket!;
+
+            h.Feed(2010m, 2010.2m);
+            h.Feed(1990m, 1990.2m);
+            h.Feed(2019.7m, 2019.99m); // ask below Upper: no entry
+
+            Assert.That(h.Engine.Basket, Is.SameAs(basket));
+            Assert.That(basket.Anchor, Is.EqualTo(2000m));
+            Assert.That(basket.Upper, Is.EqualTo(2020m));
+            Assert.That(basket.Lower, Is.EqualTo(1980m));
+            Assert.That(basket.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.AnchorsCreated, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void StepPercentAndCeilingScaleWithTheAnchor()
+        {
+            var p = Harness.Defaults();
+            var h = new Harness(new SingleAnchorParameters
+            {
+                StepPercent = 0.5m,
+                BaseLot = p.BaseLot,
+                HardBreakevenCeilingPercent = 2m,
+                PointValuePerLot = p.PointValuePerLot,
+                ProjectedSpread = 0.2m
+            });
+            h.Feed(999m, 1001m);
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.Anchor, Is.EqualTo(1000m));
+            Assert.That(basket.Step, Is.EqualTo(5m));
+            Assert.That(basket.Upper, Is.EqualTo(1005m));
+            Assert.That(basket.Lower, Is.EqualTo(995m));
+            Assert.That(basket.UpperTarget, Is.EqualTo(1020m));
+            Assert.That(basket.LowerTarget, Is.EqualTo(980m));
+        }
+    }
+
+    [TestFixture]
+    public class QuoteValidationTests
+    {
+        [TestCase(0, 2000.1)]
+        [TestCase(1999.9, 0)]
+        [TestCase(-1, 1)]
+        [TestCase(2000.2, 2000.1)]
+        public void InvalidQuoteFaultsTheEngine(decimal bid, decimal ask)
+        {
+            // Data quality is enforced at the lowest layer: the engine itself refuses to replay
+            // past a quote it cannot trust, so no host can silently continue.
+            var h = new Harness();
+
+            var failure = Assert.Throws<DataQualityException>(() => h.Feed(bid, ask))!;
+
+            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.InvalidQuote));
+            Assert.That(failure.Quote.Bid, Is.EqualTo(bid));
+            Assert.That(h.Engine.Faulted, Is.True);
+            Assert.That(h.Engine.Fault, Is.SameAs(failure));
+            Assert.That(h.Engine.Basket, Is.Null);
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(0));
+
+            var refusal = Assert.Throws<DataQualityException>(() => h.Anchor())!;
+            Assert.That(refusal.Message, Does.Contain("faulted"));
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(0), "nothing is processed after the fault");
+        }
+
+        [Test]
+        public void ZeroSpreadQuoteIsValid()
+        {
+            var h = new Harness();
+            h.Feed(2000m, 2000m);
+            Assert.That(h.Engine.Faulted, Is.False);
+            Assert.That(h.Engine.Basket!.Anchor, Is.EqualTo(2000m));
+        }
+
+        [Test]
+        public void OutOfOrderQuoteFaultsTheEngine()
+        {
+            var h = new Harness();
+            h.FeedAt(Harness.T0.AddSeconds(5), 1999.9m, 2000.1m);
+
+            var failure = Assert.Throws<DataQualityException>(() => h.FeedAt(Harness.T0.AddSeconds(4), 2019.8m, 2020m))!;
+
+            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.OutOfOrderQuote));
+            Assert.That(failure.Quote.Time, Is.EqualTo(Harness.T0.AddSeconds(4)));
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1), "the bad quote was never processed");
+            Assert.That(h.Engine.LastProcessedQuote!.Value.Time, Is.EqualTo(Harness.T0.AddSeconds(5)));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "nothing traded on it");
+            Assert.That(h.Engine.Faulted, Is.True);
+            Assert.Throws<DataQualityException>(() => h.FeedAt(Harness.T0.AddSeconds(6), 2019.8m, 2020m));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "and nothing after it");
+        }
+
+        [Test]
+        public void SameTimestampQuotesAreInOrderAndUniquelySequenced()
+        {
+            var h = new Harness();
+            h.FeedAt(Harness.T0.AddSeconds(5), 1999.9m, 2000.1m);
+            h.FeedAt(Harness.T0.AddSeconds(5), 2019.8m, 2020m);
+
+            var basket = h.Engine.Basket!;
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(2));
+            Assert.That(basket.AnchorQuoteSequence, Is.EqualTo(1));
+            Assert.That(basket.Legs[0].QuoteSequence, Is.EqualTo(2));
+            Assert.That(basket.Legs[0].EntryTime, Is.EqualTo(basket.CreatedTime), "same timestamp, distinguishable only by sequence");
+        }
+    }
+
+    [TestFixture]
+    public class EntryTriggerTests
+    {
+        [Test]
+        public void FirstBuyTriggersFromAskAtUpper()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.Feed(2019.99m, 2019.999m); // ask still below Upper
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+
+            var quote = h.AtUpper();
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.OpenPositions, Is.EqualTo(1));
+            var leg = basket.Legs[0];
+            Assert.That(leg.TradeNumber, Is.EqualTo(1));
+            Assert.That(leg.Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(leg.Lots, Is.EqualTo(0.01m));
+            Assert.That(leg.EntryPrice, Is.EqualTo(quote.Ask));
+            Assert.That(leg.EntryTime, Is.EqualTo(quote.Time));
+            Assert.That(leg.Regime, Is.EqualTo(SizingRegime.Arithmetic));
+            Assert.That(h.EntriesOpened, Has.Count.EqualTo(1));
+            Assert.That(h.Executor.Entries[0].Quote, Is.EqualTo(quote));
+        }
+
+        [Test]
+        public void BuyTriggersWhenAskGapsAboveUpper()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.Feed(2024.8m, 2025m);
+
+            var leg = h.Engine.Basket!.Legs[0];
+            Assert.That(leg.Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(leg.EntryPrice, Is.EqualTo(2025m), "the leg records the executable Ask, not the level");
+        }
+
+        [Test]
+        public void FirstSellTriggersFromBidAtLower()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.Feed(1980.001m, 1980.2m); // bid still above Lower
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+
+            var quote = h.AtLower();
+
+            var leg = h.Engine.Basket!.Legs[0];
+            Assert.That(leg.TradeNumber, Is.EqualTo(1));
+            Assert.That(leg.Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(leg.Lots, Is.EqualTo(0.01m));
+            Assert.That(leg.EntryPrice, Is.EqualTo(quote.Bid));
+        }
+
+        [Test]
+        public void MidpointCrossingWithoutTheExecutableSideDoesNotTrigger()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.Feed(2019.9m, 2019.99m);  // mid 2019.945 < Upper, ask < Upper
+            h.Feed(1980.01m, 1980.4m);  // bid > Lower
+
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void AQuoteSatisfyingBothBoundariesOpensNoTradeAndDoesNotStopTheRun()
+        {
+            // Owner decision resolved (specification section 3): a still-empty basket must not
+            // start on a quote that satisfies both boundaries; no priority, no double entry, no
+            // run-ending error. The basket waits for an unambiguous quote.
+            var h = new Harness();
+            h.Anchor();
+
+            var wide = h.Feed(1979m, 2021m);
+
+            Assert.That(h.Engine.Faulted, Is.False, "skipping is not an error");
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(2));
+            Assert.That(h.Engine.SkippedFirstEntryQuotes, Is.EqualTo(1));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "no side was chosen");
+            Assert.That(h.Executor.Entries, Is.Empty);
+            Assert.That(h.EntriesRejected, Is.Empty, "not a rejection");
+            Assert.That(h.SkippedFirstEntries, Has.Count.EqualTo(1), "one event per basket");
+
+            var trace = h.Engine.Basket!.SkippedFirstEntry!;
+            Assert.That(trace.Attempts, Is.EqualTo(1));
+            Assert.That(trace.FirstQuoteSequence, Is.EqualTo(2));
+            Assert.That(trace.FirstTime, Is.EqualTo(wide.Time));
+            Assert.That(trace.FirstBid, Is.EqualTo(1979m));
+            Assert.That(trace.FirstAsk, Is.EqualTo(2021m));
+            Assert.That(trace.LastQuoteSequence, Is.EqualTo(2));
+
+            // a second wide quote before the first trade is still not a trading decision
+            h.Feed(1978m, 2022m);
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.Engine.SkippedFirstEntryQuotes, Is.EqualTo(2));
+
+            // a later unambiguous quote starts the basket
+            h.AtUpper();
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1));
+            Assert.That(h.Engine.Basket!.Legs[0].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(h.Engine.Basket!.SkippedFirstEntry!.Attempts, Is.EqualTo(2), "the trace keeps its count after the first leg");
+        }
+
+        [Test]
+        public void RepeatedAmbiguousQuotesAreCountedOnOneCompactTrace()
+        {
+            var h = new Harness();
+            h.Anchor();
+            var first = h.Feed(1979m, 2021m);
+            var second = h.Feed(1978m, 2022m);
+
+            Assert.That(h.Engine.SkippedFirstEntryQuotes, Is.EqualTo(2));
+            Assert.That(h.SkippedFirstEntries, Has.Count.EqualTo(1), "the event is raised once per basket");
+            var trace = h.Engine.Basket!.SkippedFirstEntry!;
+            Assert.That(trace.Attempts, Is.EqualTo(2));
+            Assert.That(trace.FirstTime, Is.EqualTo(first.Time));
+            Assert.That(trace.LastTime, Is.EqualTo(second.Time));
+            Assert.That(trace.LastAsk, Is.EqualTo(2022m));
+            Assert.That(trace.ParityHash, Has.Length.EqualTo(16));
+            Assert.That(trace.ParityAlgorithm, Does.Contain("FNV-1a"));
+        }
+
+        [Test]
+        public void TheSkippedFirstEntryDigestDetectsADifferentIntermediateQuote()
+        {
+            // Same attempt count and identical first/last quotes, different middle quote: the
+            // compact trace must still distinguish the two runs.
+            static SingleAnchorEngine Replay(decimal middleBid, decimal middleAsk)
+            {
+                var h = new Harness();
+                h.Anchor();
+                h.Feed(1979m, 2021m);
+                h.Feed(middleBid, middleAsk);
+                h.Feed(1979m, 2021m);
+                return h.Engine;
+            }
+
+            var a = Replay(1978m, 2022m);
+            var b = Replay(1977m, 2023m);
+            var ta = a.Basket!.SkippedFirstEntry!;
+            var tb = b.Basket!.SkippedFirstEntry!;
+
+            Assert.That(tb.Attempts, Is.EqualTo(ta.Attempts));
+            Assert.That(tb.FirstBid, Is.EqualTo(ta.FirstBid));
+            Assert.That(tb.FirstAsk, Is.EqualTo(ta.FirstAsk));
+            Assert.That(tb.LastBid, Is.EqualTo(ta.LastBid));
+            Assert.That(tb.LastAsk, Is.EqualTo(ta.LastAsk));
+            Assert.That(tb.ParityHash, Is.Not.EqualTo(ta.ParityHash), "a one-tick decision mismatch must be detectable");
+        }
+
+        [Test]
+        public void EquivalentDecimalRepresentationsHashIdentically()
+        {
+            // 1979.0 / 1979.00 are the same numeric quote: the digest compares values, not the
+            // .NET decimal scale.
+            static string HashOf(decimal bid, decimal ask)
+            {
+                var h = new Harness();
+                h.Anchor();
+                h.Feed(bid, ask);
+                return h.Engine.Basket!.SkippedFirstEntry!.ParityHash;
+            }
+
+            Assert.That(HashOf(1979.0m, 2021.00m), Is.EqualTo(HashOf(1979m, 2021m)));
+
+            static string DecimalHash(decimal value)
+            {
+                var hasher = ParityHasher.Start();
+                hasher.AddDecimal(value);
+                return hasher.Hex;
+            }
+
+            Assert.That(DecimalHash(1.2m), Is.EqualTo(DecimalHash(1.20m)));
+            Assert.That(DecimalHash(1.2m), Is.EqualTo(DecimalHash(1.200m)));
+            Assert.That(DecimalHash(0m), Is.EqualTo(DecimalHash(0.00m)));
+            Assert.That(DecimalHash(0m), Is.EqualTo(DecimalHash(-0.000m)));
+            Assert.That(DecimalHash(1.2m), Is.Not.EqualTo(DecimalHash(1.25m)));
+        }
+
+        [Test]
+        public void TheSkippedFirstEntryDigestIsDeterministicAcrossIdenticalReplays()
+        {
+            static string Replay()
+            {
+                var h = new Harness();
+                h.Anchor();
+                h.Feed(1979m, 2021m);
+                h.Feed(1978m, 2022m);
+                return h.Engine.Basket!.SkippedFirstEntry!.ParityHash;
+            }
+
+            Assert.That(Replay(), Is.EqualTo(Replay()));
+        }
+
+        [Test]
+        public void AfterTheFirstLegAWideQuoteIsJustTheRequiredSide()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.AtUpper();                       // BUY 1: the next side is fixed
+            h.Feed(1979m, 2021m);              // both boundaries, but only a SELL is possible now
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.OpenPositions, Is.EqualTo(2));
+            Assert.That(basket.Legs[1].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(basket.Legs[1].EntryPrice, Is.EqualTo(1979m));
+            Assert.That(h.EntriesRejected, Is.Empty);
+        }
+
+        [Test]
+        public void AfterASellFirstLegAWideQuoteIsJustTheRequiredBuy()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.AtLower();                       // SELL 1: the next side is fixed
+            h.Feed(1979m, 2021m);              // both boundaries, but only a BUY is possible now
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.OpenPositions, Is.EqualTo(2));
+            Assert.That(basket.Legs[1].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(basket.Legs[1].EntryPrice, Is.EqualTo(2021m), "the executable Ask of the wide quote");
+            Assert.That(h.EntriesRejected, Is.Empty);
+        }
+
+        [Test]
+        public void SidesAlternateStrictlyAfterTheFirstEntry()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.AtUpper();                       // BUY 1
+            Assert.That(h.Engine.Basket!.NextRequiredSide, Is.EqualTo(TradeSide.Sell));
+
+            h.AtUpper();                       // another Ask >= Upper: no second BUY
+            h.Feed(2024m, 2024.2m);
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1));
+
+            h.AtLower();                       // SELL 2
+            Assert.That(h.Engine.Basket!.NextRequiredSide, Is.EqualTo(TradeSide.Buy));
+            h.AtLower();                       // another Bid <= Lower: no second SELL
+            h.Feed(1975m, 1975.2m);
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(2));
+
+            h.AtUpper();                       // BUY 3
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.OpenPositions, Is.EqualTo(3));
+            Assert.That(basket.Legs[0].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(basket.Legs[1].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(basket.Legs[2].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(basket.Legs[2].TradeNumber, Is.EqualTo(3));
+            Assert.That(basket.LastSide, Is.EqualTo(TradeSide.Buy));
+        }
+
+        [Test]
+        public void SellFirstBasketAlternatesTheOtherWay()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.AtLower();                       // SELL 1
+            h.AtLower();
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1));
+            h.AtUpper();                       // BUY 2
+            h.AtUpper();
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(2));
+            h.AtLower();                       // SELL 3
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.Legs[0].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(basket.Legs[1].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(basket.Legs[2].Side, Is.EqualTo(TradeSide.Sell));
+        }
+
+        [Test]
+        public void AnchoringQuoteNeverOpensALeg()
+        {
+            // The anchor is the midpoint, so a step wider than half the spread cannot trigger on
+            // the anchoring quote itself; a step inside the spread puts both levels inside the
+            // quote, which is the skipped-first-entry case, not an entry.
+            var h = new Harness();
+            h.Feed(1999.9m, 2000.1m);
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.Engine.SkippedFirstEntryQuotes, Is.EqualTo(0));
+
+            var narrow = new Harness(new SingleAnchorParameters
+            {
+                StepPercent = 0.001m, // step 0.02 on a 2000 anchor, spread 0.2
+                BaseLot = 0.01m,
+                PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m
+            });
+            narrow.Feed(1999.9m, 2000.1m);
+            Assert.That(narrow.Engine.Faulted, Is.False);
+            Assert.That(narrow.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            Assert.That(narrow.Engine.SkippedFirstEntryQuotes, Is.EqualTo(1));
+        }
+    }
+
+    [TestFixture]
+    public class ParameterValidationTests
+    {
+        [Test]
+        public void ReferenceParametersAreValid()
+        {
+            Assert.That(Harness.Defaults().GetValidationErrors(), Is.Empty);
+            Assert.DoesNotThrow(() => Harness.Defaults().Validate());
+        }
+
+        [Test]
+        public void SpecificationDefaultsAreTheDefaults()
+        {
+            var p = new SingleAnchorParameters();
+            Assert.That(p.NormalTradeCount, Is.EqualTo(4));
+            Assert.That(p.HardBreakevenCeilingPercent, Is.EqualTo(4.478m));
+            Assert.That(p.EscapeEnabled, Is.True);
+            Assert.That(p.EscapeProfitUnits, Is.EqualTo(0.05m));
+            Assert.That(p.EscapeMinimumOpenPositions, Is.EqualTo(2));
+            Assert.That(p.FixedTakeProfitUnits, Is.EqualTo(0m));
+            Assert.That(p.TrailingEnabled, Is.True);
+            Assert.That(p.TrailingActivationUnits, Is.EqualTo(0.50m));
+            Assert.That(p.TrailingDropUnits, Is.EqualTo(0.25m));
+        }
+
+        [Test]
+        public void MissingRequiredInputsAreReported()
+        {
+            var errors = new SingleAnchorParameters().GetValidationErrors();
+            Assert.That(errors, Has.Some.Contains("StepPercent"));
+            Assert.That(errors, Has.Some.Contains("BaseLot"));
+            Assert.That(errors, Has.Some.Contains("PointValuePerLot"));
+            Assert.That(errors, Has.Some.Contains("ProjectedSpread"));
+            Assert.That(errors, Has.Count.EqualTo(4), "step percent, base lot, point value and the target spread have no specified value");
+            Assert.That(errors, Has.Some.Contains("must be supplied"));
+        }
+
+        [Test]
+        public void EachConstraintIsChecked()
+        {
+            Assert.That(With(p => p.StepPercent = 100m), Has.Some.Contains("StepPercent must be < 100"));
+            Assert.That(With(p => p.StepPercent = 150m), Has.Some.Contains("StepPercent must be < 100"));
+            Assert.That(With(p => p.StepPercent = 99.99m), Has.None.Contains("StepPercent"));
+            Assert.That(With(p => p.NormalTradeCount = -1), Has.Some.Contains("NormalTradeCount"));
+            Assert.That(With(p => p.HardBreakevenCeilingPercent = 100m), Has.Some.Contains("HardBreakevenCeilingPercent"));
+            Assert.That(With(p => p.HardBreakevenCeilingPercent = 0m), Has.Some.Contains("HardBreakevenCeilingPercent"));
+            Assert.That(With(p => p.EscapeProfitUnits = -0.1m), Has.Some.Contains("EscapeProfitUnits"));
+            Assert.That(With(p => p.EscapeMinimumOpenPositions = 0), Has.Some.Contains("EscapeMinimumOpenPositions"));
+            Assert.That(With(p => p.EscapeMinimumOpenPositions = 1), Has.Some.Contains("EscapeMinimumOpenPositions must be >= 2"), "the specification allows escape only with at least two open positions");
+            Assert.That(With(p => p.EscapeMinimumOpenPositions = 3), Has.None.Contains("EscapeMinimumOpenPositions"), "values above two stay available for research");
+            Assert.That(With(p => p.FixedTakeProfitUnits = -1m), Has.Some.Contains("FixedTakeProfitUnits"));
+            Assert.That(With(p => p.TrailingActivationUnits = -1m), Has.Some.Contains("TrailingActivationUnits"));
+            Assert.That(With(p => p.TrailingDropUnits = -1m), Has.Some.Contains("TrailingDropUnits"));
+            Assert.That(With(p => p.CommissionBuffer = -1m), Has.Some.Contains("CommissionBuffer must"));
+            Assert.That(With(p => p.PointValuePerLot = 0m), Has.Some.Contains("PointValuePerLot"));
+            Assert.That(With(p => p.VolumeStep = 0m), Has.Some.Contains("VolumeStep"));
+            Assert.That(With(p => p.MinimumVolume = 0m), Has.Some.Contains("MinimumVolume"));
+            Assert.That(With(p => p.MinimumVolume = 0.015m), Has.Some.Contains("whole multiple"));
+            Assert.That(With(p => p.MaximumVolume = 0.005m), Has.Some.Contains("MaximumVolume"));
+            Assert.That(With(p => p.CommissionPerLot = -1m), Has.Some.Contains("CommissionPerLot"));
+            Assert.That(With(p => p.Slippage = -1m), Has.Some.Contains("Slippage"));
+            Assert.That(With(p => p.ProjectedSpread = -1m), Has.Some.Contains("ProjectedSpread"));
+            Assert.That(With(p => p.ProjectedSpread = 0m), Has.None.Contains("ProjectedSpread"), "a zero target spread is a valid sensitivity case once supplied");
+            Assert.That(With(p => p.BuySwapPerLotPerDay = -1.5m), Has.Some.Contains("must both be 0"), "financing is not supported");
+            Assert.That(With(p => p.SellSwapPerLotPerDay = 1m), Has.Some.Contains("must both be 0"));
+            Assert.That(With(p => p.BuySwapPerLotPerDay = 0m), Has.None.Contains("must both be 0"));
+        }
+
+        [Test]
+        public void EngineRefusesInvalidParameters()
+        {
+            var invalid = new SingleAnchorParameters { StepPercent = 1m, BaseLot = 0.01m }; // no point value
+            Assert.Throws<ArgumentException>(() => new SingleAnchorEngine(invalid));
+        }
+
+        private static System.Collections.Generic.IReadOnlyList<string> With(Action<Mutable> mutate)
+        {
+            var m = new Mutable();
+            mutate(m);
+            return m.Build().GetValidationErrors();
+        }
+
+        private sealed class Mutable
+        {
+            public decimal StepPercent = 1m;
+            public int NormalTradeCount = 4;
+            public decimal HardBreakevenCeilingPercent = 4.478m;
+            public decimal EscapeProfitUnits = 0.05m;
+            public int EscapeMinimumOpenPositions = 2;
+            public decimal FixedTakeProfitUnits = 0m;
+            public decimal TrailingActivationUnits = 0.5m;
+            public decimal TrailingDropUnits = 0.25m;
+            public decimal CommissionBuffer = 0m;
+            public decimal PointValuePerLot = 100m;
+            public decimal VolumeStep = 0.01m;
+            public decimal MinimumVolume = 0.01m;
+            public decimal MaximumVolume = 100m;
+            public decimal CommissionPerLot = 0m;
+            public decimal Slippage = 0m;
+            public decimal ProjectedSpread = 0.2m;
+            public decimal BuySwapPerLotPerDay = 0m;
+            public decimal SellSwapPerLotPerDay = 0m;
+
+            public SingleAnchorParameters Build()
+            {
+                return new SingleAnchorParameters
+                {
+                    StepPercent = StepPercent,
+                    BaseLot = 0.01m,
+                    NormalTradeCount = NormalTradeCount,
+                    HardBreakevenCeilingPercent = HardBreakevenCeilingPercent,
+                    EscapeProfitUnits = EscapeProfitUnits,
+                    EscapeMinimumOpenPositions = EscapeMinimumOpenPositions,
+                    FixedTakeProfitUnits = FixedTakeProfitUnits,
+                    TrailingActivationUnits = TrailingActivationUnits,
+                    TrailingDropUnits = TrailingDropUnits,
+                    CommissionBuffer = CommissionBuffer,
+                    PointValuePerLot = PointValuePerLot,
+                    VolumeStep = VolumeStep,
+                    MinimumVolume = MinimumVolume,
+                    MaximumVolume = MaximumVolume,
+                    CommissionPerLot = CommissionPerLot,
+                    Slippage = Slippage,
+                    ProjectedSpread = ProjectedSpread,
+                    BuySwapPerLotPerDay = BuySwapPerLotPerDay,
+                    SellSwapPerLotPerDay = SellSwapPerLotPerDay
+                };
+            }
+        }
+    }
+}
