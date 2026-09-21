@@ -135,8 +135,8 @@ namespace MarketLab.SingleAnchor
         public decimal PeakProfit { get; private set; }
 
         /// <summary>
-        /// The most recent rejected entry attempt for this basket, kept so an unchanged
-        /// situation is reported once rather than on every quote; cleared by a filled entry.
+        /// The most recent rejected entry attempt for this basket (audit); cleared by a filled entry.
+        /// The engine's episode scan, not this property, folds repeats into one trace row.
         /// </summary>
         public EntryRejection? LastRejection { get; internal set; }
 

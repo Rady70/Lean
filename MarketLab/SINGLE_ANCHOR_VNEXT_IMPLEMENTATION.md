@@ -198,7 +198,10 @@ culture; `true`/`false` for booleans.
   folded into that row, never stored per tick. Matching scans the basket's rows
   (newest first), so an episode that reappears after another episode appends to
   its existing row; the number of rows is bounded by the finite set of episode
-  keys, not by the number of ticks. Two quote-dependent quantities deliberately
+  keys, not by the number of ticks. The key includes the trade number, so a new
+  key requires a state change (a fill, a different outcome, or a different
+  side/reason), never a mere tick; a basket therefore carries only a handful of
+  rows. Two quote-dependent quantities deliberately
   stay out of the key: the broker-normalized requirement (it moves with every
   quote, so 0.06, 0.07, 0.06 stays one row) and the economic figures. The
   hard-BE outcome itself is quote-dependent (PL_1lot crosses zero at
@@ -236,10 +239,13 @@ culture; `true`/`false` for booleans.
   human-readable; the detailed message is only formatted for a new row (and
   raised to the host once). The sizing and rejection records are value types and
   the digest writer serializes fields directly into the accumulator, so a
-  repeated rejected attempt allocates nothing (section 7: 0 bytes per attempt
-  over one-million-tick probes, both for a stable outcome and for an outcome
-  alternating between two episodes; the earlier class-based revision measured 808
-  and 352 bytes per attempt).
+  repeated rejected attempt allocates nothing: `HardBreakevenSizing`,
+  `EntryRejection` and `EntryOrder` are value types and the message is not
+  formatted (section 7: 0 bytes per attempt over one-million-tick probes for a
+  stable hard-BE outcome, for an outcome alternating between two episodes, and
+  for repeats where the executor fails; the earlier class-based revision measured
+  808 and 352 bytes per hard-BE attempt, and a probe of the class-based
+  `EntryOrder` measured 304 bytes per failed-execution attempt).
 - **Arithmetic lots** (trades 1..Nnormal) are normalized upward to the volume
   step (never below the requested B * n), raised to the minimum volume, and
   refused explicitly above the maximum.
@@ -422,7 +428,8 @@ sample's data quality or of a sensible parameter choice. The target spread
   alternating between `ExceedsMaximumVolume` and `NonPositiveMarginalProfit`
   (ask alternating 2089.48 / 2089.50 around `T_up - commission/V`) allocates
   0 bytes per attempt and stays two rows, 500,000 attempts each, with one digest
-  per outcome. Ordinary no-action ticks allocate 0 bytes and cost ~60 ns.
+  per outcome; repeats where the executor fails allocate 0 bytes per attempt and
+  stay two rows. Ordinary no-action ticks allocate 0 bytes and cost ~60 ns.
   (The same probe measured 808 bytes per attempt for the earlier class-based
   revision that formatted a message on every attempt, and 352 bytes after the
   message was made lazy but before the sizing and rejection records became value

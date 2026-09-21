@@ -185,7 +185,10 @@ namespace MarketLab.SingleAnchor
         /// The starting lot is normally <c>ceil(max(Q_BE, minimum) / step) * step</c>; the loop only
         /// runs when decimal rounding left that estimate one or more steps short. It is exposed
         /// internally so that fallback branch can be tested with a deliberately short start.
-        /// Requires PL_1lot(T) &gt; 0, which makes the sequence strictly increasing and terminating.
+        /// Requires PL_1lot(T) &gt; 0, which makes the sequence strictly increasing and terminating
+        /// for every input the sizer can produce. A no-progress guard stops a start so far outside
+        /// the sizer's range that <c>lot + step</c> is a decimal no-op; such a start cannot come from
+        /// <see cref="Size"/>.
         /// </summary>
         internal static decimal SmallestVerifiedLot(
             decimal existing,
@@ -200,6 +203,10 @@ namespace MarketLab.SingleAnchor
             after = ProjectedAfter(existing, side, lot, candidateEntry, target, parameters);
             while (after < 0m)
             {
+                if (lot + parameters.VolumeStep <= lot)
+                {
+                    break;
+                }
                 lot += parameters.VolumeStep;
                 after = ProjectedAfter(existing, side, lot, candidateEntry, target, parameters);
             }

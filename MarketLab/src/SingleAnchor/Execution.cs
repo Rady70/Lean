@@ -23,9 +23,10 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
-    /// A new basket leg the engine wants opened.
+    /// A new basket leg the engine wants opened. A value type: requesting an entry (including a
+    /// repeated request whose executor fails) creates no heap object on the hot path.
     /// </summary>
-    public sealed record EntryOrder(int TradeNumber, TradeSide Side, decimal Lots, Quote Quote, SizingRegime Regime, HardBreakevenSizing? Sizing);
+    public readonly record struct EntryOrder(int TradeNumber, TradeSide Side, decimal Lots, Quote Quote, SizingRegime Regime, HardBreakevenSizing? Sizing);
 
     /// <summary>
     /// A request to close every leg of the basket.
@@ -105,7 +106,6 @@ namespace MarketLab.SingleAnchor
         /// <inheritdoc />
         public EntryExecution OpenPosition(EntryOrder order)
         {
-            if (order == null) throw new ArgumentNullException(nameof(order));
             return EntryExecution.Filled(BasketEconomics.ExecutableEntryPrice(order.Side, order.Quote, _parameters));
         }
 
