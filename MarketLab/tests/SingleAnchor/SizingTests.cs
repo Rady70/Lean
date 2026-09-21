@@ -45,7 +45,8 @@ namespace MarketLab.SingleAnchor.Tests
             {
                 StepPercent = 1m,
                 BaseLot = 0.001m,
-                PointValuePerLot = 100m
+                PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m
             });
             h.Anchor();
             h.AtUpper();
@@ -61,6 +62,7 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = 1m,
                 BaseLot = 60m,
                 PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m,
                 MaximumVolume = 100m,
                 EscapeEnabled = false,
                 TrailingEnabled = false
@@ -126,7 +128,8 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = 1m,
                 BaseLot = 0.01m,
                 NormalTradeCount = 2,
-                PointValuePerLot = 100m
+                PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m
             });
             h.Anchor();
             h.AtUpper();
@@ -148,7 +151,8 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = 1m,
                 BaseLot = 0.5m,
                 NormalTradeCount = 0,
-                PointValuePerLot = 100m
+                PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m
             });
             h.Anchor();
             h.AtUpper();
@@ -172,6 +176,7 @@ namespace MarketLab.SingleAnchor.Tests
                 BaseLot = p.BaseLot,
                 HardBreakevenCeilingPercent = 0.5m,
                 PointValuePerLot = p.PointValuePerLot,
+                ProjectedSpread = 0.2m,
                 EscapeEnabled = false,
                 TrailingEnabled = false
             });
@@ -269,6 +274,7 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = p.StepPercent,
                 BaseLot = p.BaseLot,
                 PointValuePerLot = p.PointValuePerLot,
+                ProjectedSpread = 0.2m,
                 MaximumVolume = 0.05m,
                 EscapeEnabled = false,
                 TrailingEnabled = false
@@ -392,6 +398,7 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = d.StepPercent,
                 BaseLot = d.BaseLot,
                 PointValuePerLot = d.PointValuePerLot,
+                ProjectedSpread = 0.2m,
                 CommissionPerLot = 7m,
                 Slippage = 0.1m
             };
@@ -405,17 +412,10 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void ConfiguredSpreadReplacesTheObservedOne()
+        public void TargetSpreadIsTheConfiguredOneNotTheQuotes()
         {
-            var d = Harness.Defaults();
-            var p = new SingleAnchorParameters
-            {
-                StepPercent = d.StepPercent,
-                BaseLot = d.BaseLot,
-                PointValuePerLot = d.PointValuePerLot,
-                UseObservedSpreadForProjection = false,
-                ProjectedSpread = 0.5m
-            };
+            // The sizing quote's spread is 0.2; the projection uses the configured 0.5.
+            var p = Harness.Defaults() with { ProjectedSpread = 0.5m };
             var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
 
             Assert.That(sizing.Target.Spread, Is.EqualTo(0.5m));
@@ -446,7 +446,8 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = d.StepPercent,
                 BaseLot = d.BaseLot,
                 HardBreakevenCeilingPercent = 0.5m, // T_up = 2010 < entry 2020
-                PointValuePerLot = d.PointValuePerLot
+                PointValuePerLot = d.PointValuePerLot,
+                ProjectedSpread = 0.2m
             };
             var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
 
@@ -467,7 +468,8 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = d.StepPercent,
                 BaseLot = d.BaseLot,
                 HardBreakevenCeilingPercent = 1.005m,
-                PointValuePerLot = d.PointValuePerLot
+                PointValuePerLot = d.PointValuePerLot,
+                ProjectedSpread = 0.2m
             };
             var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
 
@@ -488,7 +490,8 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = d.StepPercent,
                 BaseLot = d.BaseLot,
                 HardBreakevenCeilingPercent = 0.5m,
-                PointValuePerLot = d.PointValuePerLot
+                PointValuePerLot = d.PointValuePerLot,
+                ProjectedSpread = 0.2m
             };
             var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), p);
             basket.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Time, SizingRegime.Arithmetic));
@@ -513,7 +516,8 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = d.StepPercent,
                 BaseLot = d.BaseLot,
                 HardBreakevenCeilingPercent = 0.5m,
-                PointValuePerLot = d.PointValuePerLot
+                PointValuePerLot = d.PointValuePerLot,
+                ProjectedSpread = 0.2m
             };
             var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), p);
             basket.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Time, SizingRegime.Arithmetic));
@@ -537,6 +541,7 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = d.StepPercent,
                 BaseLot = d.BaseLot,
                 PointValuePerLot = d.PointValuePerLot,
+                ProjectedSpread = 0.2m,
                 MaximumVolume = 0.05m
             };
             var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
@@ -559,6 +564,7 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = d.StepPercent,
                 BaseLot = d.BaseLot,
                 PointValuePerLot = d.PointValuePerLot,
+                ProjectedSpread = 0.2m,
                 Slippage = 2100m
             };
             var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
@@ -573,18 +579,26 @@ namespace MarketLab.SingleAnchor.Tests
         public void ProjectedPricesThatAreNotPositiveAreInfeasible()
         {
             var d = Harness.Defaults();
-            var p = new SingleAnchorParameters
-            {
-                StepPercent = d.StepPercent,
-                BaseLot = d.BaseLot,
-                PointValuePerLot = d.PointValuePerLot,
-                UseObservedSpreadForProjection = false,
-                ProjectedSpread = 5000m
-            };
+            var p = Harness.Defaults() with { ProjectedSpread = 5000m };
             var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
 
             Assert.That(sizing.Outcome, Is.EqualTo(HardBreakevenOutcome.InvalidTargetPrices));
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
+        }
+
+        [Test]
+        public void OnlyTheSidesPresentOrRequiredNeedAPositiveExecutablePrice()
+        {
+            // SELL-only basket, SELL candidate: the projected BUY close (1910.34 - 1950 < 0) is
+            // irrelevant, so the sizing proceeds and fails for the economic reason, not for validity.
+            var p = Harness.Defaults() with { Slippage = 1950m };
+            var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), p);
+            basket.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Time, SizingRegime.Arithmetic));
+
+            var sizing = HardBreakevenSizer.Size(basket, TradeSide.Sell, Lower, p);
+
+            Assert.That(sizing.CandidateEntryPrice, Is.EqualTo(30m));
+            Assert.That(sizing.Outcome, Is.EqualTo(HardBreakevenOutcome.NonPositiveMarginalProfit));
         }
 
         [Test]

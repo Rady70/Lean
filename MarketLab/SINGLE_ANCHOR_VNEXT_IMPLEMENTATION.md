@@ -35,7 +35,7 @@ basket, so LEAN's orders, equity, drawdown, fees and margin stay empty and are
 | `src\SingleAnchor\HardBreakevenSizer.cs`, `VolumeMath.cs` | tail sizing: Q_BE, upward normalization, verification, explicit infeasibility outcomes |
 | `src\SingleAnchor\SingleAnchorEngine.cs` | the per-quote state machine (sections 14-16), host-independent; verifies every tail fill; faults on a strategy invariant failure; raises typed events; keeps the closed-basket records and leg traces |
 | `src\SingleAnchor\Execution.cs` | the all-or-nothing executor contract, the `ResearchExecutor`, the strategy invariants, event and result records |
-| `src\SingleAnchor\QuoteTickFeed.cs` | hands every LEAN quote tick of a slice to the engine in order; counts unused, invalid and refused ticks |
+| `src\SingleAnchor\QuoteTickFeed.cs` | hands every LEAN quote tick of a slice to the engine in order; counts unused (non-quote) ticks; an invalid or out-of-order quote tick is a data-quality failure that stops the run |
 | `src\SingleAnchor\SingleAnchorVNextAlgorithm.cs`, `ParameterParsing.cs` | the `QCAlgorithm` host: XAUUSD CFD quote ticks, LEAN parameters, event logging, end-of-data mark to market, results file |
 | `tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj` | NUnit tests on deterministic synthetic quotes (same NUnit / test SDK versions as upstream's `Tests` project) |
 
@@ -54,14 +54,15 @@ Both projects treat compiler warnings as errors; the NuGet audit warnings
 are excluded from that rule. Output: `MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll`
 (ignored by upstream's `.gitignore` like every `bin\`/`obj\`).
 
-Run under LEAN through the qualified helper; the two inputs the specification
-leaves without a value must be given, everything else has the specified default:
+Run under LEAN through the qualified helper; the three inputs the specification
+leaves without a value (the step percent, the base lot and the target spread of
+the hard-BE projection) must be given, everything else has the specified default:
 
 ```powershell
 pwsh -File MarketLab\scripts\run-backtest.ps1 `
     -AlgorithmTypeName SingleAnchorVNextAlgorithm `
     -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll `
-    -Parameters "single-anchor-step-percent:0.2,single-anchor-base-lot:0.01"
+    -Parameters "single-anchor-step-percent:0.2,single-anchor-base-lot:0.01,single-anchor-projected-spread:0.5"
 ```
 
 The checkout ships upstream's Oanda XAUUSD tick-quote sample,
@@ -95,7 +96,7 @@ culture; `true`/`false` for booleans.
 | `single-anchor-volume-step`, `-minimum-volume`, `-maximum-volume` | V_step and broker limits (section 8) | 0.01, 0.01, 100 |
 | `single-anchor-commission-per-lot` | round-trip commission per lot: in the executable projection (section 7) and in every realized result | 0 |
 | `single-anchor-slippage` | adverse slippage per execution, price units: in the projection and in every fill (section 7) | 0 |
-| `single-anchor-use-observed-spread`, `-projected-spread` | spread at the hard target (section 7) | true (spread of the sizing tick), 0 |
+| `single-anchor-projected-spread` | the configured spread assumed at the hard target (section 7, "configured ... spread"); the hard-BE guarantee is relative to it (section 4) | none, required |
 | `single-anchor-buy-swap-per-lot-per-day`, `-sell-swap-per-lot-per-day` | swap/financing (sections 7, 9); non-zero values are not qualified against the hard ceiling (section 4) | 0, 0 (no accrual) |
 | `single-anchor-swap-rollover-time`, `-triple-swap-day` | rollover clock for swap; the time as `HHmm`/`HHmmss` (LEAN's `--parameters` splits on `:`, so `17:00` only works through the config file) | `1700`, `Wednesday` (`none` to disable) |
 | `single-anchor-symbol`, `-market`, `-security-type` | host instrument | `XAUUSD`, `oanda`, `Cfd` (`Forex` accepted) |
@@ -107,13 +108,24 @@ Each of these is explicit in code and covered by a test; none changes the
 specified rules.
 
 - **Hard-target prices.** T_up and T_down are midpoints like the anchor they
-  derive from; the projected Bid/Ask at the target are T -/+ half the spread
-  (observed on the sizing tick, or the configured `projected-spread`). BUY legs
-  are projected to close at that Bid less slippage, SELL legs at that Ask plus
-  slippage; the candidate leg enters at the current Ask plus slippage (BUY) or
-  Bid less slippage (SELL); the round-trip commission is charged per lot on
-  every leg, existing and new; accrued swap is included, future swap is not
-  projected.
+  derive from; the projected Bid/Ask at the target are T -/+ half the
+  configured target spread (`projected-spread`; the specification's "configured
+  ... spread", never the spread of the sizing quote). BUY legs are projected to
+  close at that Bid less slippage, SELL legs at that Ask plus slippage; the
+  candidate leg enters at the current Ask plus slippage (BUY) or Bid less
+  slippage (SELL); the round-trip commission is charged per lot on every leg,
+  existing and new; accrued swap is included, future swap is not projected.
+- **What the hard ceiling guarantees, precisely.** At every tail entry the
+  projected executable basket P/L at the fixed target is non-negative *under the
+  configured execution assumptions*: the configured target spread, slippage and
+  commission, and the swap accrued so far. It is a guarantee against those
+  assumptions, not against every possible future execution: if the market
+  reaches the target with a spread wider than the configured one, or financing
+  accrues after the entry (see the swap item), the basket can be below breakeven
+  there although no rule was broken. A conservatively calibrated target spread
+  (for example above the instrument's usual spread at the times a target is
+  reached) is the research-side answer; nothing re-verifies or corrects the
+  requirement after the entry, because the specification defines no response.
 - **"Smallest valid Q".** With PL_1lot(T) > 0: Q_BE = -PL_existing / PL_1lot
   when PL_existing < 0, otherwise 0; the placed lot is
   ceil(max(Q_BE, minimum) / step) * step, then PL_after(T, Q) is recomputed
@@ -127,13 +139,11 @@ specified rules.
   the actual entry price are the same number. The engine still recomputes the
   projected executable basket P/L at the fixed target with the actual fill
   after every tail leg. A negative value (only possible with an executor that
-  departs from the model) is not a trading event: the diagnostic
-  `HardBreakevenViolated` is raised, the leg stays in the ledger for the
-  post-mortem, and the engine faults with a `StrategyInvariantException`
+  departs from the model) is not a trading event: the engine records the fault
+  first, then raises the diagnostic `HardBreakevenViolated` (the leg stays in
+  the ledger for the post-mortem), then throws the `StrategyInvariantException`
   (`HardBreakevenViolatedByFill`) that stops the run, because continuing would
-  be breakeven drift after hard-BE activation. The hard ceiling is therefore
-  guaranteed at every tail entry; see the swap item below for what happens
-  afterwards.
+  be breakeven drift after hard-BE activation.
 - **Infeasible hard-BE.** No order is placed, hard-BE mode stays active, an
   `EntryRejected` event with the full sizing record is raised (the algorithm
   logs it with `Error`), the situation is re-evaluated on every later trigger
@@ -148,12 +158,17 @@ specified rules.
   refuses anything else), so N is exact and "net-flat" is exactly zero, in
   which case E is the smallest open lot.
 - **Both boundaries on one quote** (an empty basket, spread of at least two
-  grid steps): the specification defines the grid for quotes narrower than the
-  grid and no rule for this case, and no rule is added. The engine treats it as
-  a strategy invariant failure, not a trading decision: it faults with a
+  grid steps). The specification's geometry assumes the grid is wider than the
+  quote (the anchor is the midpoint, the levels are one step either side, and
+  "wait for the first boundary" has no meaning when both levels lie inside one
+  quote); it defines no rule for this case and none is added: no side is
+  chosen, nothing is skipped. The engine treats the condition as a precondition
+  failure of the configuration for that data: it faults with a
   `StrategyInvariantException` (`BothBoundariesSatisfied`, naming the quote,
-  the spread and the levels) and the run stops with LEAN exit code 1; the
-  configuration (step percent) is invalid for that data. After the first leg
+  the spread and the levels) and the run stops with LEAN exit code 1. **This
+  stop is pending the owner's explicit approval as the intended handling**; the
+  alternative is to declare the condition unreachable and leave the behaviour
+  unspecified, which no deterministic implementation can do. After the first leg
   the required side is fixed and the question does not arise. On the shipped
   sample the widest spread is 2.65, so a 0.1 % step (about 1.28 on a 1,280
   anchor) faults on 2014-05-02 08:30:01 and a 0.2 % step does not (section 7).
@@ -170,11 +185,11 @@ specified rules.
   immediately after each tail entry only. Financing accrued at later rollovers
   enters the basket's projected P/L at the target and can make it negative
   again, and nothing re-verifies or corrects that (the specification defines no
-  response). With the default swap of zero the guarantee holds for the life of
-  the basket; with non-zero swap it holds at each tail entry and is not
-  qualified for the time in between. The algorithm logs a notice at start when
-  swap is configured. Defining a continuous guarantee is a specification
-  decision, not taken here.
+  response). Non-zero swap is therefore not qualified against the hard ceiling
+  for the time between entries; the default is zero and the algorithm logs a
+  notice at start when swap is configured. Defining a continuous guarantee is a
+  specification decision, not taken here (the same holds for a spread wider
+  than the configured one at the target, see the guarantee item above).
 - **Executor contract**: all-or-nothing and immediate (an entry fills its whole
   volume at one price or fails; a close closes every leg or fails). A failed
   entry is an explicit rejection and the grid waits; a failed close ends that
@@ -192,14 +207,25 @@ specified rules.
   closing quote (raw profit, exit profit, threshold) and the realized executable
   result: BUY legs closed at Bid - slippage, SELL legs at Ask + slippage, plus
   accrued swap, less the round-trip commission on the gross volume.
-- **LEAN specifics.** Every valid quote tick of a slice reaches the engine in
-  order; nothing is collapsed to the last tick. Non-quote ticks (trades) are
-  unused and counted; quote ticks with non-positive or crossed prices are
-  counted and skipped; a quote the engine refuses as out of order is counted
-  and never becomes the last accepted quote, so the end-of-data mark to market
-  always uses a quote the engine processed. LEAN delivers only ticks inside
-  the market-hours sessions of its database (for Oanda XAUUSD: not the New
-  York 16:58-18:03 break or the weekend). A strategy invariant failure is
+- **Data quality.** Every quote tick of a slice reaches the engine in order;
+  nothing is collapsed to the last tick. Non-quote ticks (trades) are unused
+  and counted. A quote tick with a non-positive or crossed bid/ask, or one
+  stamped earlier than a quote the engine already processed, is a data-quality
+  failure (`DataQualityException`): a path-dependent tick replay that skipped
+  it would no longer be faithful, so the run stops and its result is not a
+  valid research result. Equal timestamps are in order. The engine's own
+  defensive refusal of such quotes (`OnQuote` returns false, `InvalidQuote`
+  event) is what the LEAN feed turns into the failure.
+- **Quote accounting has one meaning.** `QuotesProcessed` counts the quotes
+  whose processing began (valid and in order), the count after a quote is that
+  quote's sequence number in the traces, and `LastProcessedQuote` is the last
+  such quote; on a fault it is the faulting quote, which the failure record
+  also carries. The feed keeps no second count. The end-of-data (or fault-time)
+  mark to market uses `LastProcessedQuote`.
+- **LEAN specifics.** LEAN delivers only ticks inside the market-hours sessions
+  of its database (for Oanda XAUUSD: not the New York 16:58-18:03 break or the
+  weekend); tick times are in the exchange time zone, which the results file
+  names (`quoteTimeZone`). A strategy invariant or data-quality failure is
   logged, the results file is written with the failure recorded, and the
   exception is rethrown so LEAN ends the run as a runtime error (exit code 1;
   `OnEndOfAlgorithm` does not run in that case).
@@ -219,8 +245,10 @@ specified rules.
 - A full performance report (equity curve, drawdown, per-basket statistics)
   and the Python/MT5 parity comparison from the strategy's own results; the
   results file below, with its per-leg trace, is the input for both.
-- A continuous hard-BE guarantee under non-zero financing (a specification
-  decision; see the swap item in section 4).
+- A continuous hard-BE guarantee under non-zero financing or a target spread
+  wider than the configured one (a specification decision; section 4).
+- Per-row UTC timestamps in the traces (the rows are in the named exchange
+  time zone; the conversion is a host concern for the parity task).
 - A `decimal` versus `double` benchmark of the per-quote path; the arithmetic
   stays exact `decimal` until a measured need says otherwise.
 
@@ -235,46 +263,59 @@ own results are:
   and violations as `Error` lines, and the end-of-data summary with the open
   basket marked to market (raw, exit and executable profit; never closed);
 - `<run dir>\storage\single-anchor\results.json` (written through LEAN's object
-  store at the end of the run, or at the moment a strategy invariant fails):
-  `completed` and, on a fault, `invariantFailure` (which invariant, the quote,
-  the message); the parameters; the tick and quote counts; legs opened;
-  rejections; baskets closed; the realized profit total; one record per closed
-  basket (sequence number, times, anchor, reason, lots, decision and realized
-  figures, close prices, swap, commission) with its `LegTrace`: one row per
-  leg with basket number, trade number, time, side, lots, fill price, sizing
-  regime, accrued swap and, for a tail leg, the hard-BE target, PL_existing(T),
-  PL_1lot(T), the required lot and the projected P/L after the leg; and the
-  open basket's valuation and leg trace.
+  store at the end of the run, or at the moment a strategy invariant or a
+  data-quality condition fails): `completed` and, on a stop, `failure` (kind
+  `StrategyInvariant` or `DataQuality`, the condition, the quote, the message);
+  the symbol, market and `quoteTimeZone`; the parameters; quote ticks processed
+  and non-quote ticks unused; `lastProcessedQuote`; legs opened; rejections;
+  baskets closed; the realized profit total; one record per closed basket
+  (sequence number, created and closed times, the closing quote's sequence
+  number, Bid and Ask, anchor, reason, lots, decision and realized figures,
+  close prices, swap, commission) with its `LegTrace`: one row per leg with
+  basket number, trade number, the triggering quote's sequence number, time,
+  decision Bid and Ask, side, lots, fill price, sizing regime, accrued swap and,
+  for a tail leg, the hard-BE target, the target spread and projected Bid/Ask
+  used, PL_existing(T), PL_1lot(T), the required lot and the projected P/L
+  after the leg; and `openBasket`, the complete state of the current basket
+  (sequence, created time, anchor, step, levels, targets, legs, last side, next
+  trade number, lots, swap, hard-BE and trailing state, and its valuation when
+  it has legs) with `openBasketLegs`, its leg trace. Per-row times are in
+  `quoteTimeZone`.
 
 ## 7. Validation record (2026-09-21, Windows, .NET SDK 10.0.401)
 
 Software-use evidence only: nothing here is evidence of profitability, of the
-sample's data quality or of a sensible parameter choice.
+sample's data quality or of a sensible parameter choice. The target spread
+`0.5` below is an example value above the sample's usual spread (median 0.28,
+99th percentile 1.6, widest 2.65), not a calibration.
 
 - `dotnet build ...MarketLab.SingleAnchor.csproj --configuration Release`: 0 errors; 0 compiler
   warnings from the two MarketLab projects (the referenced upstream projects print their own
   analyzer warnings, as recorded for the engine build).
-- `dotnet test ...MarketLab.SingleAnchor.Tests.csproj --configuration Release`: 124 passed, 0 failed, 0 skipped.
+- `dotnet test ...MarketLab.SingleAnchor.Tests.csproj --configuration Release`: 130 passed, 0 failed, 0 skipped.
 - `MarketLab\scripts\run-backtest.ps1` with the assembly on the shipped sample,
-  `-Parameters "single-anchor-step-percent:0.2,single-anchor-base-lot:0.01"`
+  `-Parameters "single-anchor-step-percent:0.2,single-anchor-base-lot:0.01,single-anchor-projected-spread:0.5"`
   (default dates 2014-05-02..2014-05-14): helper exit code 0, 0 failed data
-  requests, 0 engine `ERROR::` lines; 1,688,736 quote ticks fed (every in-window
-  tick of the sample inside LEAN's market hours; 0 non-quote, 0 invalid, 0
-  refused), 33 legs, 19 baskets closed (16 by trailing, 3 by escape), 0
-  rejected entries, realized profit 26.97; at the end of data a 5-leg hard-BE
-  basket (#20, buy 0.07 / sell 0.06 / net 0.01 lots, raw profit -26.519)
-  reported marked to market, not closed; `results.json` written with
-  `completed: true` and the leg traces (its trade-5 row recomputes by hand:
-  Q_BE 0.02691 -> 0.03, PL_after 16.96); LEAN's own report: 0 orders, End
-  Equity 100,000. Wall time 23 s (LEAN's own figure 20.1 s); no throughput
-  claim is made from one timing.
+  requests, 0 engine `ERROR::` lines; 1,688,736 quote ticks processed (every
+  in-window tick of the sample inside LEAN's market hours; 0 non-quote), 21
+  legs, 11 baskets closed (9 by trailing, 2 by escape), 0 rejected entries,
+  realized profit 17.752; at the end of data a 7-leg hard-BE basket (#12, buy
+  0.08 / sell 0.09 / net -0.01 lots, raw profit -43.167) reported marked to
+  market, not closed; `results.json` written with `completed: true`, the
+  complete open-basket state and the leg traces (the last open row, a SELL tail
+  leg, recomputes by hand: target 1250.1948, projected Bid/Ask 1249.9448 /
+  1250.4448 at spread 0.5, required lot 0.0183 -> 0.02); LEAN's own report: 0
+  orders, End Equity 100,000. Wall time 25 s (LEAN's own figure 23.5 s); no
+  throughput claim is made from one timing.
 - The same with `single-anchor-step-percent:0.1`: the run stops on
   2014-05-02 08:30:01 with the `BothBoundariesSatisfied` invariant (quote
   1275.507 / 1278.152, spread 2.645, step 1.277): LEAN runtime error, helper
   exit code 1, `results.json` written with `completed: false`, the failure
-  recorded and the 6 baskets closed before it.
-- The same helper without the two required parameters: LEAN exit code 1 with
-  the validation message; with dates outside the sample: exit code 3 (failed
-  data requests), 0 quotes processed.
+  (kind, condition, quote, message), the 6 baskets closed before it and the
+  state of the anchored basket #7 (no legs).
+- The same without `single-anchor-projected-spread`, or without the other two
+  required parameters: LEAN exit code 1 with the validation message; with
+  dates outside the sample: exit code 3 (failed data requests), 0 quotes
+  processed.
 - `MarketLab\tests\Test-MarketLabBacktesting.ps1` (fast mode): unchanged
   helper, 150 passed, 0 failed.

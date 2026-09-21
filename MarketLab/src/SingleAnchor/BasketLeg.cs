@@ -21,6 +21,11 @@ namespace MarketLab.SingleAnchor
     public sealed class BasketLeg
     {
         internal BasketLeg(int tradeNumber, TradeSide side, decimal lots, decimal entryPrice, DateTime entryTime, SizingRegime regime)
+            : this(tradeNumber, side, lots, entryPrice, entryTime, regime, 0, new Quote(entryTime, entryPrice, entryPrice))
+        {
+        }
+
+        internal BasketLeg(int tradeNumber, TradeSide side, decimal lots, decimal entryPrice, DateTime entryTime, SizingRegime regime, long quoteSequence, in Quote triggerQuote)
         {
             if (tradeNumber < 1) throw new ArgumentOutOfRangeException(nameof(tradeNumber), tradeNumber, "Trade numbers start at 1.");
             if (lots <= 0m) throw new ArgumentOutOfRangeException(nameof(lots), lots, "A leg needs a positive volume.");
@@ -32,6 +37,8 @@ namespace MarketLab.SingleAnchor
             EntryPrice = entryPrice;
             EntryTime = entryTime;
             Regime = regime;
+            QuoteSequence = quoteSequence;
+            TriggerQuote = triggerQuote;
         }
 
         /// <summary>1-based position of this leg in the basket's entry sequence.</summary>
@@ -51,6 +58,12 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>Sizing rule that produced the leg.</summary>
         public SizingRegime Regime { get; }
+
+        /// <summary>1-based number of the engine quote that triggered the leg (0 when built outside the engine).</summary>
+        public long QuoteSequence { get; }
+
+        /// <summary>The quote the entry decision was taken on (its Bid and Ask are the decision prices).</summary>
+        public Quote TriggerQuote { get; }
 
         /// <summary>
         /// Swap/financing credited (positive) or charged (negative) to this leg so far, in account

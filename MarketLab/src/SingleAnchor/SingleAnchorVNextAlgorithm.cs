@@ -21,9 +21,10 @@ namespace MarketLab.SingleAnchor
     /// results to the object store (`single-anchor/results.json` under the run's `storage\`
     /// folder) and to the algorithm log. Every strategy input is a LEAN parameter (config
     /// `parameters` object or the MarketLab helper's -Parameters), named below;
-    /// <c>single-anchor-step-percent</c> and <c>single-anchor-base-lot</c> have no specified
-    /// default and must be given. A strategy invariant failure
-    /// (<see cref="StrategyInvariantException"/>) writes the results with the failure recorded
+    /// <c>single-anchor-step-percent</c>, <c>single-anchor-base-lot</c> and
+    /// <c>single-anchor-projected-spread</c> have no specified default and must be given. A
+    /// strategy invariant failure (<see cref="StrategyInvariantException"/>) or a data-quality
+    /// failure (<see cref="DataQualityException"/>) writes the results with the failure recorded
     /// and then stops the run as a LEAN runtime error.
     /// </summary>
     /// <remarks>
@@ -66,7 +67,6 @@ namespace MarketLab.SingleAnchor
         [Parameter("single-anchor-maximum-volume")] private decimal _maximumVolume = 100m;
         [Parameter("single-anchor-commission-per-lot")] private decimal _commissionPerLot = 0m;
         [Parameter("single-anchor-slippage")] private decimal _slippage = 0m;
-        [Parameter("single-anchor-use-observed-spread")] private bool _useObservedSpreadForProjection = true;
         [Parameter("single-anchor-projected-spread")] private decimal _projectedSpread = 0m;
         [Parameter("single-anchor-buy-swap-per-lot-per-day")] private decimal _buySwapPerLotPerDay = 0m;
         [Parameter("single-anchor-sell-swap-per-lot-per-day")] private decimal _sellSwapPerLotPerDay = 0m;
@@ -125,7 +125,6 @@ namespace MarketLab.SingleAnchor
                 MaximumVolume = _maximumVolume,
                 CommissionPerLot = _commissionPerLot,
                 Slippage = _slippage,
-                UseObservedSpreadForProjection = _useObservedSpreadForProjection,
                 ProjectedSpread = _projectedSpread,
                 BuySwapPerLotPerDay = _buySwapPerLotPerDay,
                 SellSwapPerLotPerDay = _sellSwapPerLotPerDay,
@@ -153,7 +152,7 @@ namespace MarketLab.SingleAnchor
                 $"fixed TP {(p.FixedTakeProfitUnits > 0m ? F(p.FixedTakeProfitUnits) + " units" : "off")}, " +
                 $"trailing {(p.TrailingEnabled ? F(p.TrailingActivationUnits) + "/" + F(p.TrailingDropUnits) + " units" : "off")}, " +
                 $"commission buffer {F(p.CommissionBuffer)}, point value {F(p.PointValuePerLot)}/lot, volume step {F(p.VolumeStep)} [{F(p.MinimumVolume)}, {F(p.MaximumVolume)}], " +
-                $"commission {F(p.CommissionPerLot)}/lot round trip, slippage {F(p.Slippage)}, projected spread {(p.UseObservedSpreadForProjection ? "observed" : F(p.ProjectedSpread))}, " +
+                $"commission {F(p.CommissionPerLot)}/lot round trip, slippage {F(p.Slippage)}, target spread {F(p.ProjectedSpread)}, " +
                 $"swap buy {F(p.BuySwapPerLotPerDay)} / sell {F(p.SellSwapPerLotPerDay)} per lot per day at {p.SwapRolloverTimeOfDay} (triple: {(p.TripleSwapDay.HasValue ? p.TripleSwapDay.Value.ToString() : "none")}).");
         }
 
@@ -174,7 +173,14 @@ namespace MarketLab.SingleAnchor
                 // results are written here, with the failure recorded.
                 Error($"SingleAnchor strategy invariant {invariant.Invariant} failed: {invariant.Message}");
                 Log($"SingleAnchor run stopped by the {invariant.Invariant} invariant at {invariant.Quote}.");
-                WriteResults(_engine.LastAcceptedQuote.HasValue ? _engine.MarkToMarket(_engine.LastAcceptedQuote.Value) : null, invariant);
+                WriteResults(new RunFailure("StrategyInvariant", invariant.Invariant.ToString(), invariant.Quote, invariant.Message));
+                throw;
+            }
+            catch (DataQualityException data)
+            {
+                Error($"SingleAnchor data quality failure {data.Issue}: {data.Message}");
+                Log($"SingleAnchor run stopped by the {data.Issue} data-quality condition at {data.Quote}.");
+                WriteResults(new RunFailure("DataQuality", data.Issue.ToString(), data.Quote, data.Message));
                 throw;
             }
         }
@@ -182,66 +188,59 @@ namespace MarketLab.SingleAnchor
         /// <inheritdoc />
         public override void OnEndOfAlgorithm()
         {
-            Log($"SingleAnchor end of data: {_feed.QuoteTicks} quote ticks fed ({_feed.NonQuoteTicks} non-quote ticks unused, {_feed.InvalidQuoteTicks} invalid quote ticks skipped, {_feed.RejectedQuoteTicks} out-of-order quote ticks refused), {_engine.QuotesProcessed} quotes processed, {_engine.EntriesOpened} legs opened, {_engine.EntriesRejected} distinct rejected entries ({_engine.RejectedEntryAttempts} attempts), {_engine.BasketsClosed} baskets closed, realized profit {F(_engine.RealizedProfit)}.");
+            Log($"SingleAnchor end of data: {_engine.QuotesProcessed} quote ticks processed ({_feed.NonQuoteTicks} non-quote ticks unused), {_engine.EntriesOpened} legs opened, {_engine.EntriesRejected} distinct rejected entries ({_engine.RejectedEntryAttempts} attempts), {_engine.BasketsClosed} baskets closed, realized profit {F(_engine.RealizedProfit)}.");
 
-            BasketValuation? valuation = null;
+            var snapshot = CurrentBasketSnapshot();
             var basket = _engine.Basket;
-            if (basket == null)
+            if (basket == null || snapshot == null)
             {
                 Log("SingleAnchor end of data: no basket open.");
             }
             else if (basket.OpenPositions == 0)
             {
-                Log($"SingleAnchor end of data: basket anchored at {F(basket.Anchor)} (upper {F(basket.Upper)}, lower {F(basket.Lower)}) with no open leg.");
+                Log($"SingleAnchor end of data: basket #{snapshot.Sequence} anchored at {F(snapshot.Anchor)} (upper {F(snapshot.Upper)}, lower {F(snapshot.Lower)}) with no open leg.");
             }
             else
             {
-                valuation = _feed.LastAcceptedQuote.HasValue ? _engine.MarkToMarket(_feed.LastAcceptedQuote.Value) : null;
-                if (valuation == null)
+                Log($"SingleAnchor end of data: open basket #{snapshot.Sequence} marked to market at {snapshot.Quote} (not closed): {snapshot.OpenPositions} legs, buy {F(snapshot.BuyLots)} / sell {F(snapshot.SellLots)} / gross {F(snapshot.GrossLots)} / net {F(snapshot.NetLots)} lots, raw profit {F(snapshot.RawProfit!.Value)}, exit profit {F(snapshot.ExitProfit!.Value)}, executable profit {(snapshot.ExecutableProfit.HasValue ? F(snapshot.ExecutableProfit.Value) : "n/a (a needed executable close price is not positive)")}, step money {F(snapshot.StepMoney!.Value)}, hard-BE mode {snapshot.HardBreakevenModeActive}, trailing {snapshot.TrailingActive} (peak {F(snapshot.PeakProfit)}).");
+                foreach (var leg in basket.Legs)
                 {
-                    Log($"SingleAnchor end of data: basket left open with {basket.OpenPositions} legs and no quote to mark it; not closed.");
-                }
-                else
-                {
-                    Log($"SingleAnchor end of data: open basket #{valuation.Sequence} marked to market at {valuation.Quote} (not closed): {valuation.OpenPositions} legs, buy {F(valuation.BuyLots)} / sell {F(valuation.SellLots)} / gross {F(valuation.GrossLots)} / net {F(valuation.NetLots)} lots, raw profit {F(valuation.RawProfit)}, exit profit {F(valuation.ExitProfit)}, executable profit {(valuation.ExecutableProfit.HasValue ? F(valuation.ExecutableProfit.Value) : "n/a (an executable close price is not positive)")}, step money {F(valuation.StepMoney)}, hard-BE mode {valuation.HardBreakevenModeActive}, trailing {valuation.TrailingActive} (peak {F(valuation.PeakProfit)}).");
-                    foreach (var leg in basket.Legs)
-                    {
-                        Log($"SingleAnchor open leg: {leg}");
-                    }
+                    Log($"SingleAnchor open leg: {leg}");
                 }
             }
 
-            WriteResults(valuation, null);
+            WriteResults(null);
         }
 
-        private void WriteResults(BasketValuation? openBasket, StrategyInvariantException? invariant)
+        private sealed record RunFailure(string Kind, string Condition, Quote Quote, string Message);
+
+        private BasketSnapshot? CurrentBasketSnapshot()
+        {
+            return _engine.Basket != null && _engine.LastProcessedQuote.HasValue ? _engine.MarkToMarket(_engine.LastProcessedQuote.Value) : null;
+        }
+
+        private void WriteResults(RunFailure? failure)
         {
             var results = new Dictionary<string, object?>
             {
-                ["completed"] = invariant == null,
-                ["invariantFailure"] = invariant == null ? null : new Dictionary<string, object?>
-                {
-                    ["invariant"] = invariant.Invariant.ToString(),
-                    ["quote"] = invariant.Quote,
-                    ["message"] = invariant.Message
-                },
+                ["completed"] = failure == null,
+                ["failure"] = failure,
                 ["symbol"] = _symbol.Value,
                 ["market"] = _market,
+                ["quoteTimeZone"] = Securities[_symbol].Exchange.TimeZone.Id,
                 ["startDate"] = _startDate,
                 ["endDate"] = _endDate,
                 ["parameters"] = _parameters,
-                ["quoteTicksFed"] = _feed.QuoteTicks,
+                ["quoteTicksProcessed"] = _engine.QuotesProcessed,
                 ["nonQuoteTicksUnused"] = _feed.NonQuoteTicks,
-                ["invalidQuoteTicksSkipped"] = _feed.InvalidQuoteTicks,
-                ["outOfOrderQuoteTicksRefused"] = _feed.RejectedQuoteTicks,
-                ["quotesProcessed"] = _engine.QuotesProcessed,
+                ["lastProcessedQuote"] = _engine.LastProcessedQuote,
                 ["legsOpened"] = _engine.EntriesOpened,
                 ["distinctRejectedEntries"] = _engine.EntriesRejected,
                 ["rejectedEntryAttempts"] = _engine.RejectedEntryAttempts,
                 ["basketsClosed"] = _engine.BasketsClosed,
                 ["realizedProfit"] = _engine.RealizedProfit,
                 ["closedBaskets"] = _engine.ClosedBaskets,
-                ["openBasket"] = openBasket,
+                ["openBasket"] = CurrentBasketSnapshot(),
                 ["openBasketLegs"] = _engine.OpenBasketLegTrace()
             };
             var settings = new JsonSerializerSettings { Formatting = Formatting.Indented, Converters = { new StringEnumConverter() } };

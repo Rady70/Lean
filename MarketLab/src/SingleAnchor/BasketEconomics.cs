@@ -82,10 +82,17 @@ namespace MarketLab.SingleAnchor
             return (target.Bid - parameters.Slippage, target.Ask + parameters.Slippage);
         }
 
-        /// <summary>True when every executable price handed in is positive.</summary>
-        public static bool ArePricesUsable(decimal buyClose, decimal sellClose)
+        /// <summary>
+        /// True when the executable prices that matter are positive: the BUY close when the basket
+        /// holds BUY legs or the candidate is a BUY, the SELL close when it holds SELL legs or the
+        /// candidate is a SELL. A side that is absent needs no price.
+        /// </summary>
+        public static bool ArePricesUsable(Basket basket, decimal buyClose, decimal sellClose, TradeSide? candidate)
         {
-            return buyClose > 0m && sellClose > 0m;
+            if (basket == null) throw new ArgumentNullException(nameof(basket));
+            var needsBuy = basket.BuyLots > 0m || candidate == TradeSide.Buy;
+            var needsSell = basket.SellLots > 0m || candidate == TradeSide.Sell;
+            return (!needsBuy || buyClose > 0m) && (!needsSell || sellClose > 0m);
         }
 
         /// <summary>

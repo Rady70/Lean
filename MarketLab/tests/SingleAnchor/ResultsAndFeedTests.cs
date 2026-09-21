@@ -84,15 +84,25 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.Engine.ClosedBaskets[0], Is.SameAs(record));
 
             Assert.That(record.Sequence, Is.EqualTo(1));
+            Assert.That(record.CloseQuoteSequence, Is.EqualTo(4), "anchor, upper, lower, close");
+            Assert.That(record.CloseBid, Is.EqualTo(1900m));
+            Assert.That(record.CloseAsk, Is.EqualTo(1900.2m));
             Assert.That(record.LegTrace, Has.Count.EqualTo(2));
-            Assert.That(record.LegTrace[0].Basket, Is.EqualTo(1));
-            Assert.That(record.LegTrace[0].TradeNumber, Is.EqualTo(1));
-            Assert.That(record.LegTrace[0].Side, Is.EqualTo(TradeSide.Buy));
-            Assert.That(record.LegTrace[0].FillPrice, Is.EqualTo(2020.1m));
-            Assert.That(record.LegTrace[0].Regime, Is.EqualTo(SizingRegime.Arithmetic));
-            Assert.That(record.LegTrace[0].HardBreakevenTarget, Is.Null);
+            var first = record.LegTrace[0];
+            Assert.That(first.Basket, Is.EqualTo(1));
+            Assert.That(first.TradeNumber, Is.EqualTo(1));
+            Assert.That(first.QuoteSequence, Is.EqualTo(2));
+            Assert.That(first.DecisionBid, Is.EqualTo(2019.8m));
+            Assert.That(first.DecisionAsk, Is.EqualTo(2020m));
+            Assert.That(first.Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(first.FillPrice, Is.EqualTo(2020.1m));
+            Assert.That(first.Regime, Is.EqualTo(SizingRegime.Arithmetic));
+            Assert.That(first.HardBreakevenTarget, Is.Null);
+            Assert.That(first.TargetSpread, Is.Null);
             Assert.That(record.LegTrace[1].Side, Is.EqualTo(TradeSide.Sell));
             Assert.That(record.LegTrace[1].Lots, Is.EqualTo(0.02m));
+            Assert.That(record.LegTrace[1].QuoteSequence, Is.EqualTo(3));
+            Assert.That(record.LegTrace[1].DecisionBid, Is.EqualTo(1980m));
         }
 
         [Test]
@@ -113,6 +123,11 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(tail.Regime, Is.EqualTo(SizingRegime.HardBreakeven));
             Assert.That(tail.Lots, Is.EqualTo(0.06m));
             Assert.That(tail.HardBreakevenTarget, Is.EqualTo(2089.56m));
+            Assert.That(tail.TargetSpread, Is.EqualTo(0.2m));
+            Assert.That(tail.TargetBid, Is.EqualTo(2089.46m));
+            Assert.That(tail.TargetAsk, Is.EqualTo(2089.66m));
+            Assert.That(tail.QuoteSequence, Is.EqualTo(6));
+            Assert.That(tail.DecisionAsk, Is.EqualTo(2020m));
             Assert.That(tail.ExistingProfitAtTarget, Is.EqualTo(-380.12m));
             Assert.That(tail.MarginalProfitPerLot, Is.EqualTo(6946m));
             Assert.That(tail.RequiredLot, Is.EqualTo(380.12m / 6946m));
@@ -177,6 +192,19 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void MarkToMarketOfASellOnlyBasketIgnoresTheUnusedBuyClosePrice()
+        {
+            var h = new Harness(Harness.NoExits() with { Slippage = 2100m });
+            h.Anchor();
+            h.Engine.Basket!.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Harness.T0, SizingRegime.Arithmetic));
+
+            var valuation = h.Engine.MarkToMarket(new Quote(Harness.T0.AddMinutes(1), 2019.8m, 2020m))!;
+
+            // sells close at 2020 + 2100; the negative BUY close does not matter without BUY legs
+            Assert.That(valuation.ExecutableProfit, Is.EqualTo((1980m - 4120m) * 0.01m * 100m));
+        }
+
+        [Test]
         public void ACloseReportingANonPositivePriceFailsExplicitlyAndIsRetried()
         {
             var h = TwoLegs.Build();
@@ -221,27 +249,39 @@ namespace MarketLab.SingleAnchor.Tests
 
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1), "the boundary crossed by the first tick is not missed");
             Assert.That(h.Engine.Basket!.Legs[0].EntryPrice, Is.EqualTo(2020m));
+            Assert.That(h.Engine.Basket!.Legs[0].QuoteSequence, Is.EqualTo(2));
             Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(4));
-            Assert.That(feed.QuoteTicks, Is.EqualTo(4));
-            Assert.That(feed.LastAcceptedQuote!.Value.Ask, Is.EqualTo(2019.2m));
+            Assert.That(h.Engine.LastProcessedQuote!.Value.Ask, Is.EqualTo(2019.2m));
         }
 
         [Test]
-        public void OutOfOrderTickIsRefusedAndDoesNotBecomeTheLastAcceptedQuote()
+        public void OutOfOrderQuoteTickIsADataQualityFailure()
         {
             var h = new Harness();
             var feed = new QuoteTickFeed();
             var t = Harness.T0;
             feed.Feed(new List<Tick> { new Tick(t.AddSeconds(5), Xauusd, 1999.9m, 2000.1m) }, h.Engine);
-            feed.Feed(new List<Tick> { new Tick(t.AddSeconds(4), Xauusd, 2019.8m, 2020m) }, h.Engine);
 
-            Assert.That(feed.RejectedQuoteTicks, Is.EqualTo(1));
-            Assert.That(feed.QuoteTicks, Is.EqualTo(1));
-            Assert.That(feed.LastAcceptedQuote!.Value.Time, Is.EqualTo(t.AddSeconds(5)));
-            Assert.That(feed.LastAcceptedQuote!.Value.Ask, Is.EqualTo(2000.1m));
-            Assert.That(h.Engine.LastAcceptedQuote, Is.EqualTo(feed.LastAcceptedQuote));
+            var failure = Assert.Throws<DataQualityException>(() =>
+                feed.Feed(new List<Tick> { new Tick(t.AddSeconds(4), Xauusd, 2019.8m, 2020m) }, h.Engine))!;
+
+            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.OutOfOrderQuoteTick));
+            Assert.That(failure.Quote.Time, Is.EqualTo(t.AddSeconds(4)));
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1), "the refused quote was never processed");
+            Assert.That(h.Engine.LastProcessedQuote!.Value.Time, Is.EqualTo(t.AddSeconds(5)));
             Assert.That(h.InvalidQuotes, Has.Count.EqualTo(1));
-            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "nothing traded on the bad tick");
+            Assert.That(h.Engine.Faulted, Is.False, "a data failure is the host's, the engine itself is intact");
+        }
+
+        [Test]
+        public void SameTimestampTicksAreInOrder()
+        {
+            var h = new Harness();
+            var feed = new QuoteTickFeed();
+            var t = Harness.T0;
+            feed.Feed(new List<Tick> { new Tick(t, Xauusd, 1999.9m, 2000.1m), new Tick(t, Xauusd, 1999.8m, 2000m) }, h.Engine);
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(2));
         }
 
         [Test]
@@ -257,11 +297,13 @@ namespace MarketLab.SingleAnchor.Tests
 
             Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.BothBoundariesSatisfied));
             Assert.That(h.Engine.Faulted, Is.True);
-            Assert.That(feed.LastAcceptedQuote!.Value.Time, Is.EqualTo(t), "the faulting quote is not counted as accepted by the feed");
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(2), "the faulting quote was processed");
+            Assert.That(h.Engine.LastProcessedQuote!.Value.Time, Is.EqualTo(t.AddSeconds(1)));
+            Assert.That(h.Engine.LastProcessedQuote, Is.EqualTo(h.Engine.Fault!.Quote), "one meaning of processed: the fault quote is the last processed quote");
         }
 
         [Test]
-        public void NonQuoteAndInvalidTicksAreCountedAndSkipped()
+        public void NonQuoteTicksAreCountedAndUnused()
         {
             var h = new Harness();
             var feed = new QuoteTickFeed();
@@ -269,18 +311,32 @@ namespace MarketLab.SingleAnchor.Tests
             var slice = new List<Tick>
             {
                 new Tick(t, Xauusd, "", "", 1m, 2000m),           // a trade tick
-                new Tick(t, Xauusd, 0m, 2000.1m),                  // invalid quote
-                new Tick(t, Xauusd, 2000.2m, 2000.1m),             // crossed quote
-                new Tick(t, Xauusd, 1999.9m, 2000.1m)              // the valid one
+                new Tick(t, Xauusd, 1999.9m, 2000.1m)              // the quote
             };
             feed.Feed(slice, h.Engine);
 
             Assert.That(feed.NonQuoteTicks, Is.EqualTo(1));
-            Assert.That(feed.InvalidQuoteTicks, Is.EqualTo(2));
-            Assert.That(feed.QuoteTicks, Is.EqualTo(1));
             Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1));
-            Assert.That(h.InvalidQuotes, Is.Empty, "invalid ticks never reach the engine");
             Assert.That(h.Engine.Basket!.Anchor, Is.EqualTo(2000m));
+        }
+
+        [TestCase(0, 2000.1)]
+        [TestCase(1999.9, 0)]
+        [TestCase(2000.2, 2000.1)]
+        public void InvalidQuoteTickIsADataQualityFailure(decimal bid, decimal ask)
+        {
+            var h = new Harness();
+            var feed = new QuoteTickFeed();
+            var t = Harness.T0;
+            feed.Feed(new List<Tick> { new Tick(t, Xauusd, 1999.9m, 2000.1m) }, h.Engine);
+
+            var failure = Assert.Throws<DataQualityException>(() =>
+                feed.Feed(new List<Tick> { new Tick(t.AddSeconds(1), Xauusd, bid, ask) }, h.Engine))!;
+
+            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.InvalidQuoteTick));
+            Assert.That(failure.Quote.Bid, Is.EqualTo(bid));
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1), "the invalid tick never reached the engine");
+            Assert.That(h.InvalidQuotes, Is.Empty);
         }
     }
 }

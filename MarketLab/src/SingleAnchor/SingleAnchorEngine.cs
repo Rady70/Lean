@@ -36,7 +36,7 @@ namespace MarketLab.SingleAnchor
         private readonly List<BasketCloseRecord> _closedBaskets = new List<BasketCloseRecord>();
         private Basket? _basket;
         private int _basketSequence;
-        private Quote? _lastAcceptedQuote;
+        private Quote? _lastProcessedQuote;
         private StrategyInvariantException? _fault;
 
         /// <summary>
@@ -64,8 +64,11 @@ namespace MarketLab.SingleAnchor
         /// <summary>The strategy's own record of every closed basket, in closing order.</summary>
         public IReadOnlyList<BasketCloseRecord> ClosedBaskets => _closedBaskets;
 
-        /// <summary>The last quote the engine accepted (valid and in order), or null before the first.</summary>
-        public Quote? LastAcceptedQuote => _lastAcceptedQuote;
+        /// <summary>
+        /// The last quote whose processing began (valid and in order), or null before the first.
+        /// After a fault this is the faulting quote, which is also <see cref="Fault"/>'s Quote.
+        /// </summary>
+        public Quote? LastProcessedQuote => _lastProcessedQuote;
 
         /// <summary>True after a strategy invariant failed; every later quote is refused.</summary>
         public bool Faulted => _fault != null;
@@ -76,7 +79,10 @@ namespace MarketLab.SingleAnchor
         /// <summary>Sum of the realized executable profit of every closed basket.</summary>
         public decimal RealizedProfit { get; private set; }
 
-        /// <summary>Quotes accepted by <see cref="OnQuote"/>.</summary>
+        /// <summary>
+        /// Quotes whose processing began (valid and in order), including a faulting quote. The
+        /// count after a quote is that quote's sequence number, as recorded in the traces.
+        /// </summary>
         public long QuotesProcessed { get; private set; }
 
         /// <summary>Legs opened over the engine's lifetime.</summary>
@@ -117,8 +123,9 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// Processes one quote. Returns false, without side effects, for an invalid or out-of-order
-        /// quote. Throws <see cref="StrategyInvariantException"/> when a strategy invariant fails,
-        /// and again on every call after that.
+        /// quote (a host that replays history should treat that as a data-quality failure, as the
+        /// LEAN tick feed does). Throws <see cref="StrategyInvariantException"/> when a strategy
+        /// invariant fails, and again on every call after that.
         /// </summary>
         public bool OnQuote(in Quote quote)
         {
@@ -128,15 +135,15 @@ namespace MarketLab.SingleAnchor
             }
             if (!quote.IsValid)
             {
-                InvalidQuote.Raise(new InvalidQuoteEvent(quote, "Quote ignored: bid and ask must be positive and the ask must not be below the bid."));
+                InvalidQuote.Raise(new InvalidQuoteEvent(quote, "Quote refused: bid and ask must be positive and the ask must not be below the bid."));
                 return false;
             }
-            if (_lastAcceptedQuote.HasValue && quote.Time < _lastAcceptedQuote.Value.Time)
+            if (_lastProcessedQuote.HasValue && quote.Time < _lastProcessedQuote.Value.Time)
             {
-                InvalidQuote.Raise(new InvalidQuoteEvent(quote, $"Quote ignored: time {quote.Time:O} is earlier than the previous quote {_lastAcceptedQuote.Value.Time:O}."));
+                InvalidQuote.Raise(new InvalidQuoteEvent(quote, $"Quote refused: time {quote.Time:O} is earlier than the previous quote {_lastProcessedQuote.Value.Time:O}."));
                 return false;
             }
-            _lastAcceptedQuote = quote;
+            _lastProcessedQuote = quote;
             QuotesProcessed++;
 
             if (_basket == null)
@@ -158,7 +165,7 @@ namespace MarketLab.SingleAnchor
                 {
                     var close = new CloseOrder(basket, reason, quote);
                     var execution = _executor.CloseBasket(close);
-                    if (execution.Succeeded && BasketEconomics.ArePricesUsable(execution.BuyClosePrice, execution.SellClosePrice))
+                    if (execution.Succeeded && BasketEconomics.ArePricesUsable(basket, execution.BuyClosePrice, execution.SellClosePrice, null))
                     {
                         FinalizeClose(close, rawProfit, exitProfit, threshold, execution);
                     }
@@ -180,24 +187,34 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// Values the open basket at a quote without changing anything (end-of-data mark to market,
-        /// specification section 15). Null when there is no basket with legs.
+        /// The complete state of the current basket, valued at a quote without changing anything
+        /// (end-of-data mark to market, specification section 15). Null only when there is no
+        /// basket or the quote is invalid; a basket without legs is returned with null profits.
         /// </summary>
-        public BasketValuation? MarkToMarket(in Quote quote)
+        public BasketSnapshot? MarkToMarket(in Quote quote)
         {
             var basket = _basket;
-            if (basket == null || basket.OpenPositions == 0 || !quote.IsValid)
+            if (basket == null || !quote.IsValid)
             {
                 return null;
             }
-            var raw = BasketEconomics.RawProfit(basket, quote, _p);
-            var (buyClose, sellClose) = BasketEconomics.ExecutableClosePrices(quote, _p);
-            decimal? executable = BasketEconomics.ArePricesUsable(buyClose, sellClose)
-                ? BasketEconomics.ExecutableProfit(basket, buyClose, sellClose, _p)
-                : null;
-            return new BasketValuation(quote, basket.Sequence, basket.OpenPositions, basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots,
-                raw, raw - _p.CommissionBuffer, executable, BasketEconomics.StepMoney(basket, _p),
-                basket.HardBreakevenModeActive, basket.TrailingActive, basket.PeakProfit);
+            decimal? raw = null, exit = null, executable = null, stepMoney = null;
+            if (basket.OpenPositions > 0)
+            {
+                raw = BasketEconomics.RawProfit(basket, quote, _p);
+                exit = raw - _p.CommissionBuffer;
+                var (buyClose, sellClose) = BasketEconomics.ExecutableClosePrices(quote, _p);
+                if (BasketEconomics.ArePricesUsable(basket, buyClose, sellClose, null))
+                {
+                    executable = BasketEconomics.ExecutableProfit(basket, buyClose, sellClose, _p);
+                }
+                stepMoney = BasketEconomics.StepMoney(basket, _p);
+            }
+            return new BasketSnapshot(basket.Sequence, basket.CreatedTime, basket.Anchor, basket.Step, basket.Upper, basket.Lower,
+                basket.LowerTarget, basket.UpperTarget, basket.OpenPositions, basket.LastSide, basket.NextTradeNumber,
+                basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots, basket.AccruedSwapTotal,
+                basket.HardBreakevenModeActive, basket.TrailingActive, basket.PeakProfit,
+                quote, raw, exit, executable, stepMoney);
         }
 
         /// <summary>The trace rows of the open basket's legs (empty without a basket).</summary>
@@ -318,7 +335,7 @@ namespace MarketLab.SingleAnchor
                 return;
             }
 
-            var leg = new BasketLeg(tradeNumber, side, lots, execution.FillPrice, quote.Time, regime) { Sizing = sizing };
+            var leg = new BasketLeg(tradeNumber, side, lots, execution.FillPrice, quote.Time, regime, QuotesProcessed, quote) { Sizing = sizing };
             basket.AddLeg(leg);
             if (_p.SwapConfigured && basket.OpenPositions == 1)
             {
@@ -337,9 +354,12 @@ namespace MarketLab.SingleAnchor
                 var afterFill = BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, _p);
                 if (afterFill < 0m)
                 {
-                    HardBreakevenViolated.Raise(new HardBreakevenViolatedEvent(basket, leg, sizing, afterFill, quote));
-                    throw RecordFault(new StrategyInvariantException(StrategyInvariant.HardBreakevenViolatedByFill, quote,
+                    // The fault is recorded before observers are told, so the engine is faulted
+                    // even if an observer throws.
+                    var fault = RecordFault(new StrategyInvariantException(StrategyInvariant.HardBreakevenViolatedByFill, quote,
                         $"Tail leg {leg} of basket #{basket.Sequence} was filled at {F(execution.FillPrice)} instead of the modelled {F(sizing.CandidateEntryPrice)}; the projected executable basket P/L at the hard target {F(sizing.Target.Target)} is {F(afterFill)} after the fill (sizing expected {F(sizing.ProjectedProfitAfter)}). Breakeven would drift beyond the ceiling; the run is stopped."));
+                    HardBreakevenViolated.Raise(new HardBreakevenViolatedEvent(basket, leg, sizing, afterFill, quote));
+                    throw fault;
                 }
             }
         }
@@ -367,7 +387,8 @@ namespace MarketLab.SingleAnchor
             var basket = order.Basket;
             var commission = _p.CommissionPerLot * basket.GrossLots;
             var realized = BasketEconomics.ExecutableProfit(basket, execution.BuyClosePrice, execution.SellClosePrice, _p);
-            var record = new BasketCloseRecord(basket.Sequence, basket.CreatedTime, order.Quote.Time, basket.Anchor, order.Reason, basket.OpenPositions,
+            var record = new BasketCloseRecord(basket.Sequence, basket.CreatedTime, order.Quote.Time, QuotesProcessed, order.Quote.Bid, order.Quote.Ask,
+                basket.Anchor, order.Reason, basket.OpenPositions,
                 basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots, basket.HardBreakevenModeActive,
                 rawProfit, exitProfit, threshold, execution.BuyClosePrice, execution.SellClosePrice, basket.AccruedSwapTotal, commission, realized,
                 LegTrace(basket));

@@ -114,6 +114,7 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = 1m,
                 BaseLot = 0.01m,
                 PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m,
                 CommissionBuffer = 3m
             });
             h.Anchor();
@@ -162,6 +163,7 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = 1m,
                 BaseLot = 0.01m,
                 PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m,
                 BuySwapPerLotPerDay = buySwap,
                 SwapRolloverTimeOfDay = new TimeSpan(17, 0, 0),
                 TripleSwapDay = triple
@@ -236,6 +238,7 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = 1m,
                 BaseLot = 0.01m,
                 PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m,
                 BuySwapPerLotPerDay = -2m,
                 SellSwapPerLotPerDay = 1m,
                 TripleSwapDay = null

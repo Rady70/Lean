@@ -98,6 +98,15 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(valuation.ExitProfit, Is.EqualTo(-60.6m));
             Assert.That(valuation.ExecutableProfit, Is.EqualTo(-60.6m), "no slippage or commission configured");
             Assert.That(valuation.Sequence, Is.EqualTo(1));
+            Assert.That(valuation.Anchor, Is.EqualTo(2000m));
+            Assert.That(valuation.Step, Is.EqualTo(20m));
+            Assert.That(valuation.Upper, Is.EqualTo(2020m));
+            Assert.That(valuation.Lower, Is.EqualTo(1980m));
+            Assert.That(valuation.LowerTarget, Is.EqualTo(1910.44m));
+            Assert.That(valuation.UpperTarget, Is.EqualTo(2089.56m));
+            Assert.That(valuation.LastSide, Is.EqualTo(TradeSide.Sell));
+            Assert.That(valuation.NextTradeNumber, Is.EqualTo(3));
+            Assert.That(valuation.AccruedSwap, Is.EqualTo(0m));
             Assert.That(valuation.StepMoney, Is.EqualTo(20m));
             Assert.That(valuation.HardBreakevenModeActive, Is.False);
             Assert.That(valuation.TrailingActive, Is.False);
@@ -109,12 +118,25 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void MarkToMarketIsNullWithoutOpenLegs()
+        public void MarkToMarketIsNullOnlyWithoutABasket()
         {
             var h = new Harness();
             Assert.That(h.Engine.MarkToMarket(new Quote(Harness.T0, 2000m, 2000.2m)), Is.Null);
+
             h.Anchor();
-            Assert.That(h.Engine.MarkToMarket(new Quote(Harness.T0, 2000m, 2000.2m)), Is.Null);
+            var snapshot = h.Engine.MarkToMarket(new Quote(Harness.T0, 2000m, 2000.2m));
+
+            Assert.That(snapshot, Is.Not.Null, "an anchored basket without legs is still state worth keeping");
+            Assert.That(snapshot!.OpenPositions, Is.EqualTo(0));
+            Assert.That(snapshot.Anchor, Is.EqualTo(2000m));
+            Assert.That(snapshot.Upper, Is.EqualTo(2020m));
+            Assert.That(snapshot.LastSide, Is.Null);
+            Assert.That(snapshot.NextTradeNumber, Is.EqualTo(1));
+            Assert.That(snapshot.RawProfit, Is.Null);
+            Assert.That(snapshot.ExitProfit, Is.Null);
+            Assert.That(snapshot.ExecutableProfit, Is.Null);
+            Assert.That(snapshot.StepMoney, Is.Null);
+            Assert.That(h.Engine.MarkToMarket(new Quote(Harness.T0, 0m, 2000.2m)), Is.Null, "an invalid quote values nothing");
         }
     }
 

@@ -202,41 +202,95 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
-    /// Values of an open basket at a quote, without any side effect (used for end-of-data
-    /// mark-to-market reporting, specification section 15). <paramref name="ExecutableProfit"/>
-    /// is null when the configured slippage makes an executable close price non-positive at
-    /// this quote.
+    /// The market-data conditions a research run cannot silently survive: a quote tick with
+    /// non-positive or crossed prices, or one earlier than an already processed quote. Ignoring
+    /// such a tick would change a path-dependent tick strategy's entries, exits and peaks, so the
+    /// result would no longer be a faithful replay.
     /// </summary>
-    public sealed record BasketValuation(
-        Quote Quote,
+    public enum DataQualityIssue
+    {
+        /// <summary>A quote tick whose bid or ask is not positive or whose ask is below its bid.</summary>
+        InvalidQuoteTick,
+
+        /// <summary>A quote tick stamped earlier than a quote the engine already processed.</summary>
+        OutOfOrderQuoteTick
+    }
+
+    /// <summary>
+    /// Thrown by the tick feed when the market data fails a quality condition; the run is not a
+    /// valid research result and a host must stop it.
+    /// </summary>
+    public sealed class DataQualityException : InvalidOperationException
+    {
+        /// <summary>Creates the exception.</summary>
+        public DataQualityException(DataQualityIssue issue, Quote quote, string message)
+            : base(message)
+        {
+            Issue = issue;
+            Quote = quote;
+        }
+
+        /// <summary>Which condition failed.</summary>
+        public DataQualityIssue Issue { get; }
+
+        /// <summary>The offending tick as a quote (its prices may be invalid).</summary>
+        public Quote Quote { get; }
+    }
+
+    /// <summary>
+    /// The complete state of the current basket, with its valuation at a quote when it has legs
+    /// (specification section 15: an open basket is marked to market, not closed). Geometry and
+    /// state are always present; the profit figures are null without legs, and
+    /// <paramref name="ExecutableProfit"/> is also null when the configured slippage makes a
+    /// needed executable close price non-positive at the quote.
+    /// </summary>
+    public sealed record BasketSnapshot(
         int Sequence,
+        DateTime CreatedTime,
+        decimal Anchor,
+        decimal Step,
+        decimal Upper,
+        decimal Lower,
+        decimal LowerTarget,
+        decimal UpperTarget,
         int OpenPositions,
+        TradeSide? LastSide,
+        int NextTradeNumber,
         decimal BuyLots,
         decimal SellLots,
         decimal GrossLots,
         decimal NetLots,
-        decimal RawProfit,
-        decimal ExitProfit,
-        decimal? ExecutableProfit,
-        decimal StepMoney,
+        decimal AccruedSwap,
         bool HardBreakevenModeActive,
         bool TrailingActive,
-        decimal PeakProfit);
+        decimal PeakProfit,
+        Quote Quote,
+        decimal? RawProfit,
+        decimal? ExitProfit,
+        decimal? ExecutableProfit,
+        decimal? StepMoney);
 
     /// <summary>
-    /// One leg as a machine-comparable trace row: what was filled, when, under which regime and,
-    /// for a tail leg, the sizing that produced it.
+    /// One leg as a machine-comparable trace row: the quote it was decided on (sequence number
+    /// and decision Bid/Ask), what was filled, when, under which regime and, for a tail leg, the
+    /// sizing that produced it including the target spread assumed.
     /// </summary>
     public sealed record LegRecord(
         int Basket,
         int TradeNumber,
+        long QuoteSequence,
         DateTime Time,
+        decimal DecisionBid,
+        decimal DecisionAsk,
         TradeSide Side,
         decimal Lots,
         decimal FillPrice,
         SizingRegime Regime,
         decimal AccruedSwap,
         decimal? HardBreakevenTarget,
+        decimal? TargetSpread,
+        decimal? TargetBid,
+        decimal? TargetAsk,
         decimal? ExistingProfitAtTarget,
         decimal? MarginalProfitPerLot,
         decimal? RequiredLot,
@@ -247,20 +301,25 @@ namespace MarketLab.SingleAnchor
         {
             if (leg == null) throw new ArgumentNullException(nameof(leg));
             var s = leg.Sizing;
-            return new LegRecord(basket, leg.TradeNumber, leg.EntryTime, leg.Side, leg.Lots, leg.EntryPrice, leg.Regime, leg.AccruedSwap,
-                s?.Target.Target, s?.ExistingProfitAtTarget, s?.MarginalProfitPerLot, s?.RequiredLot, s?.ProjectedProfitAfter);
+            return new LegRecord(basket, leg.TradeNumber, leg.QuoteSequence, leg.EntryTime, leg.TriggerQuote.Bid, leg.TriggerQuote.Ask,
+                leg.Side, leg.Lots, leg.EntryPrice, leg.Regime, leg.AccruedSwap,
+                s?.Target.Target, s?.Target.Spread, s?.Target.Bid, s?.Target.Ask,
+                s?.ExistingProfitAtTarget, s?.MarginalProfitPerLot, s?.RequiredLot, s?.ProjectedProfitAfter);
         }
     }
 
     /// <summary>
-    /// The strategy's own record of one closed basket: the decision quantities at the closing
-    /// quote, the realized executable result of closing every leg under the configured model,
-    /// and the leg trace.
+    /// The strategy's own record of one closed basket: the closing quote (sequence, Bid, Ask),
+    /// the decision quantities at that quote, the realized executable result of closing every
+    /// leg under the configured model, and the leg trace.
     /// </summary>
     public sealed record BasketCloseRecord(
         int Sequence,
         DateTime CreatedTime,
         DateTime ClosedTime,
+        long CloseQuoteSequence,
+        decimal CloseBid,
+        decimal CloseAsk,
         decimal Anchor,
         ExitReason Reason,
         int Legs,

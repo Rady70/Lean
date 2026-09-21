@@ -98,12 +98,11 @@ namespace MarketLab.SingleAnchor
         public decimal Slippage { get; init; }
 
         /// <summary>
-        /// When true (default) the projection at the hard target uses the spread observed on the
-        /// sizing tick; when false it uses <see cref="ProjectedSpread"/>.
+        /// The configured spread assumed at the hard target (section 7: "configured bid/ask
+        /// execution side, spread"): the projected Bid/Ask at T are T -/+ half of it. The hard-BE
+        /// requirement is guaranteed against this assumption; a wider spread at the target is
+        /// outside it. Required, positive.
         /// </summary>
-        public bool UseObservedSpreadForProjection { get; init; } = true;
-
-        /// <summary>Spread assumed at the hard target when <see cref="UseObservedSpreadForProjection"/> is false. Default 0.</summary>
         public decimal ProjectedSpread { get; init; }
 
         // ---- Swap / financing (sections 7 and 9, "where configured") ----
@@ -157,7 +156,7 @@ namespace MarketLab.SingleAnchor
 
             if (CommissionPerLot < 0m) errors.Add($"{nameof(CommissionPerLot)} must be >= 0 (got {F(CommissionPerLot)}).");
             if (Slippage < 0m) errors.Add($"{nameof(Slippage)} must be >= 0 (got {F(Slippage)}).");
-            if (ProjectedSpread < 0m) errors.Add($"{nameof(ProjectedSpread)} must be >= 0 (got {F(ProjectedSpread)}).");
+            if (ProjectedSpread <= 0m) errors.Add($"{nameof(ProjectedSpread)} must be > 0 (got {F(ProjectedSpread)}); the target spread of the hard-BE projection is a required input.");
 
             if (SwapRolloverTimeOfDay < TimeSpan.Zero || SwapRolloverTimeOfDay >= TimeSpan.FromDays(1)) errors.Add($"{nameof(SwapRolloverTimeOfDay)} must be a time of day in [00:00, 24:00) (got {SwapRolloverTimeOfDay}).");
             if (TripleSwapDay == DayOfWeek.Saturday || TripleSwapDay == DayOfWeek.Sunday) errors.Add($"{nameof(TripleSwapDay)} must be a weekday or null (got {TripleSwapDay}); weekend rollovers are never charged.");

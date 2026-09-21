@@ -82,6 +82,7 @@ namespace MarketLab.SingleAnchor.Tests
                 NormalTradeCount = 4,
                 HardBreakevenCeilingPercent = 4.478m,
                 PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m,
                 VolumeStep = 0.01m,
                 MinimumVolume = 0.01m,
                 MaximumVolume = 100m

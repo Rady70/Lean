@@ -54,7 +54,8 @@ namespace MarketLab.SingleAnchor.Tests
                 StepPercent = 0.5m,
                 BaseLot = p.BaseLot,
                 HardBreakevenCeilingPercent = 2m,
-                PointValuePerLot = p.PointValuePerLot
+                PointValuePerLot = p.PointValuePerLot,
+                ProjectedSpread = 0.2m
             });
             h.Feed(999m, 1001m);
 
@@ -278,7 +279,8 @@ namespace MarketLab.SingleAnchor.Tests
             {
                 StepPercent = 0.001m, // step 0.02 on a 2000 anchor, spread 0.2
                 BaseLot = 0.01m,
-                PointValuePerLot = 100m
+                PointValuePerLot = 100m,
+                ProjectedSpread = 0.2m
             });
             var fault = Assert.Throws<StrategyInvariantException>(() => narrow.Feed(1999.9m, 2000.1m))!;
             Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.BothBoundariesSatisfied));
@@ -312,12 +314,14 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void MissingStepPercentAndBaseLotAreReported()
+        public void MissingRequiredInputsAreReported()
         {
-            var errors = new SingleAnchorParameters { PointValuePerLot = 100m }.GetValidationErrors();
+            var errors = new SingleAnchorParameters().GetValidationErrors();
             Assert.That(errors, Has.Some.Contains("StepPercent"));
             Assert.That(errors, Has.Some.Contains("BaseLot"));
-            Assert.That(errors, Has.Count.EqualTo(2));
+            Assert.That(errors, Has.Some.Contains("PointValuePerLot"));
+            Assert.That(errors, Has.Some.Contains("ProjectedSpread"));
+            Assert.That(errors, Has.Count.EqualTo(4), "step percent, base lot, point value and the target spread have no specified value");
         }
 
         [Test]
@@ -343,6 +347,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(With(p => p.CommissionPerLot = -1m), Has.Some.Contains("CommissionPerLot"));
             Assert.That(With(p => p.Slippage = -1m), Has.Some.Contains("Slippage"));
             Assert.That(With(p => p.ProjectedSpread = -1m), Has.Some.Contains("ProjectedSpread"));
+            Assert.That(With(p => p.ProjectedSpread = 0m), Has.Some.Contains("ProjectedSpread"));
             Assert.That(With(p => p.SwapRolloverTimeOfDay = TimeSpan.FromHours(24)), Has.Some.Contains("SwapRolloverTimeOfDay"));
             Assert.That(With(p => p.TripleSwapDay = DayOfWeek.Sunday), Has.Some.Contains("TripleSwapDay"));
         }
@@ -378,7 +383,7 @@ namespace MarketLab.SingleAnchor.Tests
             public decimal MaximumVolume = 100m;
             public decimal CommissionPerLot = 0m;
             public decimal Slippage = 0m;
-            public decimal ProjectedSpread = 0m;
+            public decimal ProjectedSpread = 0.2m;
             public TimeSpan SwapRolloverTimeOfDay = new TimeSpan(17, 0, 0);
             public DayOfWeek? TripleSwapDay = DayOfWeek.Wednesday;
 

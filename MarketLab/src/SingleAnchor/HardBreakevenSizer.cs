@@ -91,7 +91,7 @@ namespace MarketLab.SingleAnchor
         /// <remarks>
         /// Steps, all in exact decimal:
         /// <list type="number">
-        /// <item>T = T_up for a BUY, T_down for a SELL; projected Bid/Ask at T from the observed or configured spread.</item>
+        /// <item>T = T_up for a BUY, T_down for a SELL; projected Bid/Ask at T from the configured target spread.</item>
         /// <item>Candidate entry: Ask + slippage for a BUY, Bid - slippage for a SELL.</item>
         /// <item>PL_existing(T) over every open leg; PL_1lot(T) for one lot of the candidate.</item>
         /// <item>PL_1lot(T) &gt; 0: Q_BE = -PL_existing / PL_1lot (0 when PL_existing &gt;= 0), then
@@ -110,15 +110,16 @@ namespace MarketLab.SingleAnchor
 
             var tradeNumber = basket.NextTradeNumber;
             var targetMid = side == TradeSide.Buy ? basket.UpperTarget : basket.LowerTarget;
-            var spread = parameters.UseObservedSpreadForProjection ? quote.Spread : parameters.ProjectedSpread;
-            var target = new TargetPrices(targetMid, spread);
+            // The configured target spread (section 7), never the spread of the sizing quote: the
+            // requirement is a guarantee against this assumption.
+            var target = new TargetPrices(targetMid, parameters.ProjectedSpread);
             // The same execution model the research executor fills with, so the projection and the
             // actual fill agree (the engine re-verifies the invariant after every tail fill).
             var candidateEntry = BasketEconomics.ExecutableEntryPrice(side, quote, parameters);
             var maximum = parameters.MaximumVolume;
 
             var (projectedBuyClose, projectedSellClose) = BasketEconomics.ExecutableClosePrices(target, parameters);
-            if (!target.IsValid || !BasketEconomics.ArePricesUsable(projectedBuyClose, projectedSellClose) || candidateEntry <= 0m)
+            if (!target.IsValid || !BasketEconomics.ArePricesUsable(basket, projectedBuyClose, projectedSellClose, side) || candidateEntry <= 0m)
             {
                 return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, 0m, 0m, 0m, 0m, 0m, maximum, HardBreakevenOutcome.InvalidTargetPrices);
             }
