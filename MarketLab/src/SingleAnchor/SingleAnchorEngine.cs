@@ -107,7 +107,7 @@ namespace MarketLab.SingleAnchor
         /// <summary>Legs opened and published over the engine's lifetime (a tail leg that fails the post-fill invariant is not published).</summary>
         public long EntriesOpened { get; private set; }
 
-        /// <summary>Distinct rejected-entry situations (each raised as one <see cref="EntryRejected"/>).</summary>
+        /// <summary>Distinct rejected-entry episodes (each raised as one <see cref="EntryRejected"/>); an episode covers every attempt with the same trade, side, reason and hard-BE outcome.</summary>
         public long EntriesRejected { get; private set; }
 
         /// <summary>Every rejected entry attempt, including repeats of the same situation.</summary>
@@ -128,7 +128,7 @@ namespace MarketLab.SingleAnchor
         /// <summary>Raised when a leg is filled, is in the ledger and has passed the post-fill hard-BE verification (for a tail leg).</summary>
         public event Action<EntryOpenedEvent>? EntryOpened;
 
-        /// <summary>Raised once per distinct rejected-entry situation, including hard-BE infeasibility.</summary>
+        /// <summary>Raised once per distinct rejected-entry episode, including hard-BE infeasibility.</summary>
         public event Action<EntryRejectedEvent>? EntryRejected;
 
         /// <summary>Raised, as a diagnostic, just before the engine faults on a tail fill that fails the hard-BE verification; the leg is not raised as a normal entry.</summary>

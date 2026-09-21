@@ -120,8 +120,12 @@ culture; `true`/`false` for booleans.
 
 - **Ambiguous first-entry quote (resolved, specification section 3).** While the
   basket is empty, a quote satisfying both `Ask >= Upper` and `Bid <= Lower`
-  (equivalently, a spread of at least two grid steps) starts nothing: no
-  priority, no skip-as-trade, no double entry. The quote is skipped, the basket
+  starts nothing: no
+  priority, no skip-as-trade, no double entry. A quote satisfying both boundaries
+  necessarily has a spread of at least two grid steps, but spread width alone
+  does not determine whether both boundaries are satisfied (a quote entirely
+  above both levels can be two steps wide and satisfy only the BUY rule), so the
+  engine evaluates the two inequalities directly. The quote is skipped, the basket
   stays empty, the anchor stays fixed and the run continues. The engine counts
   every skip (`skippedFirstEntryQuotes`) and keeps one compact trace per basket
   (first and last skipped quote, attempts, and a parity digest over every
@@ -153,8 +157,12 @@ culture; `true`/`false` for booleans.
   primary rule (smallest valid Q with PL_after >= 0), not a separate strategy
   decision.
 - **Infeasibility keeps the required lot.** `HardBreakevenSizing.NormalizedRequiredLot`
-  is the broker-valid lot the hard-BE condition needs, retained even when it
-  exceeds the maximum volume; `NormalizedLot` is 0 when nothing can be placed.
+  is the **smallest broker-valid lot whose direct recomputation verifies**
+  `PL_after >= 0`, retained even when it exceeds the maximum volume; if decimal
+  rounding makes the ceil estimate one or more steps short, the verification
+  fallback moves the reported requirement with the verified lot (the placed lot
+  and the reported requirement are always the same number on a feasible sizing).
+  `NormalizedLot` is 0 when nothing can be placed.
   The rejection trace carries both, so no infeasible case hides the needed lot.
   `ExactRequired` (and the leg/rejection traces' `ExactRequiredLot`) is null
   whenever `PL_1lot(T) <= 0`, because then there is no finite exact Q_BE; a
@@ -181,12 +189,17 @@ culture; `true`/`false` for booleans.
   could violate the hard ceiling. The engine therefore has no financing accrual
   and no swap fields; zero is the only accepted configuration until continuous
   financing behaviour is specified.
-- **Infeasible hard-BE and other rejected entries are traced.** Every basket
-  keeps one row per distinct rejected-entry situation (trade number, side,
-  reason, hard-BE outcome and broker-normalized required lot): the first
-  attempt's quote (sequence, time, Bid, Ask) and full sizing figures, the last
-  attempt's quote and the attempt count. Later attempts of the same situation
-  are folded into that row, never stored per tick. The row also carries a
+- **Infeasible hard-BE and other rejected entries are traced (bounded
+  episodes).** Every basket keeps one row per rejected-entry episode: trade
+  number, side, reason and hard-BE outcome. The first attempt's quote (sequence,
+  time, Bid, Ask) and full sizing figures are kept, the last attempt's quote and
+  the attempt count are updated, and later attempts of the same episode are
+  folded into that row, never stored per tick. The broker-normalized requirement
+  is deliberately not part of the episode identity: it moves with every quote, so
+  a requirement oscillating between adjacent volume steps (for example 0.06,
+  0.07, 0.06, ...) stays one bounded row instead of one row per tick. The row
+  carries the first attempt's normalized requirement for context, the min/max
+  normalized requirement over the episode, and a
   deterministic FNV-1a 64-bit parity digest over the canonical tuple of every
   attempt (quote sequence, Bid, Ask, trade number, side, reason, outcome,
   candidate entry, PL_existing, PL_1lot, exact required lot, broker-normalized
@@ -198,8 +211,7 @@ culture; `true`/`false` for booleans.
   and `1.200` hash identically, so the checksum compares strategy values rather
   than .NET decimal scales. A Python implementation can replay the same attempts
   and compare the digest to detect a divergence; a 64-bit checksum is a compact
-  high-confidence mismatch detector, not a mathematical proof. A materially
-  changed normalized requirement is a new row.
+  high-confidence mismatch detector, not a mathematical proof.
 - **Skipped first-entry attempts carry the same kind of digest.** The
   `SkippedFirstEntryTrace` row folds every skipped quote into an FNV-1a 64-bit
   digest over quote sequence, Bid and Ask (canonical decimals as above) next to
@@ -354,7 +366,7 @@ sample's data quality or of a sensible parameter choice. The target spread
   upstream projects print their own analyzer warnings, as recorded for the
   engine build).
 - `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`:
-  130 passed, 0 failed, 0 skipped.
+  132 passed, 0 failed, 0 skipped.
 - `MarketLab\tests\Test-MarketLabBacktesting.ps1` (fast mode): 150 passed,
   0 failed.
 - `pwsh -File MarketLab\scripts\run-backtest.ps1 -AlgorithmTypeName SingleAnchorVNextAlgorithm
@@ -387,7 +399,7 @@ sample's data quality or of a sensible parameter choice. The target spread
   1 distinct rejected-entry situation over 985,370 attempts folded into 1 row
   with `reason=HardBreakevenInfeasible`, `outcome=NonPositiveMarginalProfit`,
   a 16-character parity digest, its algorithm string and min/max aggregates;
-  `results.json` 31,301 bytes (no per-tick rows).
+  `results.json` 31,387 bytes (no per-tick rows; the same episode also carries the min/max broker-normalized requirement).
 - Wide-first-entry configuration, same command with
   `single-anchor-step-percent:0.1` (the previously run-ending case): helper exit
   code 0; the quote 1275.507 / 1278.152 (spread 2.645) on 2014-05-02 08:30:01 is

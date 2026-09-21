@@ -170,10 +170,12 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// True when this rejection is the same situation as <paramref name="other"/>: same trade,
-        /// side and reason, same hard-BE outcome (when applicable) and the same broker-normalized
-        /// required lot. A persisting situation is reported once; a materially changed requirement
-        /// is reported again. Intermediate attempts stay comparable through the row's parity digest.
+        /// True when this rejection belongs to the same episode as <paramref name="other"/>: same
+        /// trade, side, reason and hard-BE outcome. The broker-normalized requirement is
+        /// deliberately not part of the identity: it moves with every quote, and splitting on it
+        /// would let a requirement oscillating between adjacent volume steps produce one row per
+        /// tick. Every attempt is folded into the row's parity digest and the row records the
+        /// min/max normalized requirement, so the variation is preserved without per-tick rows.
         /// </summary>
         public bool SameSituationAs(EntryRejection? other)
         {
@@ -182,11 +184,10 @@ namespace MarketLab.SingleAnchor
                 return false;
             }
             var o = other.Value;
-            if (o.TradeNumber != TradeNumber || o.Side != Side || o.Reason != Reason)
-            {
-                return false;
-            }
-            return o.Sizing?.Outcome == Sizing?.Outcome && o.NormalizedRequiredLots == NormalizedRequiredLots;
+            return o.TradeNumber == TradeNumber
+                && o.Side == Side
+                && o.Reason == Reason
+                && o.Sizing?.Outcome == Sizing?.Outcome;
         }
 
         private static string F(decimal value)
@@ -635,12 +636,14 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
-    /// One rejected-entry situation as a trace row: the quote of its first attempt, what was
-    /// required, why it was not opened and the full lot distinction. Every later attempt of the same
-    /// situation is folded into the row (attempt count, last quote, parity digest and min/max
-    /// values) rather than stored as its own row, so a requirement that stays infeasible for hours
-    /// does not produce a row per tick; a materially changed requirement is a new row. The digest
-    /// makes every compressed attempt comparable with a port.
+    /// One rejected-entry episode as a trace row: the quote of its first attempt, what was
+    /// required, why it was not opened and the full lot distinction. Every later attempt with the
+    /// same trade number, side, reason and hard-BE outcome is folded into the row (attempt count,
+    /// last quote, parity digest and min/max values, including the min/max broker-normalized
+    /// requirement) rather than stored as its own row, so a requirement that stays infeasible for
+    /// hours, or oscillates between adjacent volume steps, does not produce a row per tick. A
+    /// different trade, side, reason or outcome starts a new episode. The digest makes every
+    /// compressed attempt comparable with a port.
     /// </summary>
     public sealed class EntryRejectionRecord
     {
@@ -710,7 +713,7 @@ namespace MarketLab.SingleAnchor
         /// <summary>The exact mathematically required lot Q_BE of a hard-BE rejection when the ratio applied; null otherwise.</summary>
         public decimal? ExactRequiredLots { get; }
 
-        /// <summary>The upward broker-normalized lot the requirement needs (kept even above the maximum volume); 0 when no positive lot satisfies the requirement.</summary>
+        /// <summary>The upward broker-normalized lot of the first attempt (kept even above the maximum volume); 0 when no positive lot satisfies the requirement.</summary>
         public decimal NormalizedRequiredLots { get; }
 
         /// <summary>Always null on a rejection: nothing was placed.</summary>
@@ -791,6 +794,12 @@ namespace MarketLab.SingleAnchor
         /// <summary>Largest PL_after over the attempts (null when not applicable).</summary>
         public decimal? MaxProjectedProfitAfter { get; private set; }
 
+        /// <summary>Smallest broker-normalized required lot over the attempts (the row aggregates across normalized-requirement changes).</summary>
+        public decimal MinNormalizedRequiredLots { get; private set; }
+
+        /// <summary>Largest broker-normalized required lot over the attempts (the row aggregates across normalized-requirement changes).</summary>
+        public decimal MaxNormalizedRequiredLots { get; private set; }
+
         internal void AppendAttempt(long quoteSequence, DateTime time, decimal bid, decimal ask, EntryRejection rejection)
         {
             Attempts++;
@@ -824,6 +833,14 @@ namespace MarketLab.SingleAnchor
             IfSet(s?.MarginalProfitPerLot, ref minMarginal, ref maxMarginal);
             IfSet(s?.ProjectedProfitAfter, ref minAfter, ref maxAfter);
             IfSet(rejection.ExactRequiredLots, ref minExact, ref maxExact);
+            if (Attempts <= 1 || rejection.NormalizedRequiredLots < MinNormalizedRequiredLots)
+            {
+                MinNormalizedRequiredLots = rejection.NormalizedRequiredLots;
+            }
+            if (Attempts <= 1 || rejection.NormalizedRequiredLots > MaxNormalizedRequiredLots)
+            {
+                MaxNormalizedRequiredLots = rejection.NormalizedRequiredLots;
+            }
 
             MinExistingProfitAtTarget = minExisting;
             MaxExistingProfitAtTarget = maxExisting;

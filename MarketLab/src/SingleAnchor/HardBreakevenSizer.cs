@@ -36,8 +36,9 @@ namespace MarketLab.SingleAnchor
     /// <see cref="RequiredLot"/> is the exact Q_BE, or 0 when the ratio is not applicable (the
     /// basket already projects at or inside the ceiling, or PL_1lot(T) is not positive);
     /// <see cref="ExactRequired"/> is that exact requirement or null when it does not exist;
-    /// <see cref="NormalizedRequiredLot"/> is the broker-valid lot the requirement needs (kept even
-    /// when it exceeds the maximum volume, so infeasibility never hides the needed lot);
+    /// <see cref="NormalizedRequiredLot"/> is the smallest broker-valid lot whose direct
+    /// recomputation verifies the requirement, kept even when it exceeds the maximum volume, so
+    /// infeasibility never hides the needed lot;
     /// <see cref="NormalizedLot"/> is the lot to place, 0 when infeasible. A value type: a rejected
     /// attempt creates no heap object on the hot path.
     /// </summary>
@@ -111,9 +112,11 @@ namespace MarketLab.SingleAnchor
         /// <item>Candidate entry: Ask + slippage for a BUY, Bid - slippage for a SELL.</item>
         /// <item>PL_existing(T) over every open leg; PL_1lot(T) for one lot of the candidate.</item>
         /// <item>PL_1lot(T) &gt; 0: Q_BE = -PL_existing / PL_1lot (0 when PL_existing &gt;= 0); the
-        /// broker-normalized requirement is ceil(max(Q_BE, minimum) / step) * step; the placed lot
-        /// is that requirement, verified by direct recomputation of PL_after(T, Q) and stepped upward
-        /// while negative; above MaximumVolume it is infeasible.</item>
+        /// broker-normalized requirement is the smallest volume-step multiple whose direct
+        /// recomputation of PL_after(T, Q) is non-negative, starting from ceil(max(Q_BE, minimum) /
+        /// step) * step and stepping upward while the recomputation is still negative. It is
+        /// reported exactly (even above MaximumVolume); above MaximumVolume the sizing is
+        /// infeasible.</item>
         /// <item>PL_1lot(T) &lt;= 0: the ratio is not valid and more volume cannot help, so the only
         /// candidate is the minimum volume; it is placed when PL_after(T, minimum) &gt;= 0
         /// (the basket is already at or inside the ceiling) and otherwise the sizing is infeasible.</item>
@@ -158,27 +161,49 @@ namespace MarketLab.SingleAnchor
 
             // Q_BE is the exact requirement; a basket already at or inside the ceiling needs no
             // volume for breakeven, so the smallest valid lot is the broker minimum. The
-            // broker-normalized requirement is kept even when it exceeds the maximum volume, so an
-            // infeasible sizing never hides the lot the hard-BE condition needs (section 8).
+            // broker-normalized requirement is the smallest broker-valid lot whose direct
+            // recomputation verifies PL_after >= 0; it is reported even when it exceeds the maximum
+            // volume, so an infeasible sizing never hides the lot the hard-BE condition needs
+            // (section 8). The verification step may move the requirement one step above the
+            // ceil(Q_BE) estimate when decimal rounding needs it, and the reported requirement
+            // moves with the verified lot.
             var required = existing >= 0m ? 0m : -existing / marginal;
-            var normalizedRequired = VolumeMath.CeilToStep(Math.Max(required, parameters.MinimumVolume), parameters.VolumeStep);
-            var lot = normalizedRequired;
+            var candidate = VolumeMath.CeilToStep(Math.Max(required, parameters.MinimumVolume), parameters.VolumeStep);
+            var normalizedRequired = SmallestVerifiedLot(existing, side, candidateEntry, target, parameters, candidate, out var after);
 
-            // Conservative normalization: verify with the normalized lot and, if rounding left the
-            // requirement unmet, take the next step. Never a smaller lot (section 8).
-            var after = ProjectedAfter(existing, side, lot, candidateEntry, target, parameters);
-            while (after < 0m && lot + parameters.VolumeStep <= maximum)
-            {
-                lot += parameters.VolumeStep;
-                after = ProjectedAfter(existing, side, lot, candidateEntry, target, parameters);
-            }
-
-            if (after < 0m || lot > maximum)
+            if (normalizedRequired > maximum)
             {
                 return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, required, normalizedRequired, 0m, after, maximum, HardBreakevenOutcome.ExceedsMaximumVolume);
             }
 
-            return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, required, normalizedRequired, lot, after, maximum, HardBreakevenOutcome.Feasible);
+            return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, required, normalizedRequired, normalizedRequired, after, maximum, HardBreakevenOutcome.Feasible);
+        }
+
+        /// <summary>
+        /// Steps <paramref name="startingLot"/> upward, one volume step at a time, until the direct
+        /// recomputation of <c>PL_after</c> is non-negative, and returns the smallest verified lot.
+        /// The starting lot is normally <c>ceil(max(Q_BE, minimum) / step) * step</c>; the loop only
+        /// runs when decimal rounding left that estimate one or more steps short. It is exposed
+        /// internally so that fallback branch can be tested with a deliberately short start.
+        /// Requires PL_1lot(T) &gt; 0, which makes the sequence strictly increasing and terminating.
+        /// </summary>
+        internal static decimal SmallestVerifiedLot(
+            decimal existing,
+            TradeSide side,
+            decimal candidateEntry,
+            in TargetPrices target,
+            SingleAnchorParameters parameters,
+            decimal startingLot,
+            out decimal after)
+        {
+            var lot = startingLot;
+            after = ProjectedAfter(existing, side, lot, candidateEntry, target, parameters);
+            while (after < 0m)
+            {
+                lot += parameters.VolumeStep;
+                after = ProjectedAfter(existing, side, lot, candidateEntry, target, parameters);
+            }
+            return lot;
         }
 
         private static decimal ProjectedAfter(decimal existing, TradeSide side, decimal lot, decimal candidateEntry, in TargetPrices target, SingleAnchorParameters parameters)

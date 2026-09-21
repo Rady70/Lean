@@ -258,18 +258,50 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void RejectionIsReportedAgainWhenTheRequiredLotChangesMaterially()
+        public void AChangedNormalizedRequirementStaysInTheSameRejectionEpisode()
         {
+            // The broker-normalized requirement moves with every quote and is deliberately not part
+            // of the episode identity; the row keeps the first requirement for context, the min/max
+            // over the episode and the digest of every attempt.
             var h = new Harness(Harness.NoExits() with { MaximumVolume = 0.05m });
-            h.PingPongFourLegs();
+            var basket = h.PingPongFourLegs();
             h.AtUpper();                       // Q_BE 0.0547 -> 0.06 > 0.05
             h.AtUpper();                       // same situation
             Assert.That(h.EntriesRejected, Has.Count.EqualTo(1));
 
-            h.Feed(2060m, 2060.2m);            // marginal 2936 -> Q_BE 0.1295 -> 0.13: materially different
-            Assert.That(h.EntriesRejected, Has.Count.EqualTo(2));
-            Assert.That(h.EntriesRejected[1].Rejection.Sizing!.Value.RequiredLot, Is.GreaterThan(0.12m).And.LessThan(0.13m));
+            h.Feed(2060m, 2060.2m);            // marginal 2936 -> Q_BE 0.1295 -> 0.13
+            Assert.That(h.EntriesRejected, Has.Count.EqualTo(1), "a changed normalized requirement stays in the episode");
             Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(3));
+            var row = basket.Rejections[0];
+            Assert.That(row.Attempts, Is.EqualTo(3));
+            Assert.That(row.NormalizedRequiredLots, Is.EqualTo(0.06m), "the first attempt's requirement stays for context");
+            Assert.That(row.MinNormalizedRequiredLots, Is.EqualTo(0.06m));
+            Assert.That(row.MaxNormalizedRequiredLots, Is.EqualTo(0.13m));
+            Assert.That(basket.LastRejection!.Value.Sizing!.Value.RequiredLot, Is.GreaterThan(0.12m).And.LessThan(0.13m), "the latest attempt is kept");
+        }
+
+        [Test]
+        public void OscillatingNormalizedRequirementsStayOneBoundedRow()
+        {
+            // Requirements alternate between adjacent normalized buckets (0.06 / 0.08) on every
+            // tick. Before the episode identity dropped the normalized requirement, each attempt
+            // differed from the previous one and produced a new row per tick.
+            var h = new Harness(Harness.NoExits() with { MaximumVolume = 0.05m });
+            var basket = h.PingPongFourLegs();
+            for (var i = 0; i < 1000; i++)
+            {
+                h.Feed(2019.8m, i % 2 == 0 ? 2020m : 2040m);
+            }
+
+            Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(1000));
+            Assert.That(basket.Rejections, Has.Count.EqualTo(1), "an oscillating requirement stays one episode");
+            var row = basket.Rejections[0];
+            Assert.That(row.Attempts, Is.EqualTo(1000));
+            Assert.That(row.NormalizedRequiredLots, Is.EqualTo(0.06m), "the first attempt's requirement remains for context");
+            Assert.That(row.MinNormalizedRequiredLots, Is.EqualTo(0.06m));
+            Assert.That(row.MaxNormalizedRequiredLots, Is.EqualTo(0.08m));
+            Assert.That(row.ParityHash, Has.Length.EqualTo(16));
+            Assert.That(row.LastAsk, Is.EqualTo(2040m));
         }
 
         [Test]
@@ -608,6 +640,26 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(0.06m), "the normalized requirement is retained exactly as the example in the plan");
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
             Assert.That(sizing.Message, Does.Contain("not allowed to drift"));
+        }
+
+        [Test]
+        public void TheVerificationFallbackReportsTheSteppedRequiredLot()
+        {
+            // A start deliberately one step below the true requirement exercises the rounding
+            // fallback: the verified lot, its recomputed P/L and the sizer's reported
+            // NormalizedRequiredLot must all move together.
+            var p = Harness.Defaults();
+            var target = TargetPrices.ForUpperRecovery(2089.56m, p.ProjectedSpread!.Value);
+            var verified = HardBreakevenSizer.SmallestVerifiedLot(-380.32m, TradeSide.Buy, 2020m, target, p, 0.05m, out var after);
+
+            Assert.That(verified, Is.EqualTo(0.06m));
+            Assert.That(after, Is.EqualTo(37.04m));
+
+            // On the sizer's own path a feasible sizing reports the verified lot as its required lot.
+            var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
+            Assert.That(sizing.IsFeasible, Is.True);
+            Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(sizing.NormalizedLot));
+            Assert.That(sizing.ProjectedProfitAfter, Is.GreaterThanOrEqualTo(0m));
         }
 
         [Test]
