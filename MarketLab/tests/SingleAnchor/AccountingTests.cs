@@ -78,13 +78,14 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void CommissionBufferIsDeductedPerGrossLotForExitDecisions()
+        public void CommissionBufferIsAFlatAmountPlusAnAmountPerGrossLot()
         {
             var h = new Harness(new SingleAnchorParameters
             {
                 StepPercent = 1m,
                 BaseLot = 0.01m,
                 PointValuePerLot = 100m,
+                CommissionBuffer = 3m,
                 CommissionBufferPerLot = 7m
             });
             h.Anchor();
@@ -93,12 +94,26 @@ namespace MarketLab.SingleAnchor.Tests
             var basket = h.Engine.Basket!;
 
             var quote = new Quote(Harness.T0.AddMinutes(1), 2000m, 2000.3m);
+            Assert.That(BasketEconomics.CommissionBufferAmount(basket, h.Parameters), Is.EqualTo(3m + 7m * 0.03m));
             Assert.That(BasketEconomics.RawProfit(basket, quote, h.Parameters), Is.EqualTo(-60.6m));
-            Assert.That(BasketEconomics.ExitProfit(basket, quote, h.Parameters), Is.EqualTo(-60.6m - 7m * 0.03m));
+            Assert.That(BasketEconomics.ExitProfit(basket, quote, h.Parameters), Is.EqualTo(-60.6m - 3.21m));
 
             var valuation = h.Engine.MarkToMarket(quote)!;
             Assert.That(valuation.RawProfit, Is.EqualTo(-60.6m));
-            Assert.That(valuation.ExitProfit, Is.EqualTo(-60.81m));
+            Assert.That(valuation.ExitProfit, Is.EqualTo(-63.81m));
+        }
+
+        [Test]
+        public void FlatCommissionBufferAloneMatchesTheSpecificationFormula()
+        {
+            var h = TwoLegs.Build(Harness.Defaults() with { CommissionBuffer = 0.5m }); // escape threshold 1
+            // profit 1.4 raw - 0.5 buffer = 0.9: no escape; raw 1.5 - 0.5 = 1.0: escape
+            h.Feed(TwoLegs.BidForProfit(1.4m), TwoLegs.BidForProfit(1.4m) + 0.2m);
+            Assert.That(h.BasketsClosed, Is.Empty);
+            h.Feed(TwoLegs.BidForProfit(1.5m), TwoLegs.BidForProfit(1.5m) + 0.2m);
+            Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
+            Assert.That(h.BasketsClosed[0].RawProfit, Is.EqualTo(1.5m));
+            Assert.That(h.BasketsClosed[0].ExitProfit, Is.EqualTo(1m));
         }
 
         [Test]
@@ -206,6 +221,25 @@ namespace MarketLab.SingleAnchor.Tests
 
             var basket = h.Engine.Basket!;
             Assert.That(basket.Legs[0].AccruedSwap, Is.EqualTo(-0.04m));
+            Assert.That(basket.Legs[1].AccruedSwap, Is.EqualTo(0.02m));
+        }
+
+        [Test]
+        public void LegFilledAfterTheRolloverInstantIsNotChargedForIt()
+        {
+            var h = new Harness(WithBuySwap(-2m, null) with { SellSwapPerLotPerDay = 1m });
+            h.FeedAt(Tuesday, 1999.9m, 2000.1m);
+            h.FeedAt(Tuesday.AddSeconds(1), 2019.8m, 2020m);                       // BUY 0.01, charged from Tue 17:00
+            h.Executor.EntryOverride = _ => ExecutionResult.Pending();
+            h.FeedAt(new DateTime(2024, 1, 2, 16, 59, 59), 1980m, 1980.2m);      // SELL 0.02 submitted, pending
+            h.Engine.ConfirmPendingEntry(1980m, 0.02m, new DateTime(2024, 1, 2, 17, 0, 30)); // filled after the rollover
+
+            h.FeedAt(new DateTime(2024, 1, 2, 17, 1, 0), 2000m, 2000.2m);        // Tuesday rollover is processed now
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.Legs[0].AccruedSwap, Is.EqualTo(-0.02m));
+            Assert.That(basket.Legs[1].AccruedSwap, Is.EqualTo(0m), "opened after the rollover instant");
+            h.FeedAt(new DateTime(2024, 1, 3, 17, 0, 0), 2000m, 2000.2m);
             Assert.That(basket.Legs[1].AccruedSwap, Is.EqualTo(0.02m));
         }
 

@@ -18,6 +18,8 @@ namespace MarketLab.SingleAnchor.Tests
         public List<(decimal Units, string Tag)> Submissions { get; } = new List<(decimal, string)>();
         public OrderStatus NextStatus { get; set; } = OrderStatus.Submitted;
         public string? NextError { get; set; }
+        public decimal NextQuantityFilled { get; set; }
+        public decimal NextAverageFillPrice { get; set; }
         public decimal HoldingQuantity { get; set; }
         public int LastOrderId { get; private set; }
 
@@ -25,8 +27,11 @@ namespace MarketLab.SingleAnchor.Tests
         {
             Submissions.Add((signedUnits, tag));
             LastOrderId = _nextOrderId++;
-            var filled = NextStatus == OrderStatus.Filled;
-            return new OrderSubmission(LastOrderId, NextStatus, filled ? 2020.5m : 0m, filled ? signedUnits : 0m, NextError);
+            if (NextStatus == OrderStatus.Filled)
+            {
+                return new OrderSubmission(LastOrderId, NextStatus, 2020.5m, signedUnits, NextError);
+            }
+            return new OrderSubmission(LastOrderId, NextStatus, NextAverageFillPrice, NextQuantityFilled, NextError);
         }
 
         public DateTime ToQuoteClock(DateTime utcTime)
@@ -128,6 +133,66 @@ namespace MarketLab.SingleAnchor.Tests
             var leg = s.Engine.Basket!.Legs[0];
             Assert.That(leg.Lots, Is.EqualTo(0.01m));
             Assert.That(leg.EntryPrice, Is.EqualTo(2020.6m));
+        }
+
+        [Test]
+        public void FillsAlreadyOnTheTicketAtSubmissionAreCarriedIntoThePendingTotal()
+        {
+            var s = new Setup();
+            s.Gateway.NextStatus = OrderStatus.PartiallyFilled;
+            s.Gateway.NextQuantityFilled = 0.4m;
+            s.Gateway.NextAverageFillPrice = 2020m;
+            s.Feed(1999.9m, 2000.1m);
+            s.Feed(2019.8m, 2020m);
+            Assert.That(s.Engine.HasPendingExecution, Is.True, "a partially filled ticket is pending");
+
+            // the event for the 0.4 units was raised before tracking started; only the rest arrives now
+            s.Executor.OnOrderEvent(s.Event(s.Gateway.LastOrderId, OrderStatus.Filled, 2021m, 0.6m));
+
+            var leg = s.Engine.Basket!.Legs[0];
+            Assert.That(leg.Lots, Is.EqualTo(0.01m));
+            Assert.That(leg.EntryPrice, Is.EqualTo(2020.6m));
+        }
+
+        [Test]
+        public void CancelAfterAPartialFillRecordsWhatLeanHolds()
+        {
+            var s = new Setup();
+            s.Feed(1999.9m, 2000.1m);
+            s.Feed(2019.8m, 2020m);
+            var id = s.Gateway.LastOrderId;
+            s.Executor.OnOrderEvent(s.Event(id, OrderStatus.PartiallyFilled, 2020m, 0.4m));
+
+            s.Executor.OnOrderEvent(s.Event(id, OrderStatus.Canceled, 0m, 0m, "cancelled"));
+
+            Assert.That(s.Engine.HasPendingExecution, Is.False);
+            Assert.That(s.Rejected, Is.Empty);
+            var leg = s.Engine.Basket!.Legs[0];
+            Assert.That(leg.Lots, Is.EqualTo(0.004m), "the ledger holds the 0.4 units LEAN actually filled");
+            Assert.That(leg.EntryPrice, Is.EqualTo(2020m));
+        }
+
+        [Test]
+        public void CancelAfterAPartialCloseKeepsTheBasketForARetry()
+        {
+            var s = new Setup();
+            s.Feed(1999.9m, 2000.1m);
+            s.Feed(2019.8m, 2020m);
+            s.Executor.OnOrderEvent(s.Event(s.Gateway.LastOrderId, OrderStatus.Filled, 2020m, 1m));
+            s.Feed(2035m, 2035.2m);
+            s.Gateway.HoldingQuantity = 1m;
+            s.Feed(2025m, 2025.2m);                       // trailing close submitted
+            var id = s.Gateway.LastOrderId;
+            s.Executor.OnOrderEvent(s.Event(id, OrderStatus.PartiallyFilled, 2025m, -0.4m));
+
+            s.Executor.OnOrderEvent(s.Event(id, OrderStatus.Canceled, 0m, 0m, "cancelled"));
+
+            Assert.That(s.CloseFailed, Has.Count.EqualTo(1));
+            Assert.That(s.Engine.Basket, Is.Not.Null);
+            Assert.That(s.Engine.HasPendingExecution, Is.False);
+            s.Gateway.HoldingQuantity = 0.6m;             // LEAN kept the unflattened remainder
+            s.Feed(2025m, 2025.2m);                       // the exit fires again and flattens the rest
+            Assert.That(s.Gateway.Submissions[^1].Units, Is.EqualTo(-0.6m));
         }
 
         [Test]

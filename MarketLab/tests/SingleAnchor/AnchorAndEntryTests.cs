@@ -302,6 +302,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(With(p => p.FixedTakeProfitUnits = -1m), Has.Some.Contains("FixedTakeProfitUnits"));
             Assert.That(With(p => p.TrailingActivationUnits = -1m), Has.Some.Contains("TrailingActivationUnits"));
             Assert.That(With(p => p.TrailingDropUnits = -1m), Has.Some.Contains("TrailingDropUnits"));
+            Assert.That(With(p => p.CommissionBuffer = -1m), Has.Some.Contains("CommissionBuffer must"));
             Assert.That(With(p => p.CommissionBufferPerLot = -1m), Has.Some.Contains("CommissionBufferPerLot"));
             Assert.That(With(p => p.PointValuePerLot = 0m), Has.Some.Contains("PointValuePerLot"));
             Assert.That(With(p => p.VolumeStep = 0m), Has.Some.Contains("VolumeStep"));
@@ -338,6 +339,7 @@ namespace MarketLab.SingleAnchor.Tests
             public decimal FixedTakeProfitUnits = 0m;
             public decimal TrailingActivationUnits = 0.5m;
             public decimal TrailingDropUnits = 0.25m;
+            public decimal CommissionBuffer = 0m;
             public decimal CommissionBufferPerLot = 0m;
             public decimal PointValuePerLot = 100m;
             public decimal VolumeStep = 0.01m;
@@ -362,6 +364,7 @@ namespace MarketLab.SingleAnchor.Tests
                     FixedTakeProfitUnits = FixedTakeProfitUnits,
                     TrailingActivationUnits = TrailingActivationUnits,
                     TrailingDropUnits = TrailingDropUnits,
+                    CommissionBuffer = CommissionBuffer,
                     CommissionBufferPerLot = CommissionBufferPerLot,
                     PointValuePerLot = PointValuePerLot,
                     VolumeStep = VolumeStep,

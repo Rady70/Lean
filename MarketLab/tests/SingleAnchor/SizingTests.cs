@@ -417,6 +417,58 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void NonPositiveMarginalProfitWithTheBasketInsideTheCeilingPlacesTheMinimumLot()
+        {
+            // T_up = 2010 (C = 0.5%), projected Bid 2009.9 < BUY entry 2020: PL_1lot = -1010. The
+            // basket already projects +464.9 at T_up, so the smallest valid lot, the minimum,
+            // still satisfies PL_after >= 0 (464.9 - 10.1) and is placed; more volume never helps.
+            var d = Harness.Defaults();
+            var p = new SingleAnchorParameters
+            {
+                StepPercent = d.StepPercent,
+                BaseLot = d.BaseLot,
+                HardBreakevenCeilingPercent = 0.5m,
+                PointValuePerLot = d.PointValuePerLot
+            };
+            var basket = new Basket(new Quote(Time, 1999.9m, 2000.1m), p);
+            basket.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Time, SizingRegime.Arithmetic));
+            basket.AddLeg(new BasketLeg(2, TradeSide.Buy, 0.50m, 2000m, Time, SizingRegime.Arithmetic));
+
+            var sizing = HardBreakevenSizer.Size(basket, TradeSide.Buy, Upper, p);
+
+            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(-1010m));
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(464.9m));
+            Assert.That(sizing.IsFeasible, Is.True);
+            Assert.That(sizing.RequiredLot, Is.EqualTo(0m));
+            Assert.That(sizing.NormalizedLot, Is.EqualTo(0.01m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(454.8m));
+        }
+
+        [Test]
+        public void NonPositiveMarginalProfitWhenTheMinimumLotBreaksTheCeilingIsInfeasible()
+        {
+            var d = Harness.Defaults();
+            var p = new SingleAnchorParameters
+            {
+                StepPercent = d.StepPercent,
+                BaseLot = d.BaseLot,
+                HardBreakevenCeilingPercent = 0.5m,
+                PointValuePerLot = d.PointValuePerLot
+            };
+            var basket = new Basket(new Quote(Time, 1999.9m, 2000.1m), p);
+            basket.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Time, SizingRegime.Arithmetic));
+            basket.AddLeg(new BasketLeg(2, TradeSide.Buy, 0.04m, 2000m, Time, SizingRegime.Arithmetic)); // +39.6 - 30.1 = 9.5 at T_up
+
+            var sizing = HardBreakevenSizer.Size(basket, TradeSide.Buy, Upper, p);
+
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(9.5m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(9.5m - 10.1m), "the minimum lot would push the basket below breakeven at the target");
+            Assert.That(sizing.IsFeasible, Is.False);
+            Assert.That(sizing.Outcome, Is.EqualTo(HardBreakevenOutcome.NonPositiveMarginalProfit));
+            Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
+        }
+
+        [Test]
         public void RequirementAboveTheMaximumVolumeIsInfeasible()
         {
             var d = Harness.Defaults();
@@ -482,16 +534,6 @@ namespace MarketLab.SingleAnchor.Tests
         public void RoundToNearestStepUsesMidpointAwayFromZero(decimal volume, decimal step, decimal expected)
         {
             Assert.That(VolumeMath.RoundToNearestStep(volume, step), Is.EqualTo(expected));
-        }
-
-        [TestCase(0.03, true)]
-        [TestCase(0.035, false)]
-        [TestCase(0.005, false)]
-        [TestCase(100, true)]
-        [TestCase(100.01, false)]
-        public void IsValidVolumeChecksRangeAndStep(decimal volume, bool expected)
-        {
-            Assert.That(VolumeMath.IsValidVolume(volume, 0.01m, 0.01m, 100m), Is.EqualTo(expected));
         }
 
         [Test]

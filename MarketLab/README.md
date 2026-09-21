@@ -473,8 +473,11 @@ engine build and run through this helper with `-AlgorithmLocation
 MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll
 -AlgorithmTypeName SingleAnchorVNextAlgorithm` plus the `single-anchor-*`
 parameters. [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md)
-has the commands, the parameter names and the deferred items; no XAUUSD data
-ships with the fork, so a run today ends with exit code 3 (section 10).
+has the commands, the parameter names, the deferred items and a validation
+record. Its default dates lie inside upstream's shipped Oanda XAUUSD tick
+sample (`Data\cfd\oanda\tick\xauusd`, May 2014, an engine fixture like the
+SPY sample, not research data); any other data folder needs the dates set to
+its coverage, or the run ends with exit code 3 (section 10).
 
 ## 10. When required data is missing
 

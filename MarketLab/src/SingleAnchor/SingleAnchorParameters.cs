@@ -62,9 +62,16 @@ namespace MarketLab.SingleAnchor
         // ---- Basket profit used for exits (section 9) ----
 
         /// <summary>
-        /// Optional commission buffer, account currency per lot of gross open volume, deducted from
-        /// raw basket profit before every exit decision: Profit = RawProfit - buffer * GrossLots.
-        /// 0 disables the buffer (default).
+        /// Optional commission buffer in account currency deducted from raw basket profit before
+        /// every exit decision, as written in section 9: Profit = RawProfit - CommissionBuffer.
+        /// 0 disables it (default).
+        /// </summary>
+        public decimal CommissionBuffer { get; init; }
+
+        /// <summary>
+        /// Optional volume-scaled part of the commission buffer, account currency per lot of gross
+        /// open volume: the total deduction is CommissionBuffer + CommissionBufferPerLot * GrossLots.
+        /// 0 disables it (default).
         /// </summary>
         public decimal CommissionBufferPerLot { get; init; }
 
@@ -146,6 +153,7 @@ namespace MarketLab.SingleAnchor
             if (FixedTakeProfitUnits < 0m) errors.Add($"{nameof(FixedTakeProfitUnits)} must be >= 0, 0 disables fixed TP (got {F(FixedTakeProfitUnits)}).");
             if (TrailingActivationUnits < 0m) errors.Add($"{nameof(TrailingActivationUnits)} must be >= 0 (got {F(TrailingActivationUnits)}).");
             if (TrailingDropUnits < 0m) errors.Add($"{nameof(TrailingDropUnits)} must be >= 0 (got {F(TrailingDropUnits)}).");
+            if (CommissionBuffer < 0m) errors.Add($"{nameof(CommissionBuffer)} must be >= 0 (got {F(CommissionBuffer)}).");
             if (CommissionBufferPerLot < 0m) errors.Add($"{nameof(CommissionBufferPerLot)} must be >= 0 (got {F(CommissionBufferPerLot)}).");
 
             if (PointValuePerLot <= 0m) errors.Add($"{nameof(PointValuePerLot)} must be > 0 (got {F(PointValuePerLot)}).");

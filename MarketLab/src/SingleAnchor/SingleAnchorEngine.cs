@@ -6,8 +6,10 @@ namespace MarketLab.SingleAnchor
     /// <summary>
     /// The SingleAnchor vNext state machine (specification section 16), independent of any host.
     /// Feed it one <see cref="Quote"/> at a time through <see cref="OnQuote"/>; it decides, asks the
-    /// <see cref="IBasketExecutor"/> to execute, and keeps its own basket ledger. Per quote it does
-    /// one pass over the open legs and allocates nothing unless a leg is opened or an event fires.
+    /// <see cref="IBasketExecutor"/> to execute, and keeps its own basket ledger. A quote that
+    /// neither triggers an entry nor fires an exit costs one pass over the open legs and no
+    /// allocation; a trigger quote whose entry stays infeasible re-runs the sizing and records the
+    /// attempt without raising a second event for the same situation.
     /// </summary>
     /// <remarks>
     /// Order of work on every quote (sections 14 and 15):
@@ -177,7 +179,7 @@ namespace MarketLab.SingleAnchor
             if (basket.OpenPositions > 0)
             {
                 var rawProfit = BasketEconomics.RawProfit(basket, quote, _p);
-                var exitProfit = rawProfit - _p.CommissionBufferPerLot * basket.GrossLots;
+                var exitProfit = rawProfit - BasketEconomics.CommissionBufferAmount(basket, _p);
                 var stepMoney = BasketEconomics.StepMoney(basket, _p);
                 var (reason, threshold) = EvaluateExits(basket, exitProfit, stepMoney, quote);
                 if (reason != ExitReason.None)
@@ -264,7 +266,7 @@ namespace MarketLab.SingleAnchor
             }
             var raw = BasketEconomics.RawProfit(basket, quote, _p);
             return new BasketValuation(quote, basket.OpenPositions, basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots,
-                raw, raw - _p.CommissionBufferPerLot * basket.GrossLots, BasketEconomics.StepMoney(basket, _p),
+                raw, raw - BasketEconomics.CommissionBufferAmount(basket, _p), BasketEconomics.StepMoney(basket, _p),
                 basket.HardBreakevenModeActive, basket.TrailingActive, basket.PeakProfit);
         }
 
@@ -420,7 +422,9 @@ namespace MarketLab.SingleAnchor
             while (next <= quote.Time)
             {
                 // The rollover at instant R ends the trading day that contains R - 1 tick. Weekend
-                // days are never charged; the configured triple-swap day is charged three times.
+                // days are never charged; the configured triple-swap day is charged three times;
+                // only legs opened strictly before R are charged (a fill reported after R, from a
+                // pending order, is not).
                 var closingDay = next.AddTicks(-1).DayOfWeek;
                 if (closingDay != DayOfWeek.Saturday && closingDay != DayOfWeek.Sunday)
                 {
@@ -428,6 +432,7 @@ namespace MarketLab.SingleAnchor
                     for (var i = 0; i < legs.Count; i++)
                     {
                         var leg = legs[i];
+                        if (leg.EntryTime >= next) continue;
                         var rate = leg.Side == TradeSide.Buy ? _p.BuySwapPerLotPerDay : _p.SellSwapPerLotPerDay;
                         leg.AccruedSwap += leg.Lots * rate * multiplier;
                     }

@@ -30,7 +30,8 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// Accepted but not yet filled. The host must later call the engine's confirm or reject
-        /// method for the pending operation (LEAN fills backtest market orders after OnData).
+        /// method for the pending operation (for LEAN: an order whose ticket comes back open,
+        /// such as a market-on-open conversion or a partial fill).
         /// </summary>
         Pending,
 

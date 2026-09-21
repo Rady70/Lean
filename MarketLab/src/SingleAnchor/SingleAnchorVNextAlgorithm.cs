@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Globalization;
 using QuantConnect;
 using QuantConnect.Algorithm;
@@ -20,9 +19,10 @@ namespace MarketLab.SingleAnchor
     /// <c>single-anchor-base-lot</c> have no specified default and must be given.
     /// </summary>
     /// <remarks>
-    /// No historical XAUUSD data ships with the fork; the start/end dates are placeholders to be
-    /// set to the coverage of the data folder used. At the end of the data an open basket is
-    /// reported marked to market, not liquidated.
+    /// The default dates cover the 13-day Oanda XAUUSD tick sample that upstream ships under
+    /// <c>Data\cfd\oanda\tick\xauusd</c> (May 2014, an engine fixture); set them to the coverage
+    /// of whatever data folder is used. At the end of the data an open basket is reported marked
+    /// to market, not liquidated.
     /// </remarks>
     public class SingleAnchorVNextAlgorithm : QCAlgorithm
     {
@@ -30,8 +30,8 @@ namespace MarketLab.SingleAnchor
         [Parameter("single-anchor-symbol")] private string _ticker = "XAUUSD";
         [Parameter("single-anchor-market")] private string _market = Market.Oanda;
         [Parameter("single-anchor-security-type")] private string _securityType = "Cfd";
-        [Parameter("single-anchor-start-date")] private string _startDate = "2024-01-02";
-        [Parameter("single-anchor-end-date")] private string _endDate = "2024-01-05";
+        [Parameter("single-anchor-start-date")] private string _startDate = "2014-05-02";
+        [Parameter("single-anchor-end-date")] private string _endDate = "2014-05-14";
         [Parameter("single-anchor-cash")] private decimal _cash = 100000m;
         [Parameter("single-anchor-leverage")] private decimal _leverage = 50m;
         [Parameter("single-anchor-units-per-lot")] private decimal _unitsPerLot = 100m;
@@ -50,6 +50,7 @@ namespace MarketLab.SingleAnchor
         [Parameter("single-anchor-trailing-drop-units")] private decimal _trailingDropUnits = 0.25m;
 
         // ---- Execution economics, commission buffer, volume steps, money value ----
+        [Parameter("single-anchor-commission-buffer")] private decimal _commissionBuffer = 0m;
         [Parameter("single-anchor-commission-buffer-per-lot")] private decimal _commissionBufferPerLot = 0m;
         [Parameter("single-anchor-point-value-per-lot")] private decimal _pointValuePerLot = 100m;
         [Parameter("single-anchor-volume-step")] private decimal _volumeStep = 0.01m;
@@ -61,15 +62,16 @@ namespace MarketLab.SingleAnchor
         [Parameter("single-anchor-projected-spread")] private decimal _projectedSpread = 0m;
         [Parameter("single-anchor-buy-swap-per-lot-per-day")] private decimal _buySwapPerLotPerDay = 0m;
         [Parameter("single-anchor-sell-swap-per-lot-per-day")] private decimal _sellSwapPerLotPerDay = 0m;
-        [Parameter("single-anchor-swap-rollover-time")] private string _swapRolloverTime = "17:00:00";
+        [Parameter("single-anchor-swap-rollover-time")] private string _swapRolloverTime = "1700";
         [Parameter("single-anchor-triple-swap-day")] private string _tripleSwapDay = "Wednesday";
 
         private Symbol _symbol = null!;
         private SingleAnchorEngine _engine = null!;
         private LeanBasketExecutor _executor = null!;
         private Quote? _lastQuote;
-        private long _quoteTicks;
-        private long _ignoredTicks;
+        private long _quoteSlices;
+        private long _supersededTicks;
+        private long _invalidTicks;
 
         /// <summary>The strategy engine (exposed for inspection after a run).</summary>
         public SingleAnchorEngine Engine => _engine;
@@ -77,8 +79,8 @@ namespace MarketLab.SingleAnchor
         /// <inheritdoc />
         public override void Initialize()
         {
-            SetStartDate(ParseDate(_startDate, "single-anchor-start-date"));
-            SetEndDate(ParseDate(_endDate, "single-anchor-end-date"));
+            SetStartDate(ParameterParsing.ParseDate(_startDate, "single-anchor-start-date"));
+            SetEndDate(ParameterParsing.ParseDate(_endDate, "single-anchor-end-date"));
             SetCash(_cash);
 
             Security security;
@@ -111,6 +113,7 @@ namespace MarketLab.SingleAnchor
                 TrailingEnabled = _trailingEnabled,
                 TrailingActivationUnits = _trailingActivationUnits,
                 TrailingDropUnits = _trailingDropUnits,
+                CommissionBuffer = _commissionBuffer,
                 CommissionBufferPerLot = _commissionBufferPerLot,
                 PointValuePerLot = _pointValuePerLot,
                 VolumeStep = _volumeStep,
@@ -122,8 +125,8 @@ namespace MarketLab.SingleAnchor
                 ProjectedSpread = _projectedSpread,
                 BuySwapPerLotPerDay = _buySwapPerLotPerDay,
                 SellSwapPerLotPerDay = _sellSwapPerLotPerDay,
-                SwapRolloverTimeOfDay = ParseTimeOfDay(_swapRolloverTime, "single-anchor-swap-rollover-time"),
-                TripleSwapDay = ParseTripleSwapDay(_tripleSwapDay)
+                SwapRolloverTimeOfDay = ParameterParsing.ParseTimeOfDay(_swapRolloverTime, "single-anchor-swap-rollover-time"),
+                TripleSwapDay = ParameterParsing.ParseOptionalDayOfWeek(_tripleSwapDay, "single-anchor-triple-swap-day")
             };
             var errors = parameters.GetValidationErrors();
             if (errors.Count > 0)
@@ -147,12 +150,12 @@ namespace MarketLab.SingleAnchor
             _executor.Attach(_engine);
             WireEvents();
 
-            Log($"SingleAnchor vNext on {_symbol} ({_securityType}, {_market}) tick quotes, {_unitsPerLot} units per lot, LEAN lot size {F(lotSize)}, leverage {F(_leverage)}.");
+            Log($"SingleAnchor vNext on {_symbol} ({_securityType}, {_market}) tick quotes, {F(_unitsPerLot)} units per lot, LEAN lot size {F(lotSize)}, leverage {F(_leverage)}.");
             Log($"SingleAnchor parameters: step {F(parameters.StepPercent)}%, base lot {F(parameters.BaseLot)}, Nnormal {parameters.NormalTradeCount}, hard-BE ceiling {F(parameters.HardBreakevenCeilingPercent)}%, " +
                 $"escape {(parameters.EscapeEnabled ? F(parameters.EscapeProfitUnits) + " units, min " + parameters.EscapeMinimumOpenPositions + " positions" : "off")}, " +
                 $"fixed TP {(parameters.FixedTakeProfitUnits > 0m ? F(parameters.FixedTakeProfitUnits) + " units" : "off")}, " +
                 $"trailing {(parameters.TrailingEnabled ? F(parameters.TrailingActivationUnits) + "/" + F(parameters.TrailingDropUnits) + " units" : "off")}, " +
-                $"commission buffer {F(parameters.CommissionBufferPerLot)}/lot, point value {F(parameters.PointValuePerLot)}/lot, volume step {F(parameters.VolumeStep)} [{F(parameters.MinimumVolume)}, {F(parameters.MaximumVolume)}], " +
+                $"commission buffer {F(parameters.CommissionBuffer)} + {F(parameters.CommissionBufferPerLot)}/lot, point value {F(parameters.PointValuePerLot)}/lot, volume step {F(parameters.VolumeStep)} [{F(parameters.MinimumVolume)}, {F(parameters.MaximumVolume)}], " +
                 $"commission {F(parameters.CommissionPerLot)}/lot round trip, slippage {F(parameters.Slippage)}, projected spread {(parameters.UseObservedSpreadForProjection ? "observed" : F(parameters.ProjectedSpread))}, " +
                 $"swap buy {F(parameters.BuySwapPerLotPerDay)} / sell {F(parameters.SellSwapPerLotPerDay)} per lot per day at {parameters.SwapRolloverTimeOfDay} (triple: {(parameters.TripleSwapDay.HasValue ? parameters.TripleSwapDay.Value.ToString() : "none")}).");
         }
@@ -166,18 +169,20 @@ namespace MarketLab.SingleAnchor
             }
 
             // Every tick in the slice shares its timestamp; the last valid quote tick is the market
-            // state LEAN will fill against, so it is the one the engine decides on.
+            // state LEAN will fill against, so it is the one the engine decides on. Earlier ticks
+            // of the same timestamp are superseded, invalid ones ignored; both are counted.
             Tick? last = null;
             for (var i = 0; i < ticks.Count; i++)
             {
                 var tick = ticks[i];
                 if (tick.TickType == TickType.Quote && tick.BidPrice > 0m && tick.AskPrice > 0m && tick.AskPrice >= tick.BidPrice)
                 {
+                    if (last != null) _supersededTicks++;
                     last = tick;
                 }
                 else
                 {
-                    _ignoredTicks++;
+                    _invalidTicks++;
                 }
             }
             if (last == null)
@@ -185,7 +190,7 @@ namespace MarketLab.SingleAnchor
                 return;
             }
 
-            _quoteTicks++;
+            _quoteSlices++;
             var quote = new Quote(last.Time, last.BidPrice, last.AskPrice);
             _lastQuote = quote;
             _engine.OnQuote(quote);
@@ -205,7 +210,7 @@ namespace MarketLab.SingleAnchor
         /// <inheritdoc />
         public override void OnEndOfAlgorithm()
         {
-            Log($"SingleAnchor end of data: {_quoteTicks} quote ticks used, {_ignoredTicks} ticks ignored, {_engine.QuotesProcessed} quotes processed, {_engine.EntriesOpened} legs opened, {_engine.EntriesRejected} distinct rejected entries ({_engine.RejectedEntryAttempts} attempts), {_engine.BasketsClosed} baskets closed.");
+            Log($"SingleAnchor end of data: {_quoteSlices} quote slices used, {_supersededTicks} earlier same-timestamp quote ticks superseded, {_invalidTicks} invalid ticks ignored, {_engine.QuotesProcessed} quotes processed, {_engine.EntriesOpened} legs opened, {_engine.EntriesRejected} distinct rejected entries ({_engine.RejectedEntryAttempts} attempts), {_engine.BasketsClosed} baskets closed.");
 
             var basket = _engine.Basket;
             if (basket == null)
@@ -239,11 +244,11 @@ namespace MarketLab.SingleAnchor
         private void WireEvents()
         {
             _engine.AnchorCreated += e => Log($"SingleAnchor anchor {F(e.Basket.Anchor)} at {e.Quote}: upper {F(e.Basket.Upper)}, lower {F(e.Basket.Lower)}, hard-BE targets {F(e.Basket.LowerTarget)} / {F(e.Basket.UpperTarget)}.");
-            _engine.EntryPending += e => Log($"SingleAnchor trade {e.Order.TradeNumber} {e.Order.Side} {F(e.Order.Lots)} lots submitted at {e.Order.Quote} ({e.Order.Regime}).");
+            _engine.EntryPending += e => Log($"SingleAnchor trade {e.Order.TradeNumber} {e.Order.Side} {F(e.Order.Lots)} lots submitted at {e.Order.Quote} ({e.Order.Regime}); awaiting the fill.");
             _engine.EntryOpened += e => Log($"SingleAnchor leg opened: {e.Leg}; basket buy {F(e.Basket.BuyLots)} / sell {F(e.Basket.SellLots)} / net {F(e.Basket.NetLots)} lots" + (e.Sizing != null ? "; " + e.Sizing.Message : string.Empty));
             _engine.EntryRejected += e => Error($"SingleAnchor entry rejected ({e.Rejection.Reason}) for trade {e.Rejection.TradeNumber} {e.Rejection.Side} at {e.Quote}: {e.Rejection.Message}");
             _engine.TrailingActivated += e => Log($"SingleAnchor trailing activated at profit {F(e.Profit)} (threshold {F(e.ActivationThreshold)}) at {e.Quote}.");
-            _engine.BasketClosePending += e => Log($"SingleAnchor close ({e.Reason}) submitted at {e.Quote}.");
+            _engine.BasketClosePending += e => Log($"SingleAnchor close ({e.Reason}) submitted at {e.Quote}; awaiting the fill.");
             _engine.BasketClosed += e => Log($"SingleAnchor basket closed by {e.Reason} at {e.Quote}: {e.Basket.OpenPositions} legs, raw profit {F(e.RawProfit)}, exit profit {F(e.ExitProfit)} vs threshold {F(e.Threshold)}" + (e.HostFillPrice.HasValue ? $", LEAN flatten fill {F(e.HostFillPrice.Value)}" : ", no LEAN order (net-flat)") + ".");
             _engine.BasketCloseFailed += e => Error($"SingleAnchor close ({e.Reason}) failed at {e.Quote}: {e.Message}");
             _engine.InvalidQuote += e => Error($"SingleAnchor {e.Message} ({e.Quote})");
@@ -277,38 +282,6 @@ namespace MarketLab.SingleAnchor
             {
                 return utcTime.ConvertFromUtc(_algorithm.Securities[_algorithm._symbol].Exchange.TimeZone);
             }
-        }
-
-        private static DateTime ParseDate(string value, string name)
-        {
-            if (DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
-            {
-                return date;
-            }
-            throw new ArgumentException($"{name} must be a date in yyyy-MM-dd form (got '{value}').");
-        }
-
-        private static TimeSpan ParseTimeOfDay(string value, string name)
-        {
-            if (TimeSpan.TryParseExact(value, "hh\\:mm\\:ss", CultureInfo.InvariantCulture, out var time) ||
-                TimeSpan.TryParseExact(value, "hh\\:mm", CultureInfo.InvariantCulture, out time))
-            {
-                return time;
-            }
-            throw new ArgumentException($"{name} must be a time of day in HH:mm or HH:mm:ss form (got '{value}').");
-        }
-
-        private static DayOfWeek? ParseTripleSwapDay(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value) || string.Equals(value.Trim(), "none", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
-            if (Enum.TryParse<DayOfWeek>(value.Trim(), true, out var day))
-            {
-                return day;
-            }
-            throw new ArgumentException($"single-anchor-triple-swap-day must be a day name or 'none' (got '{value}').");
         }
 
         private static string F(decimal value)

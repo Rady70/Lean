@@ -11,12 +11,12 @@ namespace MarketLab.SingleAnchor
         /// <summary>A valid lot satisfies PL_after(T, Q) >= 0.</summary>
         Feasible,
 
-        /// <summary>The projected Bid or Ask at the target is not positive; no projection is possible.</summary>
+        /// <summary>The projected Bid or Ask at the target, or the candidate entry, is not positive; no projection is possible.</summary>
         InvalidTargetPrices,
 
         /// <summary>
-        /// PL_1lot(T) &lt;= 0: one lot of the required side does not gain at the target, so no
-        /// volume can pull breakeven inside the ceiling (specification section 7).
+        /// PL_1lot(T) &lt;= 0 and the basket is not already at or inside the ceiling: adding the
+        /// required side cannot make the basket break even at the target (specification section 7).
         /// </summary>
         NonPositiveMarginalProfit,
 
@@ -29,6 +29,8 @@ namespace MarketLab.SingleAnchor
 
     /// <summary>
     /// Full record of one hard-BE sizing, feasible or not, so the decision can be logged and tested.
+    /// <see cref="RequiredLot"/> is the exact Q_BE (0 when the basket is already at or inside the
+    /// ceiling); <see cref="NormalizedLot"/> is the broker-valid lot to place, 0 when infeasible.
     /// </summary>
     public sealed record HardBreakevenSizing(
         TradeSide Side,
@@ -40,11 +42,36 @@ namespace MarketLab.SingleAnchor
         decimal RequiredLot,
         decimal NormalizedLot,
         decimal ProjectedProfitAfter,
-        HardBreakevenOutcome Outcome,
-        string Message)
+        decimal MaximumVolume,
+        HardBreakevenOutcome Outcome)
     {
         /// <summary>True when <see cref="NormalizedLot"/> can be placed.</summary>
         public bool IsFeasible => Outcome == HardBreakevenOutcome.Feasible;
+
+        /// <summary>Human-readable account of the sizing, built on demand.</summary>
+        public string Message
+        {
+            get
+            {
+                var target = F(Target.Target);
+                switch (Outcome)
+                {
+                    case HardBreakevenOutcome.Feasible:
+                        return $"Hard-BE {Side} trade {TradeNumber}: PL_existing(T)={F(ExistingProfitAtTarget)}, PL_1lot(T)={F(MarginalProfitPerLot)}, Q_BE={F(RequiredLot)}, lot={F(NormalizedLot)}, PL_after={F(ProjectedProfitAfter)} at target {target}.";
+                    case HardBreakevenOutcome.InvalidTargetPrices:
+                        return $"Projected prices at the {Side} target are not positive (target {target}, spread {F(Target.Spread)}, candidate entry {F(CandidateEntryPrice)}).";
+                    case HardBreakevenOutcome.NonPositiveMarginalProfit:
+                        return $"One lot of {Side} at {F(CandidateEntryPrice)} contributes {F(MarginalProfitPerLot)} at the hard target {target} (projected close {F(Side == TradeSide.Buy ? Target.Bid : Target.Ask)}) while the basket projects {F(ExistingProfitAtTarget)} there; the target cannot be reached by adding {Side} volume.";
+                    default:
+                        return $"Hard-BE requires {F(RequiredLot)} lots of {Side} (next valid lot above {F(MaximumVolume)}, the maximum volume); the order is not placed and breakeven is not allowed to drift.";
+                }
+            }
+        }
+
+        private static string F(decimal value)
+        {
+            return value.ToString(CultureInfo.InvariantCulture);
+        }
     }
 
     /// <summary>
@@ -62,9 +89,12 @@ namespace MarketLab.SingleAnchor
         /// <item>T = T_up for a BUY, T_down for a SELL; projected Bid/Ask at T from the observed or configured spread.</item>
         /// <item>Candidate entry: Ask + slippage for a BUY, Bid - slippage for a SELL.</item>
         /// <item>PL_existing(T) over every open leg; PL_1lot(T) for one lot of the candidate.</item>
-        /// <item>PL_1lot(T) &lt;= 0 is infeasible. Otherwise Q_BE = -PL_existing / PL_1lot, or 0 when PL_existing &gt;= 0.</item>
-        /// <item>Q = ceil(max(Q_BE, MinimumVolume) / step) * step; verify PL_after(T, Q) &gt;= 0 by direct
-        /// recomputation and step upward until it holds; above MaximumVolume it is infeasible.</item>
+        /// <item>PL_1lot(T) &gt; 0: Q_BE = -PL_existing / PL_1lot (0 when PL_existing &gt;= 0), then
+        /// Q = ceil(max(Q_BE, MinimumVolume) / step) * step, verified by direct recomputation of
+        /// PL_after(T, Q) and stepped upward while negative; above MaximumVolume it is infeasible.</item>
+        /// <item>PL_1lot(T) &lt;= 0: the ratio is not valid and more volume cannot help, so the only
+        /// candidate is the minimum volume; it is placed when PL_after(T, MinimumVolume) &gt;= 0
+        /// (the basket is already at or inside the ceiling) and otherwise the sizing is infeasible.</item>
         /// </list>
         /// </remarks>
         public static HardBreakevenSizing Size(Basket basket, TradeSide side, in Quote quote, SingleAnchorParameters parameters)
@@ -78,12 +108,11 @@ namespace MarketLab.SingleAnchor
             var spread = parameters.UseObservedSpreadForProjection ? quote.Spread : parameters.ProjectedSpread;
             var target = new TargetPrices(targetMid, spread);
             var candidateEntry = side == TradeSide.Buy ? quote.Ask + parameters.Slippage : quote.Bid - parameters.Slippage;
+            var maximum = parameters.MaximumVolume;
 
             if (!target.IsValid || candidateEntry <= 0m)
             {
-                return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, 0m, 0m, 0m, 0m, 0m,
-                    HardBreakevenOutcome.InvalidTargetPrices,
-                    $"Projected prices at the {side} target are not positive (target {F(targetMid)}, spread {F(spread)}, candidate entry {F(candidateEntry)}).");
+                return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, 0m, 0m, 0m, 0m, 0m, maximum, HardBreakevenOutcome.InvalidTargetPrices);
             }
 
             var existing = BasketEconomics.ProjectedExistingProfit(basket, target, parameters);
@@ -91,9 +120,12 @@ namespace MarketLab.SingleAnchor
 
             if (marginal <= 0m)
             {
-                return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, 0m, 0m, existing,
-                    HardBreakevenOutcome.NonPositiveMarginalProfit,
-                    $"One lot of {side} at {F(candidateEntry)} contributes {F(marginal)} at the hard target {F(targetMid)} (projected close {F(side == TradeSide.Buy ? target.Bid : target.Ask)}); the target cannot be reached by adding {side} volume.");
+                var afterMinimum = ProjectedAfter(existing, side, parameters.MinimumVolume, candidateEntry, target, parameters);
+                if (afterMinimum >= 0m)
+                {
+                    return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, 0m, parameters.MinimumVolume, afterMinimum, maximum, HardBreakevenOutcome.Feasible);
+                }
+                return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, 0m, 0m, afterMinimum, maximum, HardBreakevenOutcome.NonPositiveMarginalProfit);
             }
 
             // Q_BE is the exact requirement; a basket already at or inside the ceiling needs no
@@ -104,33 +136,23 @@ namespace MarketLab.SingleAnchor
             // Conservative normalization: verify with the normalized lot and, if rounding left the
             // requirement unmet, take the next step. Never a smaller lot (section 8).
             var after = ProjectedAfter(existing, side, lot, candidateEntry, target, parameters);
-            while (after < 0m)
+            while (after < 0m && lot + parameters.VolumeStep <= maximum)
             {
-                if (lot + parameters.VolumeStep > parameters.MaximumVolume) break;
                 lot += parameters.VolumeStep;
                 after = ProjectedAfter(existing, side, lot, candidateEntry, target, parameters);
             }
 
-            if (after < 0m || lot > parameters.MaximumVolume)
+            if (after < 0m || lot > maximum)
             {
-                return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, required, 0m, after,
-                    HardBreakevenOutcome.ExceedsMaximumVolume,
-                    $"Hard-BE requires {F(required)} lots of {side} (normalized {F(lot)}), above the maximum volume {F(parameters.MaximumVolume)}; the order is not placed and breakeven is not allowed to drift.");
+                return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, required, 0m, after, maximum, HardBreakevenOutcome.ExceedsMaximumVolume);
             }
 
-            return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, required, lot, after,
-                HardBreakevenOutcome.Feasible,
-                $"Hard-BE {side} trade {tradeNumber}: PL_existing(T)={F(existing)}, PL_1lot(T)={F(marginal)}, Q_BE={F(required)}, lot={F(lot)}, PL_after={F(after)} at target {F(targetMid)}.");
+            return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, existing, marginal, required, lot, after, maximum, HardBreakevenOutcome.Feasible);
         }
 
         private static decimal ProjectedAfter(decimal existing, TradeSide side, decimal lot, decimal candidateEntry, in TargetPrices target, SingleAnchorParameters parameters)
         {
             return existing + BasketEconomics.ProjectedLegProfit(side, lot, candidateEntry, 0m, target, parameters);
-        }
-
-        private static string F(decimal value)
-        {
-            return value.ToString(CultureInfo.InvariantCulture);
         }
     }
 }

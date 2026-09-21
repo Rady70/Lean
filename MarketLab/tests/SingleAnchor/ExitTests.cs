@@ -255,17 +255,52 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(noEscape.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.FixedTakeProfit));
         }
 
+        /// <summary>
+        /// With a constant M_step the fixed take-profit and the trailing close can never fire on the
+        /// same quote (the peak is below the TP threshold whenever trailing is active and TP is not).
+        /// A new leg that shrinks the net exposure shrinks M_step, so both thresholds move: the host
+        /// fills BUY 0.05 @ 2020 (M_step 100: TP 100, activation 50, drop 300), trailing activates at
+        /// profit 95, then SELL 0.04 @ 1980 leaves net +0.01 (M_step 20: TP 20, drop 60, floor 35).
+        /// At profit 30 both TP (>= 20) and trailing (<= 35) fire; the order of evaluation decides.
+        /// </summary>
+        private static Harness TakeProfitAndTrailingBothFiring(decimal fixedTakeProfitUnits)
+        {
+            var h = new Harness(Harness.Defaults() with { EscapeEnabled = false, FixedTakeProfitUnits = fixedTakeProfitUnits, TrailingDropUnits = 3m });
+            h.Executor.EntryOverride = o => ExecutionResult.Fill(o.Side == TradeSide.Buy ? o.Quote.Ask : o.Quote.Bid, o.TradeNumber == 1 ? 0.05m : 0.04m);
+            h.Anchor();
+            h.AtUpper();                          // BUY 0.05 @ 2020
+            h.Feed(2039m, 2039.2m);               // profit 95: trailing active, peak 95
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.TrailingActive, Is.True);
+            Assert.That(basket.PeakProfit, Is.EqualTo(95m));
+            h.AtLower();                          // profit -200 > floor -205; SELL 0.04 @ 1980 added
+            Assert.That(basket.OpenPositions, Is.EqualTo(2));
+            Assert.That(basket.NetLots, Is.EqualTo(0.01m));
+            Assert.That(BasketEconomics.StepMoney(basket, h.Parameters), Is.EqualTo(20m));
+            Assert.That(h.BasketsClosed, Is.Empty);
+            return h;
+        }
+
         [Test]
         public void FixedTakeProfitIsEvaluatedBeforeTrailing()
         {
-            var h = TwoLegs.Build(Harness.Defaults() with { EscapeEnabled = false, FixedTakeProfitUnits = 1m }); // TP 20
-            h.Feed(TwoLegs.BidForProfit(12m), TwoLegs.BidForProfit(12m) + 0.2m); // trailing activates (10), TP not (20)
-            var basket = h.Engine.Basket!;
-            Assert.That(basket.TrailingActive, Is.True);
-            Assert.That(h.BasketsClosed, Is.Empty);
-
-            h.Feed(1900m, 1900.2m);              // 39.6: TP fires first
+            var h = TakeProfitAndTrailingBothFiring(1m);
+            var quote = h.Feed(2210.8m, 2211m);   // profit 5 * 190.8 + 4 * (1980 - 2211) = 30
+            Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
+            Assert.That(h.BasketsClosed[0].ExitProfit, Is.EqualTo(30m));
             Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.FixedTakeProfit));
+            Assert.That(h.BasketsClosed[0].Threshold, Is.EqualTo(20m));
+            Assert.That(h.BasketsClosed[0].Quote, Is.EqualTo(quote));
+        }
+
+        [Test]
+        public void TrailingClosesTheSameQuoteWhenFixedTakeProfitIsDisabled()
+        {
+            var h = TakeProfitAndTrailingBothFiring(0m);
+            h.Feed(2210.8m, 2211m);
+            Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
+            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.Trailing));
+            Assert.That(h.BasketsClosed[0].Threshold, Is.EqualTo(35m), "peak 95 minus 3 units * 20");
         }
 
         [Test]

@@ -6,6 +6,8 @@ namespace MarketLab.SingleAnchor
 {
     /// <summary>
     /// What LEAN reports when a market order is submitted, reduced to the fields the executor uses.
+    /// <paramref name="AverageFillPrice"/> and <paramref name="QuantityFilled"/> are the ticket's
+    /// cumulative values at the time the submission call returns.
     /// </summary>
     public readonly record struct OrderSubmission(int OrderId, OrderStatus Status, decimal AverageFillPrice, decimal QuantityFilled, string? Error);
 
@@ -32,11 +34,16 @@ namespace MarketLab.SingleAnchor
     /// basket close is one order that flattens whatever LEAN holds.
     /// </summary>
     /// <remarks>
-    /// In a LEAN backtest a market order submitted during OnData is filled after OnData returns
-    /// (the transaction handler scans pending orders once per time step), so an accepted order is
-    /// reported to the engine as <see cref="ExecutionStatus.Pending"/> and resolved from
-    /// <see cref="OnOrderEvent"/> before the next quote reaches the engine. Partial fills are
-    /// accumulated and reported once as their volume-weighted price.
+    /// In a LEAN backtest at this revision a market order is filled inside the <c>MarketOrder</c>
+    /// call itself: the backtesting transaction handler drains the request queue on the algorithm
+    /// thread and scans the backtesting brokerage, and the Submitted and Filled order events are
+    /// delivered to the algorithm's OnOrderEvent during that call, before the ticket is returned.
+    /// The returned ticket is therefore already <see cref="OrderStatus.Filled"/> and the executor
+    /// reports a completed fill at the ticket's average price. A ticket that comes back open (for
+    /// example when LEAN converts the order to market-on-open because it considers the exchange
+    /// closed, a partial fill under a non-default fill model, or another host) is reported as
+    /// <see cref="ExecutionStatus.Pending"/> and resolved from the later order events, with the
+    /// quantity already filled at submission time carried over into the volume-weighted total.
     /// </remarks>
     public sealed class LeanBasketExecutor : IBasketExecutor
     {
@@ -122,7 +129,8 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// Routes LEAN order events for the pending orders to the engine. Call from the
-        /// algorithm's OnOrderEvent; events for other orders are ignored.
+        /// algorithm's OnOrderEvent; events for other orders, including the synchronous events
+        /// LEAN raises before a submission call returns, are ignored.
         /// </summary>
         public void OnOrderEvent(OrderEvent orderEvent)
         {
@@ -139,45 +147,59 @@ namespace MarketLab.SingleAnchor
             switch (orderEvent.Status)
             {
                 case OrderStatus.PartiallyFilled:
-                    Accumulate(orderEvent);
+                    Accumulate(orderEvent.AbsoluteFillQuantity, orderEvent.FillPrice);
                     break;
 
                 case OrderStatus.Filled:
-                    Accumulate(orderEvent);
-                    var averagePrice = _filledUnits > 0m ? _filledNotional / _filledUnits : orderEvent.FillPrice;
-                    var lots = ToLots(_filledUnits);
-                    ClearPending();
-                    if (isEntry)
-                    {
-                        engine.ConfirmPendingEntry(averagePrice, lots, _gateway.ToQuoteClock(orderEvent.UtcTime));
-                    }
-                    else
-                    {
-                        engine.ConfirmPendingClose(averagePrice);
-                    }
+                    Accumulate(orderEvent.AbsoluteFillQuantity, orderEvent.FillPrice);
+                    CompletePending(engine, isEntry, orderEvent);
                     break;
 
                 case OrderStatus.Invalid:
                 case OrderStatus.Canceled:
-                    ClearPending();
                     var message = $"LEAN order {orderEvent.OrderId} ended {orderEvent.Status}: {orderEvent.Message}";
-                    if (isEntry)
+                    if (isEntry && _filledUnits > 0m)
                     {
-                        engine.RejectPendingEntry(message);
+                        // Part of the entry is held by LEAN: the ledger records what was filled.
+                        CompletePending(engine, true, orderEvent);
                     }
                     else
                     {
-                        engine.RejectPendingClose(message);
+                        ClearPending();
+                        if (isEntry)
+                        {
+                            engine.RejectPendingEntry(message);
+                        }
+                        else
+                        {
+                            // Any partial flatten stays in LEAN's holding; the exit is re-evaluated
+                            // on the next quote and a retry flattens whatever is left.
+                            engine.RejectPendingClose(message);
+                        }
                     }
                     break;
             }
         }
 
-        private void Accumulate(OrderEvent orderEvent)
+        private void CompletePending(SingleAnchorEngine engine, bool isEntry, OrderEvent orderEvent)
         {
-            var units = orderEvent.AbsoluteFillQuantity;
-            _filledUnits += units;
-            _filledNotional += units * orderEvent.FillPrice;
+            var averagePrice = _filledUnits > 0m ? _filledNotional / _filledUnits : orderEvent.FillPrice;
+            var lots = ToLots(_filledUnits);
+            ClearPending();
+            if (isEntry)
+            {
+                engine.ConfirmPendingEntry(averagePrice, lots, _gateway.ToQuoteClock(orderEvent.UtcTime));
+            }
+            else
+            {
+                engine.ConfirmPendingClose(averagePrice);
+            }
+        }
+
+        private void Accumulate(decimal absoluteUnits, decimal fillPrice)
+        {
+            _filledUnits += absoluteUnits;
+            _filledNotional += absoluteUnits * fillPrice;
         }
 
         private void ClearPending()
@@ -197,14 +219,16 @@ namespace MarketLab.SingleAnchor
 
             if (submission.Status == OrderStatus.Filled)
             {
-                // Not the backtesting path (fills there arrive after OnData), but a host may fill synchronously.
+                // The backtesting path: LEAN filled the market order inside the submission call.
                 return ExecutionResult.Fill(submission.AverageFillPrice, ToLots(submission.QuantityFilled));
             }
 
             if (isEntry) _pendingEntryOrderId = submission.OrderId; else _pendingCloseOrderId = submission.OrderId;
-            _filledUnits = 0m;
-            _filledNotional = 0m;
-            return ExecutionResult.Pending($"LEAN order {submission.OrderId} submitted ({submission.Status}); the fill is applied from its order event.");
+            // Fills LEAN already reported synchronously (a partially filled ticket) are carried
+            // over; the events for them were raised before this order was being tracked.
+            _filledUnits = Math.Abs(submission.QuantityFilled);
+            _filledNotional = _filledUnits * submission.AverageFillPrice;
+            return ExecutionResult.Pending($"LEAN order {submission.OrderId} submitted ({submission.Status}); the fill is applied from its order events.");
         }
 
         private static string F(decimal value)

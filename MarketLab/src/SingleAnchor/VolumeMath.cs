@@ -25,13 +25,5 @@ namespace MarketLab.SingleAnchor
             if (step <= 0m) throw new ArgumentOutOfRangeException(nameof(step), step, "Volume step must be positive.");
             return Math.Round(volume / step, 0, MidpointRounding.AwayFromZero) * step;
         }
-
-        /// <summary>
-        /// True when the volume is within [minimum, maximum] and a whole multiple of the step.
-        /// </summary>
-        public static bool IsValidVolume(decimal volume, decimal step, decimal minimum, decimal maximum)
-        {
-            return volume >= minimum && volume <= maximum && step > 0m && decimal.Remainder(volume, step) == 0m;
-        }
     }
 }

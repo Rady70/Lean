@@ -36,14 +36,22 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// Profit used for exit decisions: RawProfit minus the optional commission buffer,
-        /// CommissionBufferPerLot * GrossLots (section 9).
+        /// The optional commission buffer for the basket (section 9):
+        /// CommissionBuffer + CommissionBufferPerLot * GrossLots.
         /// </summary>
-        public static decimal ExitProfit(Basket basket, in Quote quote, SingleAnchorParameters parameters)
+        public static decimal CommissionBufferAmount(Basket basket, SingleAnchorParameters parameters)
         {
             if (basket == null) throw new ArgumentNullException(nameof(basket));
             if (parameters == null) throw new ArgumentNullException(nameof(parameters));
-            return RawProfit(basket, quote, parameters) - parameters.CommissionBufferPerLot * basket.GrossLots;
+            return parameters.CommissionBuffer + parameters.CommissionBufferPerLot * basket.GrossLots;
+        }
+
+        /// <summary>
+        /// Profit used for exit decisions: RawProfit minus the optional commission buffer (section 9).
+        /// </summary>
+        public static decimal ExitProfit(Basket basket, in Quote quote, SingleAnchorParameters parameters)
+        {
+            return RawProfit(basket, quote, parameters) - CommissionBufferAmount(basket, parameters);
         }
 
         /// <summary>
