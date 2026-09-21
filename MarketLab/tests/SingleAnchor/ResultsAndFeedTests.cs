@@ -84,6 +84,14 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.Engine.ClosedBaskets[0], Is.SameAs(record));
 
             Assert.That(record.Sequence, Is.EqualTo(1));
+            Assert.That(record.AnchorEvent.Basket, Is.EqualTo(1));
+            Assert.That(record.AnchorEvent.QuoteSequence, Is.EqualTo(1));
+            Assert.That(record.AnchorEvent.Time, Is.EqualTo(created.Time));
+            Assert.That(record.AnchorEvent.Bid, Is.EqualTo(1999.9m));
+            Assert.That(record.AnchorEvent.Ask, Is.EqualTo(2000.1m));
+            Assert.That(record.AnchorEvent.Anchor, Is.EqualTo(2000m));
+            Assert.That(record.AnchorEvent.UpperTarget, Is.EqualTo(2089.56m));
+            Assert.That(record.RejectionTrace, Is.Empty);
             Assert.That(record.CloseQuoteSequence, Is.EqualTo(4), "anchor, upper, lower, close");
             Assert.That(record.CloseBid, Is.EqualTo(1900m));
             Assert.That(record.CloseAsk, Is.EqualTo(1900.2m));
@@ -133,6 +141,96 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(tail.RequiredLot, Is.EqualTo(380.12m / 6946m));
             Assert.That(tail.ProjectedProfitAfter, Is.EqualTo(36.64m));
             Assert.That(h.Engine.OpenBasketLegTrace(), Is.Empty);
+        }
+
+        [Test]
+        public void RejectedAttemptsArePersistedWithTheirSizingFiguresAndRepeatFlags()
+        {
+            var h = new Harness(Harness.Defaults() with { MaximumVolume = 0.05m });
+            var basket = h.PingPongFourLegs();
+            var first = h.AtUpper();                      // trade 5 needs 0.06 > 0.05: infeasible
+            var second = h.AtUpper();                     // the same situation again
+            var third = h.Feed(2060m, 2060.2m);           // a materially larger requirement: new situation
+
+            var trace = basket.Rejections;
+            Assert.That(trace, Has.Count.EqualTo(2), "one row per distinct situation, repeats counted on their row");
+            Assert.That(h.EntriesRejected, Has.Count.EqualTo(2), "two distinct situations were raised");
+            Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(3));
+
+            var row = trace[0];
+            Assert.That(row.Basket, Is.EqualTo(1));
+            Assert.That(row.FirstQuoteSequence, Is.EqualTo(6));
+            Assert.That(row.FirstTime, Is.EqualTo(first.Time));
+            Assert.That(row.FirstBid, Is.EqualTo(2019.8m));
+            Assert.That(row.FirstAsk, Is.EqualTo(2020m));
+            Assert.That(row.TradeNumber, Is.EqualTo(5));
+            Assert.That(row.Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(row.Reason, Is.EqualTo(EntryRejectionReason.HardBreakevenInfeasible));
+            Assert.That(row.Outcome, Is.EqualTo(HardBreakevenOutcome.ExceedsMaximumVolume));
+            Assert.That(row.RequestedLots, Is.EqualTo(380.12m / 6946m));
+            Assert.That(row.NormalizedLot, Is.EqualTo(0m));
+            Assert.That(row.HardBreakevenTarget, Is.EqualTo(2089.56m));
+            Assert.That(row.TargetSpread, Is.EqualTo(0.2m));
+            Assert.That(row.TargetBid, Is.EqualTo(2089.46m));
+            Assert.That(row.TargetAsk, Is.EqualTo(2089.66m));
+            Assert.That(row.ExistingProfitAtTarget, Is.EqualTo(-380.12m));
+            Assert.That(row.MarginalProfitPerLot, Is.EqualTo(6946m));
+            Assert.That(row.Attempts, Is.EqualTo(2), "the second AtUpper repeated the same situation");
+            Assert.That(row.LastQuoteSequence, Is.EqualTo(7));
+            Assert.That(row.LastTime, Is.EqualTo(second.Time));
+            Assert.That(row.LastBid, Is.EqualTo(2019.8m));
+
+            var changed = trace[1];
+            Assert.That(changed.FirstQuoteSequence, Is.EqualTo(8));
+            Assert.That(changed.FirstTime, Is.EqualTo(third.Time));
+            Assert.That(changed.FirstAsk, Is.EqualTo(2060.2m));
+            Assert.That(changed.MarginalProfitPerLot, Is.EqualTo(2926m));
+            Assert.That(changed.RequestedLots, Is.GreaterThan(row.RequestedLots), "the required lot changed materially: a new row");
+            Assert.That(changed.Attempts, Is.EqualTo(1));
+            Assert.That(changed.LastQuoteSequence, Is.EqualTo(8));
+
+            var snapshot = h.Engine.MarkToMarket(third)!;
+            Assert.That(snapshot.RejectionTrace, Is.SameAs(trace));
+
+            h.Feed(1898.4m, 1898.6m);                     // escape (M_step 40, threshold 2, profit 2)
+            Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
+            Assert.That(h.BasketsClosed[0].Record.RejectionTrace, Has.Count.EqualTo(2));
+            Assert.That(h.BasketsClosed[0].Record.RejectionTrace[0].Attempts, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void APersistingRejectionStaysOneRowHoweverManyTicksRepeatIt()
+        {
+            var h = new Harness(Harness.NoExits() with { MaximumVolume = 0.05m });
+            var basket = h.PingPongFourLegs();
+            for (var i = 0; i < 500; i++)
+            {
+                h.AtUpper();
+            }
+
+            Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(500));
+            Assert.That(basket.Rejections, Has.Count.EqualTo(1));
+            Assert.That(basket.Rejections[0].Attempts, Is.EqualTo(500));
+            Assert.That(basket.Rejections[0].FirstQuoteSequence, Is.EqualTo(6));
+            Assert.That(basket.Rejections[0].LastQuoteSequence, Is.EqualTo(505));
+        }
+
+        [Test]
+        public void ArithmeticAndExecutionRejectionsAreTracedWithoutSizingFigures()
+        {
+            var h = new Harness(Harness.NoExits() with { BaseLot = 60m });
+            h.Anchor();
+            h.AtUpper();
+            h.AtLower();                                  // trade 2 = 120 lots > 100: rejected
+
+            var row = h.Engine.Basket!.Rejections[0];
+            Assert.That(row.Reason, Is.EqualTo(EntryRejectionReason.VolumeExceedsMaximum));
+            Assert.That(row.TradeNumber, Is.EqualTo(2));
+            Assert.That(row.Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(row.RequestedLots, Is.EqualTo(120m));
+            Assert.That(row.Outcome, Is.Null);
+            Assert.That(row.HardBreakevenTarget, Is.Null);
+            Assert.That(row.Attempts, Is.EqualTo(1));
         }
 
         [Test]
@@ -225,6 +323,37 @@ namespace MarketLab.SingleAnchor.Tests
     }
 
     [TestFixture]
+    public class HardBreakevenGuaranteeTests
+    {
+        [Test]
+        public void ZeroSwapRunIsQualifiedAndStatesItsAssumptionsAndLimits()
+        {
+            var g = HardBreakevenGuarantee.For(Harness.Defaults());
+
+            Assert.That(g.Qualified, Is.True);
+            Assert.That(g.UnqualifiedReasons, Is.Empty);
+            Assert.That(g.Scope, Does.Contain("once, immediately after each tail entry"));
+            Assert.That(g.Assumptions, Has.Some.Contains("target spread 0.2"));
+            Assert.That(g.Assumptions, Has.Some.Contains("pending owner approval"));
+            Assert.That(g.NotCovered, Has.Some.Contains("wider than the configured target spread"));
+            Assert.That(g.NotCovered, Has.Some.Contains("financing accrued after the entry"));
+        }
+
+        [Test]
+        public void NonZeroSwapRunIsNotQualifiedAndSaysWhy()
+        {
+            var g = HardBreakevenGuarantee.For(Harness.Defaults() with { SellSwapPerLotPerDay = -1.5m });
+
+            Assert.That(g.Qualified, Is.False);
+            Assert.That(g.UnqualifiedReasons, Has.Count.EqualTo(1));
+            Assert.That(g.UnqualifiedReasons[0], Does.Contain("Swap is configured"));
+            Assert.That(g.UnqualifiedReasons[0], Does.Contain("not re-verified"));
+            Assert.That(new Harness(Harness.Defaults() with { BuySwapPerLotPerDay = -2m }).Engine.HardBreakevenGuarantee.Qualified, Is.False);
+            Assert.That(new Harness().Engine.HardBreakevenGuarantee.Qualified, Is.True);
+        }
+    }
+
+    [TestFixture]
     public class QuoteTickFeedTests
     {
         private static readonly Symbol Xauusd = Symbol.Create("XAUUSD", SecurityType.Cfd, Market.Oanda);
@@ -255,7 +384,7 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void OutOfOrderQuoteTickIsADataQualityFailure()
+        public void OutOfOrderQuoteTickIsADataQualityFailureTheHostCannotIgnore()
         {
             var h = new Harness();
             var feed = new QuoteTickFeed();
@@ -265,23 +394,34 @@ namespace MarketLab.SingleAnchor.Tests
             var failure = Assert.Throws<DataQualityException>(() =>
                 feed.Feed(new List<Tick> { new Tick(t.AddSeconds(4), Xauusd, 2019.8m, 2020m) }, h.Engine))!;
 
-            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.OutOfOrderQuoteTick));
+            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.OutOfOrderQuote));
             Assert.That(failure.Quote.Time, Is.EqualTo(t.AddSeconds(4)));
             Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1), "the refused quote was never processed");
             Assert.That(h.Engine.LastProcessedQuote!.Value.Time, Is.EqualTo(t.AddSeconds(5)));
-            Assert.That(h.InvalidQuotes, Has.Count.EqualTo(1));
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "nothing traded on the bad tick");
-            Assert.That(h.Engine.Faulted, Is.False, "a data failure is the host's, the engine itself is intact");
+            Assert.That(h.Engine.Faulted, Is.True, "the engine itself is faulted at the lowest layer");
+
+            // a host that swallowed the exception and kept feeding valid ticks could not continue:
+            Assert.Throws<DataQualityException>(() =>
+                feed.Feed(new List<Tick> { new Tick(t.AddSeconds(6), Xauusd, 2019.8m, 2020m) }, h.Engine));
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
         }
 
         [Test]
-        public void SameTimestampTicksAreInOrder()
+        public void SameTimestampTicksAreInOrderAndUniquelySequenced()
         {
             var h = new Harness();
             var feed = new QuoteTickFeed();
             var t = Harness.T0;
-            feed.Feed(new List<Tick> { new Tick(t, Xauusd, 1999.9m, 2000.1m), new Tick(t, Xauusd, 1999.8m, 2000m) }, h.Engine);
+            feed.Feed(new List<Tick> { new Tick(t, Xauusd, 1999.9m, 2000.1m), new Tick(t, Xauusd, 2019.8m, 2020m) }, h.Engine);
+
+            var basket = h.Engine.Basket!;
             Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(2));
+            Assert.That(basket.AnchorEvent.QuoteSequence, Is.EqualTo(1));
+            Assert.That(basket.AnchorEvent.Time, Is.EqualTo(t));
+            Assert.That(basket.Legs[0].QuoteSequence, Is.EqualTo(2));
+            Assert.That(basket.Legs[0].EntryTime, Is.EqualTo(t), "identical timestamps; the sequence numbers tell the ticks apart");
         }
 
         [Test]
@@ -333,10 +473,10 @@ namespace MarketLab.SingleAnchor.Tests
             var failure = Assert.Throws<DataQualityException>(() =>
                 feed.Feed(new List<Tick> { new Tick(t.AddSeconds(1), Xauusd, bid, ask) }, h.Engine))!;
 
-            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.InvalidQuoteTick));
+            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.InvalidQuote));
             Assert.That(failure.Quote.Bid, Is.EqualTo(bid));
-            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1), "the invalid tick never reached the engine");
-            Assert.That(h.InvalidQuotes, Is.Empty);
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1), "the invalid tick was not processed");
+            Assert.That(h.Engine.Faulted, Is.True);
         }
     }
 }

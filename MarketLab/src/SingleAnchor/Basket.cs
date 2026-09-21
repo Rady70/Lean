@@ -19,11 +19,19 @@ namespace MarketLab.SingleAnchor
     public sealed class Basket
     {
         private readonly List<BasketLeg> _legs = new List<BasketLeg>();
+        private readonly List<EntryRejectionRecord> _rejections = new List<EntryRejectionRecord>();
         private readonly decimal _volumeStep;
 
         internal Basket(int sequence, in Quote anchorQuote, SingleAnchorParameters parameters)
+            : this(sequence, 0, anchorQuote, parameters)
+        {
+        }
+
+        internal Basket(int sequence, long anchorQuoteSequence, in Quote anchorQuote, SingleAnchorParameters parameters)
         {
             Sequence = sequence;
+            AnchorQuoteSequence = anchorQuoteSequence;
+            AnchorQuote = anchorQuote;
             CreatedTime = anchorQuote.Time;
             Anchor = anchorQuote.Mid;
             Step = Anchor * parameters.StepPercent / 100m;
@@ -36,6 +44,12 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>1-based number of this basket in the engine's lifetime.</summary>
         public int Sequence { get; }
+
+        /// <summary>Sequence number of the engine quote whose midpoint became the anchor (0 when built outside the engine).</summary>
+        public long AnchorQuoteSequence { get; }
+
+        /// <summary>The quote whose midpoint became the anchor (its Bid and Ask are the source prices).</summary>
+        public Quote AnchorQuote { get; }
 
         /// <summary>Time of the quote whose midpoint became the anchor.</summary>
         public DateTime CreatedTime { get; }
@@ -60,6 +74,12 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>Legs in entry order (audit; valuations use the aggregates below).</summary>
         public IReadOnlyList<BasketLeg> Legs => _legs;
+
+        /// <summary>Every rejected-entry situation of this basket, in order; repeats are counted on their row.</summary>
+        public IReadOnlyList<EntryRejectionRecord> Rejections => _rejections;
+
+        /// <summary>The anchoring event of this basket as a trace row.</summary>
+        public AnchorRecord AnchorEvent => new AnchorRecord(Sequence, AnchorQuoteSequence, CreatedTime, AnchorQuote.Bid, AnchorQuote.Ask, Anchor, Step, Upper, Lower, LowerTarget, UpperTarget);
 
         /// <summary>Number of open positions.</summary>
         public int OpenPositions => _legs.Count;
@@ -150,6 +170,11 @@ namespace MarketLab.SingleAnchor
             SmallestOpenLots = _legs.Count == 1 ? leg.Lots : Math.Min(SmallestOpenLots, leg.Lots);
             LastSide = leg.Side;
             LastRejection = null;
+        }
+
+        internal void AddRejection(EntryRejectionRecord record)
+        {
+            _rejections.Add(record);
         }
 
         internal void AddSwap(BasketLeg leg, decimal amount)

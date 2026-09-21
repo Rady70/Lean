@@ -602,6 +602,24 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void ZeroTargetSpreadIsAValidSensitivityCase()
+        {
+            // Nothing divides by the spread: with 0 the projected Bid and Ask both equal T.
+            var p = Harness.Defaults() with { ProjectedSpread = 0m };
+            Assert.That(p.GetValidationErrors(), Is.Empty);
+
+            var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
+
+            Assert.That(sizing.Target.Bid, Is.EqualTo(2089.56m));
+            Assert.That(sizing.Target.Ask, Is.EqualTo(2089.56m));
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(69.56m * 4m - 109.56m * 6m));
+            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6956m));
+            Assert.That(sizing.IsFeasible, Is.True);
+            Assert.That(sizing.NormalizedLot, Is.EqualTo(0.06m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(-379.12m + 0.06m * 6956m));
+        }
+
+        [Test]
         public void InvalidQuoteIsRejectedByTheSizer()
         {
             var p = Harness.Defaults();

@@ -136,6 +136,20 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(snapshot.ExitProfit, Is.Null);
             Assert.That(snapshot.ExecutableProfit, Is.Null);
             Assert.That(snapshot.StepMoney, Is.Null);
+            Assert.That(snapshot.LegTrace, Is.Empty);
+            Assert.That(snapshot.RejectionTrace, Is.Empty);
+            var anchor = snapshot.AnchorEvent;
+            Assert.That(anchor.Basket, Is.EqualTo(1));
+            Assert.That(anchor.QuoteSequence, Is.EqualTo(1));
+            Assert.That(anchor.Time, Is.EqualTo(Harness.T0));
+            Assert.That(anchor.Bid, Is.EqualTo(1999.9m));
+            Assert.That(anchor.Ask, Is.EqualTo(2000.1m));
+            Assert.That(anchor.Anchor, Is.EqualTo(2000m));
+            Assert.That(anchor.Step, Is.EqualTo(20m));
+            Assert.That(anchor.Upper, Is.EqualTo(2020m));
+            Assert.That(anchor.Lower, Is.EqualTo(1980m));
+            Assert.That(anchor.LowerTarget, Is.EqualTo(1910.44m));
+            Assert.That(anchor.UpperTarget, Is.EqualTo(2089.56m));
             Assert.That(h.Engine.MarkToMarket(new Quote(Harness.T0, 0m, 2000.2m)), Is.Null, "an invalid quote values nothing");
         }
     }

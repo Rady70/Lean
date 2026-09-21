@@ -76,14 +76,24 @@ namespace MarketLab.SingleAnchor.Tests
         [TestCase(1999.9, 0)]
         [TestCase(-1, 1)]
         [TestCase(2000.2, 2000.1)]
-        public void InvalidQuoteIsIgnoredExplicitly(decimal bid, decimal ask)
+        public void InvalidQuoteFaultsTheEngine(decimal bid, decimal ask)
         {
+            // Data quality is enforced at the lowest layer: the engine itself refuses to replay
+            // past a quote it cannot trust, so no host can silently continue.
             var h = new Harness();
-            h.Feed(bid, ask);
 
-            Assert.That(h.InvalidQuotes, Has.Count.EqualTo(1));
+            var failure = Assert.Throws<DataQualityException>(() => h.Feed(bid, ask))!;
+
+            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.InvalidQuote));
+            Assert.That(failure.Quote.Bid, Is.EqualTo(bid));
+            Assert.That(h.Engine.Faulted, Is.True);
+            Assert.That(h.Engine.Fault, Is.SameAs(failure));
             Assert.That(h.Engine.Basket, Is.Null);
             Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(0));
+
+            var refusal = Assert.Throws<DataQualityException>(() => h.Anchor())!;
+            Assert.That(refusal.Message, Does.Contain("faulted"));
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(0), "nothing is processed after the fault");
         }
 
         [Test]
@@ -91,24 +101,40 @@ namespace MarketLab.SingleAnchor.Tests
         {
             var h = new Harness();
             h.Feed(2000m, 2000m);
-            Assert.That(h.InvalidQuotes, Is.Empty);
+            Assert.That(h.Engine.Faulted, Is.False);
             Assert.That(h.Engine.Basket!.Anchor, Is.EqualTo(2000m));
         }
 
         [Test]
-        public void OutOfOrderQuoteIsIgnored()
+        public void OutOfOrderQuoteFaultsTheEngine()
         {
             var h = new Harness();
             h.FeedAt(Harness.T0.AddSeconds(5), 1999.9m, 2000.1m);
-            h.FeedAt(Harness.T0.AddSeconds(4), 2019.8m, 2020m);
 
-            Assert.That(h.InvalidQuotes, Has.Count.EqualTo(1));
-            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1));
-            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            var failure = Assert.Throws<DataQualityException>(() => h.FeedAt(Harness.T0.AddSeconds(4), 2019.8m, 2020m))!;
 
-            // the same timestamp again is allowed
+            Assert.That(failure.Issue, Is.EqualTo(DataQualityIssue.OutOfOrderQuote));
+            Assert.That(failure.Quote.Time, Is.EqualTo(Harness.T0.AddSeconds(4)));
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1), "the bad quote was never processed");
+            Assert.That(h.Engine.LastProcessedQuote!.Value.Time, Is.EqualTo(Harness.T0.AddSeconds(5)));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "nothing traded on it");
+            Assert.That(h.Engine.Faulted, Is.True);
+            Assert.Throws<DataQualityException>(() => h.FeedAt(Harness.T0.AddSeconds(6), 2019.8m, 2020m));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "and nothing after it");
+        }
+
+        [Test]
+        public void SameTimestampQuotesAreInOrderAndUniquelySequenced()
+        {
+            var h = new Harness();
+            h.FeedAt(Harness.T0.AddSeconds(5), 1999.9m, 2000.1m);
             h.FeedAt(Harness.T0.AddSeconds(5), 2019.8m, 2020m);
-            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1));
+
+            var basket = h.Engine.Basket!;
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(2));
+            Assert.That(basket.AnchorQuoteSequence, Is.EqualTo(1));
+            Assert.That(basket.Legs[0].QuoteSequence, Is.EqualTo(2));
+            Assert.That(basket.Legs[0].EntryTime, Is.EqualTo(basket.CreatedTime), "same timestamp, distinguishable only by sequence");
         }
     }
 
@@ -179,11 +205,12 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void AQuoteSatisfyingBothBoundariesOfAnEmptyBasketFaultsTheRun()
+        public void AQuoteSatisfyingBothBoundariesOfAnEmptyBasketStopsTheRunPendingTheOwnerDecision()
         {
-            // The specification defines the grid for quotes narrower than the grid and no rule
-            // for a quote that satisfies both entry rules (spread >= 2 steps). That is not a
-            // trading decision to make: the configuration is invalid for the data and the run stops.
+            // The specification defines no rule for a quote that satisfies both entry rules
+            // (spread >= 2 steps) and the owner has not decided its treatment. This test pins the
+            // interim behaviour only: the engine stops rather than choose a side, skip or open both.
+            // It does not assert that stopping is the strategy.
             var h = new Harness();
             h.Anchor();
 
@@ -191,7 +218,7 @@ namespace MarketLab.SingleAnchor.Tests
 
             Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.BothBoundariesSatisfied));
             Assert.That(fault.Quote.Ask, Is.EqualTo(2021m));
-            Assert.That(fault.Message, Does.Contain("invalid for this data"));
+            Assert.That(fault.Message, Does.Contain("unresolved owner decision"));
             Assert.That(h.Engine.Faulted, Is.True);
             Assert.That(h.Engine.Fault, Is.SameAs(fault));
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "no side was chosen");
@@ -201,6 +228,11 @@ namespace MarketLab.SingleAnchor.Tests
             var again = Assert.Throws<StrategyInvariantException>(() => h.AtLower())!;
             Assert.That(again.Message, Does.Contain("faulted"));
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "a faulted engine trades no further");
+
+            var snapshot = h.Engine.MarkToMarket(fault.Quote)!;
+            Assert.That(snapshot.AnchorEvent.QuoteSequence, Is.EqualTo(1), "the anchored basket keeps its source quote");
+            Assert.That(snapshot.AnchorEvent.Bid, Is.EqualTo(1999.9m));
+            Assert.That(snapshot.RejectionTrace, Is.Empty, "not a rejection");
         }
 
         [Test]
@@ -322,6 +354,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(errors, Has.Some.Contains("PointValuePerLot"));
             Assert.That(errors, Has.Some.Contains("ProjectedSpread"));
             Assert.That(errors, Has.Count.EqualTo(4), "step percent, base lot, point value and the target spread have no specified value");
+            Assert.That(errors, Has.Some.Contains("must be supplied"));
         }
 
         [Test]
@@ -347,7 +380,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(With(p => p.CommissionPerLot = -1m), Has.Some.Contains("CommissionPerLot"));
             Assert.That(With(p => p.Slippage = -1m), Has.Some.Contains("Slippage"));
             Assert.That(With(p => p.ProjectedSpread = -1m), Has.Some.Contains("ProjectedSpread"));
-            Assert.That(With(p => p.ProjectedSpread = 0m), Has.Some.Contains("ProjectedSpread"));
+            Assert.That(With(p => p.ProjectedSpread = 0m), Has.None.Contains("ProjectedSpread"), "a zero target spread is a valid sensitivity case once supplied");
             Assert.That(With(p => p.SwapRolloverTimeOfDay = TimeSpan.FromHours(24)), Has.Some.Contains("SwapRolloverTimeOfDay"));
             Assert.That(With(p => p.TripleSwapDay = DayOfWeek.Sunday), Has.Some.Contains("TripleSwapDay"));
         }

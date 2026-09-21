@@ -150,8 +150,11 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
-    /// Executable prices assumed at a hard target: the target is a midpoint (like the anchor it is
-    /// derived from) and the projected spread is split symmetrically around it.
+    /// Executable prices assumed at a hard target. The specification defines T_up / T_down as the
+    /// "maximum permitted ... basket breakeven price" without saying which price; this
+    /// implementation treats T as a midpoint and splits the configured target spread
+    /// symmetrically around it (Bid = T - spread / 2, Ask = T + spread / 2). That reading is an
+    /// implementation choice pending owner approval, not a rule of the specification.
     /// </summary>
     public readonly record struct TargetPrices
     {
@@ -164,7 +167,7 @@ namespace MarketLab.SingleAnchor
             Ask = target + spread / 2m;
         }
 
-        /// <summary>T, the hard target as a midpoint.</summary>
+        /// <summary>T, the hard target, read as a midpoint (pending owner approval).</summary>
         public decimal Target { get; }
 
         /// <summary>Spread assumed at the target.</summary>

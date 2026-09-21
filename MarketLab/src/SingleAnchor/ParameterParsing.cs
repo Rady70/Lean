@@ -37,6 +37,23 @@ namespace MarketLab.SingleAnchor
             throw new ArgumentException($"{name} must be a time of day as HH:mm, HH:mm:ss, HHmm or HHmmss (got '{value}'); use a colon-free form with -Parameters.");
         }
 
+        /// <summary>
+        /// A decimal in invariant culture, or null when the value is empty (not supplied). An
+        /// unparsable value is an error naming the parameter.
+        /// </summary>
+        public static decimal? ParseOptionalDecimal(string value, string name)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+            if (decimal.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+            {
+                return parsed;
+            }
+            throw new ArgumentException($"{name} must be a decimal number (got '{value}').");
+        }
+
         /// <summary>A day name (any case), or null for 'none' / empty.</summary>
         public static DayOfWeek? ParseOptionalDayOfWeek(string value, string name)
         {

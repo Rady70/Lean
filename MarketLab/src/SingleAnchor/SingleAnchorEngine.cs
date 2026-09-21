@@ -25,9 +25,12 @@ namespace MarketLab.SingleAnchor
     /// hard-BE requirement with its actual price.</item>
     /// </list>
     /// Two situations are strategy invariants, not trading decisions: a quote that satisfies both
-    /// entry rules of an empty basket, and a tail fill that leaves the hard-BE requirement unmet.
-    /// Either faults the engine with a <see cref="StrategyInvariantException"/>; a host must stop
-    /// the run.
+    /// entry rules of an empty basket (an unresolved owner decision; the engine stops rather than
+    /// choose), and a tail fill that leaves the hard-BE requirement unmet. Either faults the
+    /// engine with a <see cref="StrategyInvariantException"/>. A quote with invalid prices or one
+    /// earlier than an already processed quote faults it with a <see cref="DataQualityException"/>
+    /// at this lowest layer, so no host can continue a deterministic replay after a market quote
+    /// was lost. A faulted engine refuses every further quote; a host must stop the run.
     /// </remarks>
     public sealed class SingleAnchorEngine
     {
@@ -37,7 +40,7 @@ namespace MarketLab.SingleAnchor
         private Basket? _basket;
         private int _basketSequence;
         private Quote? _lastProcessedQuote;
-        private StrategyInvariantException? _fault;
+        private SingleAnchorRunException? _fault;
 
         /// <summary>
         /// Creates an engine. Throws <see cref="ArgumentException"/> when the parameters are invalid.
@@ -70,11 +73,14 @@ namespace MarketLab.SingleAnchor
         /// </summary>
         public Quote? LastProcessedQuote => _lastProcessedQuote;
 
-        /// <summary>True after a strategy invariant failed; every later quote is refused.</summary>
+        /// <summary>True after a strategy invariant or a data-quality condition failed; every later quote is refused.</summary>
         public bool Faulted => _fault != null;
 
-        /// <summary>The invariant failure that faulted the engine, if any.</summary>
-        public StrategyInvariantException? Fault => _fault;
+        /// <summary>The failure that faulted the engine, if any.</summary>
+        public SingleAnchorRunException? Fault => _fault;
+
+        /// <summary>What the hard-BE requirement covers under these parameters (see <see cref="HardBreakevenGuarantee"/>).</summary>
+        public HardBreakevenGuarantee HardBreakevenGuarantee => HardBreakevenGuarantee.For(_p);
 
         /// <summary>Sum of the realized executable profit of every closed basket.</summary>
         public decimal RealizedProfit { get; private set; }
@@ -118,37 +124,34 @@ namespace MarketLab.SingleAnchor
         /// <summary>Raised when the executor could not close the basket.</summary>
         public event Action<BasketCloseFailedEvent>? BasketCloseFailed;
 
-        /// <summary>Raised when a quote is ignored.</summary>
-        public event Action<InvalidQuoteEvent>? InvalidQuote;
-
         /// <summary>
-        /// Processes one quote. Returns false, without side effects, for an invalid or out-of-order
-        /// quote (a host that replays history should treat that as a data-quality failure, as the
-        /// LEAN tick feed does). Throws <see cref="StrategyInvariantException"/> when a strategy
-        /// invariant fails, and again on every call after that.
+        /// Processes one quote. Throws <see cref="DataQualityException"/> for a quote with invalid
+        /// prices or one earlier than an already processed quote, and
+        /// <see cref="StrategyInvariantException"/> when a strategy invariant fails; either faults
+        /// the engine, which then throws again on every call.
         /// </summary>
-        public bool OnQuote(in Quote quote)
+        public void OnQuote(in Quote quote)
         {
             if (_fault != null)
             {
-                throw new StrategyInvariantException(_fault.Invariant, _fault.Quote, "The engine is faulted and accepts no further quotes: " + _fault.Message);
+                throw _fault.AsRefusal();
             }
             if (!quote.IsValid)
             {
-                InvalidQuote.Raise(new InvalidQuoteEvent(quote, "Quote refused: bid and ask must be positive and the ask must not be below the bid."));
-                return false;
+                throw RecordFault(new DataQualityException(DataQualityIssue.InvalidQuote, quote,
+                    $"Quote {quote} has a non-positive or crossed bid/ask; the data is not a valid tick history for this strategy and the run is stopped."));
             }
             if (_lastProcessedQuote.HasValue && quote.Time < _lastProcessedQuote.Value.Time)
             {
-                InvalidQuote.Raise(new InvalidQuoteEvent(quote, $"Quote refused: time {quote.Time:O} is earlier than the previous quote {_lastProcessedQuote.Value.Time:O}."));
-                return false;
+                throw RecordFault(new DataQualityException(DataQualityIssue.OutOfOrderQuote, quote,
+                    $"Quote {quote} is earlier than the previously processed quote {_lastProcessedQuote.Value}; the tick chronology is broken and the run is stopped."));
             }
             _lastProcessedQuote = quote;
             QuotesProcessed++;
 
             if (_basket == null)
             {
-                _basket = new Basket(++_basketSequence, quote, _p);
+                _basket = new Basket(++_basketSequence, QuotesProcessed, quote, _p);
                 AnchorCreated.Raise(new AnchorCreatedEvent(_basket, quote));
             }
             var basket = _basket;
@@ -178,12 +181,11 @@ namespace MarketLab.SingleAnchor
                     }
                     // A close that fired ends the quote whether it succeeded or failed: no
                     // replacement basket and no new leg on the same quote.
-                    return true;
+                    return;
                 }
             }
 
             EvaluateEntry(basket, quote);
-            return true;
         }
 
         /// <summary>
@@ -210,11 +212,11 @@ namespace MarketLab.SingleAnchor
                 }
                 stepMoney = BasketEconomics.StepMoney(basket, _p);
             }
-            return new BasketSnapshot(basket.Sequence, basket.CreatedTime, basket.Anchor, basket.Step, basket.Upper, basket.Lower,
+            return new BasketSnapshot(basket.Sequence, basket.AnchorEvent, basket.CreatedTime, basket.Anchor, basket.Step, basket.Upper, basket.Lower,
                 basket.LowerTarget, basket.UpperTarget, basket.OpenPositions, basket.LastSide, basket.NextTradeNumber,
                 basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots, basket.AccruedSwapTotal,
                 basket.HardBreakevenModeActive, basket.TrailingActive, basket.PeakProfit,
-                quote, raw, exit, executable, stepMoney);
+                quote, raw, exit, executable, stepMoney, LegTrace(basket), basket.Rejections);
         }
 
         /// <summary>The trace rows of the open basket's legs (empty without a basket).</summary>
@@ -274,11 +276,12 @@ namespace MarketLab.SingleAnchor
                 var sellTriggered = quote.Bid <= basket.Lower;
                 if (buyTriggered && sellTriggered)
                 {
-                    // Both entry rules of section 3 hold on one quote: the spread is at least two
-                    // grid steps. The specification defines no such case; this is not a trading
-                    // decision to make but a configuration that is invalid for the data.
+                    // Both entry rules of section 3 hold on one quote (spread of at least two grid
+                    // steps). The specification defines no rule for this case and its treatment is
+                    // an unresolved owner decision: no priority, no skip and no double entry is
+                    // added here; the engine stops rather than choose.
                     throw RecordFault(new StrategyInvariantException(StrategyInvariant.BothBoundariesSatisfied, quote,
-                        $"Quote {quote} (spread {F(quote.Spread)}) satisfies both Ask >= Upper ({F(basket.Upper)}) and Bid <= Lower ({F(basket.Lower)}) of basket #{basket.Sequence} (anchor {F(basket.Anchor)}, step {F(basket.Step)}): the grid step is not wider than half the spread, so the configuration is invalid for this data. The run is stopped."));
+                        $"Quote {quote} (spread {F(quote.Spread)}) satisfies both Ask >= Upper ({F(basket.Upper)}) and Bid <= Lower ({F(basket.Lower)}) of basket #{basket.Sequence} (anchor {F(basket.Anchor)}, step {F(basket.Step)}). The specification defines no rule for a quote that satisfies both entry rules and its treatment is an unresolved owner decision; the run is stopped rather than choose a side."));
                 }
                 if (buyTriggered) side = TradeSide.Buy;
                 else if (sellTriggered) side = TradeSide.Sell;
@@ -364,7 +367,7 @@ namespace MarketLab.SingleAnchor
             }
         }
 
-        private StrategyInvariantException RecordFault(StrategyInvariantException exception)
+        private T RecordFault<T>(T exception) where T : SingleAnchorRunException
         {
             _fault = exception;
             return exception;
@@ -377,8 +380,15 @@ namespace MarketLab.SingleAnchor
             basket.LastRejection = rejection;
             if (isNew)
             {
+                basket.AddRejection(new EntryRejectionRecord(basket.Sequence, QuotesProcessed, quote.Time, quote.Bid, quote.Ask, rejection));
                 EntriesRejected++;
                 EntryRejected.Raise(new EntryRejectedEvent(basket, rejection, quote));
+            }
+            else
+            {
+                // A repeat belongs to the last row: SameSituationAs compares with LastRejection,
+                // which is the situation of the last row added.
+                basket.Rejections[basket.Rejections.Count - 1].Repeat(QuotesProcessed, quote.Time, quote.Bid, quote.Ask);
             }
         }
 
@@ -387,11 +397,11 @@ namespace MarketLab.SingleAnchor
             var basket = order.Basket;
             var commission = _p.CommissionPerLot * basket.GrossLots;
             var realized = BasketEconomics.ExecutableProfit(basket, execution.BuyClosePrice, execution.SellClosePrice, _p);
-            var record = new BasketCloseRecord(basket.Sequence, basket.CreatedTime, order.Quote.Time, QuotesProcessed, order.Quote.Bid, order.Quote.Ask,
+            var record = new BasketCloseRecord(basket.Sequence, basket.AnchorEvent, basket.CreatedTime, order.Quote.Time, QuotesProcessed, order.Quote.Bid, order.Quote.Ask,
                 basket.Anchor, order.Reason, basket.OpenPositions,
                 basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots, basket.HardBreakevenModeActive,
                 rawProfit, exitProfit, threshold, execution.BuyClosePrice, execution.SellClosePrice, basket.AccruedSwapTotal, commission, realized,
-                LegTrace(basket));
+                LegTrace(basket), basket.Rejections);
 
             _basket = null;
             _closedBaskets.Add(record);

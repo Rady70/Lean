@@ -38,6 +38,18 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void OptionalDecimalsDistinguishAbsentFromZero()
+        {
+            Assert.That(ParameterParsing.ParseOptionalDecimal("", "p"), Is.Null);
+            Assert.That(ParameterParsing.ParseOptionalDecimal("  ", "p"), Is.Null);
+            Assert.That(ParameterParsing.ParseOptionalDecimal("0", "p"), Is.EqualTo(0m));
+            Assert.That(ParameterParsing.ParseOptionalDecimal("0.5", "p"), Is.EqualTo(0.5m));
+            Assert.That(ParameterParsing.ParseOptionalDecimal(" 100 ", "p"), Is.EqualTo(100m));
+            var error = Assert.Throws<ArgumentException>(() => ParameterParsing.ParseOptionalDecimal("0,5", "single-anchor-projected-spread"));
+            Assert.That(error!.Message, Does.Contain("single-anchor-projected-spread"));
+        }
+
+        [Test]
         public void TripleSwapDayAcceptsNamesAnyCaseAndNone()
         {
             Assert.That(ParameterParsing.ParseOptionalDayOfWeek("Wednesday", "d"), Is.EqualTo(DayOfWeek.Wednesday));

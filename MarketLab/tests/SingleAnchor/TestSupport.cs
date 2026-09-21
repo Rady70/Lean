@@ -55,7 +55,6 @@ namespace MarketLab.SingleAnchor.Tests
             Engine.TrailingActivated += e => TrailingActivations.Add(e);
             Engine.BasketClosed += e => BasketsClosed.Add(e);
             Engine.BasketCloseFailed += e => CloseFailures.Add(e);
-            Engine.InvalidQuote += e => InvalidQuotes.Add(e);
         }
 
         public SingleAnchorParameters Parameters { get; }
@@ -68,7 +67,6 @@ namespace MarketLab.SingleAnchor.Tests
         public List<TrailingActivatedEvent> TrailingActivations { get; } = new List<TrailingActivatedEvent>();
         public List<BasketClosedEvent> BasketsClosed { get; } = new List<BasketClosedEvent>();
         public List<BasketCloseFailedEvent> CloseFailures { get; } = new List<BasketCloseFailedEvent>();
-        public List<InvalidQuoteEvent> InvalidQuotes { get; } = new List<InvalidQuoteEvent>();
 
         private int _tick;
 

@@ -8,10 +8,11 @@ namespace MarketLab.SingleAnchor
     /// Every input of the SingleAnchor vNext strategy (specification section 17: the principal
     /// research parameters plus the execution-cost, commission-buffer, volume-step and
     /// instrument money-value settings, which "must remain explicit inputs rather than hidden
-    /// assumptions"). Defaults are the specification's defaults where it states one; the two
-    /// inputs without a specified value (<see cref="StepPercent"/>, <see cref="BaseLot"/>) have
-    /// no usable default and must be set. <see cref="Validate"/> rejects an incomplete or
-    /// inconsistent set before the engine is constructed.
+    /// assumptions"). Defaults are the specification's defaults where it states one. Four inputs
+    /// have no specified value and must be set: <see cref="StepPercent"/>, <see cref="BaseLot"/>,
+    /// <see cref="PointValuePerLot"/> and <see cref="ProjectedSpread"/> (the last may be zero but
+    /// must be supplied). <see cref="Validate"/> rejects an incomplete or inconsistent set before
+    /// the engine is constructed.
     /// </summary>
     public sealed record SingleAnchorParameters
     {
@@ -99,11 +100,14 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// The configured spread assumed at the hard target (section 7: "configured bid/ask
-        /// execution side, spread"): the projected Bid/Ask at T are T -/+ half of it. The hard-BE
-        /// requirement is guaranteed against this assumption; a wider spread at the target is
-        /// outside it. Required, positive.
+        /// execution side, spread"). The implementation splits it around T to obtain the
+        /// projected executable Bid/Ask (T -/+ half; whether T is such a midpoint is an
+        /// interpretation pending owner approval). The hard-BE requirement is verified at each
+        /// tail entry under this assumption only; a wider spread at the target is not covered.
+        /// Must be supplied; zero is a valid sensitivity case (no arithmetic depends on a
+        /// positive spread), negative is not.
         /// </summary>
-        public decimal ProjectedSpread { get; init; }
+        public decimal? ProjectedSpread { get; init; }
 
         // ---- Swap / financing (sections 7 and 9, "where configured") ----
 
@@ -156,7 +160,8 @@ namespace MarketLab.SingleAnchor
 
             if (CommissionPerLot < 0m) errors.Add($"{nameof(CommissionPerLot)} must be >= 0 (got {F(CommissionPerLot)}).");
             if (Slippage < 0m) errors.Add($"{nameof(Slippage)} must be >= 0 (got {F(Slippage)}).");
-            if (ProjectedSpread <= 0m) errors.Add($"{nameof(ProjectedSpread)} must be > 0 (got {F(ProjectedSpread)}); the target spread of the hard-BE projection is a required input.");
+            if (!ProjectedSpread.HasValue) errors.Add($"{nameof(ProjectedSpread)} must be supplied; the target spread of the hard-BE projection is an explicit input (zero is allowed).");
+            else if (ProjectedSpread.Value < 0m) errors.Add($"{nameof(ProjectedSpread)} must be >= 0 (got {F(ProjectedSpread.Value)}).");
 
             if (SwapRolloverTimeOfDay < TimeSpan.Zero || SwapRolloverTimeOfDay >= TimeSpan.FromDays(1)) errors.Add($"{nameof(SwapRolloverTimeOfDay)} must be a time of day in [00:00, 24:00) (got {SwapRolloverTimeOfDay}).");
             if (TripleSwapDay == DayOfWeek.Saturday || TripleSwapDay == DayOfWeek.Sunday) errors.Add($"{nameof(TripleSwapDay)} must be a weekday or null (got {TripleSwapDay}); weekend rollovers are never charged.");
