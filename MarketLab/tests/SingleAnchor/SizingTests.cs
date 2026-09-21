@@ -72,11 +72,11 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.Engine.Basket!.Legs[0].Lots, Is.EqualTo(60m));
 
             h.AtLower();   // trade 2 would be 120 lots
-            h.AtLower();   // the same situation again
+            h.AtLower();   // the same episode again
 
             var basket = h.Engine.Basket!;
             Assert.That(basket.OpenPositions, Is.EqualTo(1));
-            Assert.That(h.EntriesRejected, Has.Count.EqualTo(1), "one event per distinct situation");
+            Assert.That(h.EntriesRejected, Has.Count.EqualTo(1), "one event per distinct episode");
             Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(2));
             var rejection = h.EntriesRejected[0].Rejection;
             Assert.That(rejection.Reason, Is.EqualTo(EntryRejectionReason.VolumeExceedsMaximum));
@@ -266,7 +266,7 @@ namespace MarketLab.SingleAnchor.Tests
             var h = new Harness(Harness.NoExits() with { MaximumVolume = 0.05m });
             var basket = h.PingPongFourLegs();
             h.AtUpper();                       // Q_BE 0.0547 -> 0.06 > 0.05
-            h.AtUpper();                       // same situation
+            h.AtUpper();                       // same episode
             Assert.That(h.EntriesRejected, Has.Count.EqualTo(1));
 
             h.Feed(2060m, 2060.2m);            // marginal 2936 -> Q_BE 0.1295 -> 0.13
@@ -302,6 +302,75 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(row.MaxNormalizedRequiredLots, Is.EqualTo(0.08m));
             Assert.That(row.ParityHash, Has.Length.EqualTo(16));
             Assert.That(row.LastAsk, Is.EqualTo(2040m));
+        }
+
+        [Test]
+        public void OscillatingHardBreakevenOutcomeStaysBoundedToItsEpisodes()
+        {
+            // The hard-BE outcome is itself quote-dependent: PL_1lot crosses zero at
+            // Ask = T_up - CommissionPerLot / V. Quotes alternating on either side of that level
+            // must stay two bounded episodes (one per outcome), not one row per tick, and an
+            // episode that reappears appends to its existing row.
+            var p = Harness.NoExits() with { CommissionPerLot = 7m, MaximumVolume = 100m };
+            var h = new Harness(p);
+            var basket = h.PingPongFourLegs();
+            for (var i = 0; i < 1000; i++)
+            {
+                var ask = i % 2 == 0 ? 2089.48m : 2089.50m; // marginal +1 / -1 at T_up = 2089.56
+                h.Feed(ask - 0.02m, ask);
+            }
+
+            Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(1000));
+            Assert.That(h.Engine.EntriesRejected, Is.EqualTo(2), "one distinct episode per hard-BE outcome");
+            Assert.That(basket.Rejections, Has.Count.EqualTo(2), "bounded rows, not one per tick");
+            Assert.That(basket.Rejections[0].Outcome, Is.Not.EqualTo(basket.Rejections[1].Outcome));
+            Assert.That(basket.Rejections[0].Attempts + basket.Rejections[1].Attempts, Is.EqualTo(1000));
+            Assert.That(basket.Rejections[0].Attempts, Is.GreaterThan(1));
+            Assert.That(basket.Rejections[1].Attempts, Is.GreaterThan(1));
+        }
+
+        [Test]
+        public void AnInfeasibleTailCanBecomeFeasibleAndThenOpens()
+        {
+            var p = Harness.NoExits() with { MaximumVolume = 0.1m };
+            var h = new Harness(p);
+            var basket = h.PingPongFourLegs();
+            h.Feed(2059.8m, 2060m);            // required 0.1286... -> 0.13 > 0.1: rejected
+            Assert.That(basket.OpenPositions, Is.EqualTo(4));
+            Assert.That(basket.Rejections, Has.Count.EqualTo(1));
+            Assert.That(basket.Rejections[0].Outcome, Is.EqualTo(HardBreakevenOutcome.ExceedsMaximumVolume));
+
+            h.AtUpper();                        // ask 2020: required 0.0547 -> 0.06 <= 0.1: opens
+            Assert.That(basket.OpenPositions, Is.EqualTo(5));
+            Assert.That(basket.Legs[4].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(basket.Legs[4].Regime, Is.EqualTo(SizingRegime.HardBreakeven));
+            Assert.That(basket.LastRejection, Is.Null, "a filled entry clears the rejection state");
+            Assert.That(basket.Rejections, Has.Count.EqualTo(1), "the closed episode stays in the trace");
+        }
+
+        [Test]
+        public void SellFirstBasketSizesItsTailAtTheLowerBoundaryThroughTheEngine()
+        {
+            var h = new Harness(Harness.NoExits());
+            h.Anchor();
+            h.AtLower();                        // SELL 1
+            h.AtUpper();                        // BUY 2
+            h.AtLower();                        // SELL 3
+            h.AtUpper();                        // BUY 4
+            h.AtLower();                        // SELL 5 tail at the lower boundary
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.OpenPositions, Is.EqualTo(5));
+            var sizing = basket.Legs[4].Sizing!.Value;
+            Assert.That(basket.Legs[4].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(sizing.Target.Ask, Is.EqualTo(1910.44m), "lower recovery values the Ask at T_down");
+            Assert.That(sizing.Target.Bid, Is.EqualTo(1910.24m));
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-380.32m));
+            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6956m));
+            Assert.That(sizing.ExactRequired, Is.EqualTo(380.32m / 6956m));
+            Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(0.06m));
+            Assert.That(sizing.NormalizedLot, Is.EqualTo(0.06m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(37.04m));
         }
 
         [Test]
@@ -643,11 +712,12 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void TheVerificationFallbackReportsTheSteppedRequiredLot()
+        public void TheVerificationFallbackStepsAShortStartUpToTheVerifiedRequiredLot()
         {
-            // A start deliberately one step below the true requirement exercises the rounding
-            // fallback: the verified lot, its recomputed P/L and the sizer's reported
-            // NormalizedRequiredLot must all move together.
+            // Unit test of the rounding-fallback seam with a deliberately short start: the production
+            // ceil estimate is within one decimal ulp of the true requirement, so it is not
+            // practically reachable by a crafted parameter set; the loop itself must still move the
+            // verified lot and its recomputed P/L together.
             var p = Harness.Defaults();
             var target = TargetPrices.ForUpperRecovery(2089.56m, p.ProjectedSpread!.Value);
             var verified = HardBreakevenSizer.SmallestVerifiedLot(-380.32m, TradeSide.Buy, 2020m, target, p, 0.05m, out var after);
@@ -660,6 +730,26 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(sizing.IsFeasible, Is.True);
             Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(sizing.NormalizedLot));
             Assert.That(sizing.ProjectedProfitAfter, Is.GreaterThanOrEqualTo(0m));
+        }
+
+        [TestCase(0.06, true)]
+        [TestCase(0.059, false)]
+        public void TheRequirementIsComparedStrictlyAgainstTheMaximumVolume(decimal maximum, bool feasible)
+        {
+            var p = Harness.Defaults() with { MaximumVolume = maximum };
+            var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
+
+            Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(0.06m));
+            Assert.That(sizing.IsFeasible, Is.EqualTo(feasible));
+            if (feasible)
+            {
+                Assert.That(sizing.NormalizedLot, Is.EqualTo(0.06m));
+            }
+            else
+            {
+                Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
+                Assert.That(sizing.Outcome, Is.EqualTo(HardBreakevenOutcome.ExceedsMaximumVolume));
+            }
         }
 
         [Test]

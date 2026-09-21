@@ -190,14 +190,21 @@ culture; `true`/`false` for booleans.
   and no swap fields; zero is the only accepted configuration until continuous
   financing behaviour is specified.
 - **Infeasible hard-BE and other rejected entries are traced (bounded
-  episodes).** Every basket keeps one row per rejected-entry episode: trade
-  number, side, reason and hard-BE outcome. The first attempt's quote (sequence,
+  episodes).** Every basket keeps one row per rejected-entry episode, keyed by a
+  **quote-independent** tuple: trade number, side, reason and hard-BE outcome.
+  The first attempt's quote (sequence,
   time, Bid, Ask) and full sizing figures are kept, the last attempt's quote and
-  the attempt count are updated, and later attempts of the same episode are
-  folded into that row, never stored per tick. The broker-normalized requirement
-  is deliberately not part of the episode identity: it moves with every quote, so
-  a requirement oscillating between adjacent volume steps (for example 0.06,
-  0.07, 0.06, ...) stays one bounded row instead of one row per tick. The row
+  the attempt count are updated, and every attempt of the episode is
+  folded into that row, never stored per tick. Matching scans the basket's rows
+  (newest first), so an episode that reappears after another episode appends to
+  its existing row; the number of rows is bounded by the finite set of episode
+  keys, not by the number of ticks. Two quote-dependent quantities deliberately
+  stay out of the key: the broker-normalized requirement (it moves with every
+  quote, so 0.06, 0.07, 0.06 stays one row) and the economic figures. The
+  hard-BE outcome itself is quote-dependent (PL_1lot crosses zero at
+  `Ask = T_up - commission/V`), so a hovering price can alternate
+  `NonPositiveMarginalProfit` and `ExceedsMaximumVolume`; that is bounded to one
+  row per outcome (two rows total for that pair), not one row per tick. The row
   carries the first attempt's normalized requirement for context, the min/max
   normalized requirement over the episode, and a
   deterministic FNV-1a 64-bit parity digest over the canonical tuple of every
@@ -225,12 +232,13 @@ culture; `true`/`false` for booleans.
   are still reported (for example Q_BE 0.054725... normalizes to 0.06 and stays
   0.06 even when the maximum is 0.05).
 - **Repeated rejections do not allocate on the hot path (measured).** The engine
-  decides whether an attempt is a new situation before building anything
+  matches the attempt to its episode before building anything
   human-readable; the detailed message is only formatted for a new row (and
   raised to the host once). The sizing and rejection records are value types and
   the digest writer serializes fields directly into the accumulator, so a
   repeated rejected attempt allocates nothing (section 7: 0 bytes per attempt
-  over a one-million-tick probe; the earlier class-based revision measured 808
+  over one-million-tick probes, both for a stable outcome and for an outcome
+  alternating between two episodes; the earlier class-based revision measured 808
   and 352 bytes per attempt).
 - **Arithmetic lots** (trades 1..Nnormal) are normalized upward to the volume
   step (never below the requested B * n), raised to the minimum volume, and
@@ -366,7 +374,7 @@ sample's data quality or of a sensible parameter choice. The target spread
   upstream projects print their own analyzer warnings, as recorded for the
   engine build).
 - `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`:
-  132 passed, 0 failed, 0 skipped.
+  137 passed, 0 failed, 0 skipped.
 - `MarketLab\tests\Test-MarketLabBacktesting.ps1` (fast mode): 150 passed,
   0 failed.
 - `pwsh -File MarketLab\scripts\run-backtest.ps1 -AlgorithmTypeName SingleAnchorVNextAlgorithm
@@ -408,10 +416,13 @@ sample's data quality or of a sensible parameter choice. The target spread
   `5902baf022001a2c`); the run completes with 21 legs,
   6 baskets closed, realized profit 3.080 and an open 14-leg basket;
   `results.json` 26,745 bytes.
-- Independent allocation probe (temporary console project outside the
-  repository, 1,000,000 trigger ticks with a persisting hard-BE rejection):
-  0 bytes allocated per rejected attempt and ~1.17 microseconds per tick, one
-  rejection row; ordinary no-action ticks allocate 0 bytes and cost ~60 ns.
+- Independent allocation and boundedness probe (temporary console project
+  outside the repository, 1,000,000 trigger ticks each): a persisting hard-BE
+  rejection allocates 0 bytes per attempt and stays one row; an outcome
+  alternating between `ExceedsMaximumVolume` and `NonPositiveMarginalProfit`
+  (ask alternating 2089.48 / 2089.50 around `T_up - commission/V`) allocates
+  0 bytes per attempt and stays two rows, 500,000 attempts each, with one digest
+  per outcome. Ordinary no-action ticks allocate 0 bytes and cost ~60 ns.
   (The same probe measured 808 bytes per attempt for the earlier class-based
   revision that formatted a message on every attempt, and 352 bytes after the
   message was made lazy but before the sizing and rejection records became value

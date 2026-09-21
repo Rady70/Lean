@@ -12,7 +12,7 @@ namespace MarketLab.SingleAnchor
     /// costs a constant amount of work (the basket is valued from its aggregates) and no
     /// allocation; a trigger quote whose entry stays infeasible re-runs the sizing and folds the
     /// attempt into the existing rejection row without formatting a message or raising a second
-    /// event for the same situation.
+    /// event for the same episode.
     /// </summary>
     /// <remarks>
     /// Order of work on every quote (sections 14 and 15):
@@ -110,7 +110,7 @@ namespace MarketLab.SingleAnchor
         /// <summary>Distinct rejected-entry episodes (each raised as one <see cref="EntryRejected"/>); an episode covers every attempt with the same trade, side, reason and hard-BE outcome.</summary>
         public long EntriesRejected { get; private set; }
 
-        /// <summary>Every rejected entry attempt, including repeats of the same situation.</summary>
+        /// <summary>Every rejected entry attempt, including repeats of the same episode.</summary>
         public long RejectedEntryAttempts { get; private set; }
 
         /// <summary>Quotes skipped because a still-empty basket satisfied both first-entry boundaries (specification section 3).</summary>
@@ -407,11 +407,15 @@ namespace MarketLab.SingleAnchor
         private void Reject(Basket basket, in Quote quote, EntryRejection rejection)
         {
             RejectedEntryAttempts++;
-            // Determine whether this is a new situation before building anything human-readable,
-            // so a persisting requirement costs no message formatting per tick (section 9).
-            var isNew = !rejection.SameSituationAs(basket.LastRejection);
             basket.LastRejection = rejection;
-            if (isNew)
+            // The episode key (trade number, side, reason, hard-BE outcome) is quote-independent, so
+            // an episode that reappears after another one appends to its existing row rather than
+            // starting a new one. The number of rows is therefore bounded by the distinct keys, not
+            // by the number of ticks; every attempt is folded into the row (count, last quote,
+            // parity digest and min/max values). Matching before formatting keeps a persisting
+            // requirement free of per-tick message construction.
+            var row = FindEpisode(basket, rejection);
+            if (row == null)
             {
                 basket.AddRejection(new EntryRejectionRecord(basket.Sequence, QuotesProcessed, quote.Time, quote.Bid, quote.Ask, rejection));
                 EntriesRejected++;
@@ -419,11 +423,22 @@ namespace MarketLab.SingleAnchor
             }
             else
             {
-                // A repeat belongs to the last row: SameSituationAs compares with LastRejection,
-                // which is the situation of the last row added. Every attempt is folded into the
-                // row (count, last quote, parity digest and min/max values).
-                basket.Rejections[basket.Rejections.Count - 1].AppendAttempt(QuotesProcessed, quote.Time, quote.Bid, quote.Ask, rejection);
+                row.AppendAttempt(QuotesProcessed, quote.Time, quote.Bid, quote.Ask, rejection);
             }
+        }
+
+        private static EntryRejectionRecord? FindEpisode(Basket basket, EntryRejection rejection)
+        {
+            var rows = basket.Rejections;
+            // Newest first: the common case is the episode that is already active.
+            for (var i = rows.Count - 1; i >= 0; i--)
+            {
+                if (rows[i].IsSameEpisode(rejection))
+                {
+                    return rows[i];
+                }
+            }
+            return null;
         }
 
         private void FinalizeClose(CloseOrder order, decimal rawProfit, decimal exitProfit, decimal threshold, in CloseExecution execution)

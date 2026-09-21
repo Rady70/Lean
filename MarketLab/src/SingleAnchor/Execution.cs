@@ -169,27 +169,6 @@ namespace MarketLab.SingleAnchor
             }
         }
 
-        /// <summary>
-        /// True when this rejection belongs to the same episode as <paramref name="other"/>: same
-        /// trade, side, reason and hard-BE outcome. The broker-normalized requirement is
-        /// deliberately not part of the identity: it moves with every quote, and splitting on it
-        /// would let a requirement oscillating between adjacent volume steps produce one row per
-        /// tick. Every attempt is folded into the row's parity digest and the row records the
-        /// min/max normalized requirement, so the variation is preserved without per-tick rows.
-        /// </summary>
-        public bool SameSituationAs(EntryRejection? other)
-        {
-            if (!other.HasValue)
-            {
-                return false;
-            }
-            var o = other.Value;
-            return o.TradeNumber == TradeNumber
-                && o.Side == Side
-                && o.Reason == Reason
-                && o.Sizing?.Outcome == Sizing?.Outcome;
-        }
-
         private static string F(decimal value)
         {
             return value.ToString(CultureInfo.InvariantCulture);
@@ -637,17 +616,32 @@ namespace MarketLab.SingleAnchor
 
     /// <summary>
     /// One rejected-entry episode as a trace row: the quote of its first attempt, what was
-    /// required, why it was not opened and the full lot distinction. Every later attempt with the
-    /// same trade number, side, reason and hard-BE outcome is folded into the row (attempt count,
-    /// last quote, parity digest and min/max values, including the min/max broker-normalized
-    /// requirement) rather than stored as its own row, so a requirement that stays infeasible for
-    /// hours, or oscillates between adjacent volume steps, does not produce a row per tick. A
-    /// different trade, side, reason or outcome starts a new episode. The digest makes every
+    /// required, why it was not opened and the full lot distinction. An episode is keyed by trade
+    /// number, side, reason and hard-BE outcome; every attempt with that key is folded into the row
+    /// (attempt count, last quote, parity digest and min/max values, including the min/max
+    /// broker-normalized requirement) rather than stored as its own row, so a requirement that
+    /// stays infeasible for hours, or oscillates between adjacent volume steps, does not produce a
+    /// row per tick. The key is quote-independent, so an episode that reappears after another
+    /// episode appends to its existing row instead of starting a new one. The digest makes every
     /// compressed attempt comparable with a port.
     /// </summary>
     public sealed class EntryRejectionRecord
     {
         private ParityHasher _parity;
+
+        /// <summary>
+        /// True when <paramref name="rejection"/> belongs to this episode: same trade number, side,
+        /// reason and hard-BE outcome. The broker-normalized requirement is deliberately not part of
+        /// the identity (it moves with every quote); the parity digest and the min/max normalized
+        /// requirement preserve its variation.
+        /// </summary>
+        public bool IsSameEpisode(EntryRejection rejection)
+        {
+            return rejection.TradeNumber == TradeNumber
+                && rejection.Side == Side
+                && rejection.Reason == Reason
+                && rejection.Sizing?.Outcome == Outcome;
+        }
 
         internal EntryRejectionRecord(int basket, long quoteSequence, DateTime time, decimal bid, decimal ask, EntryRejection rejection)
         {
@@ -749,8 +743,8 @@ namespace MarketLab.SingleAnchor
         /// <summary>The engine's message for the first attempt.</summary>
         public string Message { get; }
 
-        /// <summary>Number of attempts of this situation, the first included.</summary>
-        public int Attempts { get; private set; }
+        /// <summary>Number of attempts of this episode, the first included.</summary>
+        public long Attempts { get; private set; }
 
         /// <summary>Sequence number of the quote of the last attempt (the first when there is one).</summary>
         public long LastQuoteSequence { get; private set; }
@@ -914,7 +908,7 @@ namespace MarketLab.SingleAnchor
         public decimal FirstAsk { get; }
 
         /// <summary>Number of quotes skipped for this basket, the first included.</summary>
-        public int Attempts { get; private set; }
+        public long Attempts { get; private set; }
 
         /// <summary>Sequence number of the last skipped quote.</summary>
         public long LastQuoteSequence { get; private set; }
@@ -1073,7 +1067,7 @@ namespace MarketLab.SingleAnchor
     /// <summary>A leg was filled and added to the basket, after the post-fill hard-BE verification for a tail leg.</summary>
     public sealed record EntryOpenedEvent(Basket Basket, BasketLeg Leg, Quote Quote, HardBreakevenSizing? Sizing);
 
-    /// <summary>A leg the grid required was not opened. Raised once per distinct situation; every attempt is in the basket's rejection trace.</summary>
+    /// <summary>A leg the grid required was not opened. Raised once per distinct rejected-entry episode; every attempt is in the basket's rejection trace.</summary>
     public sealed record EntryRejectedEvent(Basket Basket, EntryRejection Rejection, Quote Quote);
 
     /// <summary>
