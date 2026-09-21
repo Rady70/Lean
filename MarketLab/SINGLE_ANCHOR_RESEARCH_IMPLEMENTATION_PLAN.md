@@ -315,7 +315,7 @@ Produce a deterministic semantic qualification manifest containing at least:
 - per-day accepted and converted row counts;
 - hash of the uncompressed LEAN CSV members;
 - ordered semantic digest of accepted source tuples;
-- ordered semantic digest of LEAN-delivered tuples;
+- ordered semantic digest of LEAN-delivered tuples after interpreting delivered tick.Time in the resolved ExchangeTimeZone and normalizing it back to canonical UTC;
 - LEAN-delivered row count;
 - session-filter difference count.
 
@@ -329,7 +329,11 @@ The acceptance test must exercise the real LEAN path rather than only unit-test
 the converter.
 
 The probe must compare the qualified source stream against the quote stream
-actually delivered through LEAN/QuoteTickFeed and establish:
+actually delivered through LEAN/QuoteTickFeed. For semantic comparison, treat
+the delivered tick.Time in its resolved ExchangeTimeZone context and normalize
+it back to canonical UTC before hashing/comparing it with the qualified source
+timestamp. Prices use canonical exact-decimal text/value semantics. The probe
+must establish:
 
 ~~~text
 accepted count     == delivered count
