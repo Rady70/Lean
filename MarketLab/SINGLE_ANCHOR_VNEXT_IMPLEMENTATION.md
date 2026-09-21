@@ -366,7 +366,7 @@ sample's data quality or of a sensible parameter choice. The target spread
   legs, 11 baskets closed (9 by trailing, 2 by escape), 0 rejected entries,
   0 skipped first-entry quotes, realized profit 17.752; at the end of data a
   7-leg hard-BE basket (#12, buy 0.08 / sell 0.09 / net -0.01 lots, raw profit
-  -43.167) reported marked to market, not closed; `results.json` (31,450 bytes)
+  -43.167) reported marked to market, not closed; `results.json` (31,542 bytes)
   written with `completed: true`, both `hardBreakevenVerification` flags true,
   no owner-decision block, an `AnchorEvent` per basket whose anchor equals the
   midpoint of its source quote, and leg 5 (SELL, lower recovery) and leg 6
@@ -387,7 +387,7 @@ sample's data quality or of a sensible parameter choice. The target spread
   1 distinct rejected-entry situation over 985,370 attempts folded into 1 row
   with `reason=HardBreakevenInfeasible`, `outcome=NonPositiveMarginalProfit`,
   a 16-character parity digest, its algorithm string and min/max aggregates;
-  `results.json` 31,205 bytes (no per-tick rows).
+  `results.json` 31,301 bytes (no per-tick rows).
 - Wide-first-entry configuration, same command with
   `single-anchor-step-percent:0.1` (the previously run-ending case): helper exit
   code 0; the quote 1275.507 / 1278.152 (spread 2.645) on 2014-05-02 08:30:01 is
@@ -395,7 +395,7 @@ sample's data quality or of a sensible parameter choice. The target spread
   compact `SkippedFirstEntryTrace` (attempts 1, parity digest
   `5902baf022001a2c`); the run completes with 21 legs,
   6 baskets closed, realized profit 3.080 and an open 14-leg basket;
-  `results.json` 26,653 bytes.
+  `results.json` 26,745 bytes.
 - Independent allocation probe (temporary console project outside the
   repository, 1,000,000 trigger ticks with a persisting hard-BE rejection):
   0 bytes allocated per rejected attempt and ~1.17 microseconds per tick, one
@@ -406,4 +406,4 @@ sample's data quality or of a sensible parameter choice. The target spread
   types.)
 - Determinism: two identical runs of the shipped configuration produce
   byte-identical `results.json` (SHA-256
-  `0AE2CBD856A922F634E5FF6065D25E8047F3E7C6857ACDD8FB30CCD13C26584A`).
+  `5A3F4D39A1E1E815AB5D3155836EDD9F8DB7ACE67E4D21AD1C5DFFFB90AA3502`).
