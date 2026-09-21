@@ -18,8 +18,8 @@ namespace MarketLab.SingleAnchor.Tests
             // net long 0.04: a rally gives profit 78.8 >= escape 4 (M_step 80)
             var closing = h.Feed(2100m, 2100.2m);
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.Escape));
-            Assert.That(h.BasketsClosed[0].ExitProfit, Is.EqualTo(78.8m));
+            Assert.That(h.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Escape));
+            Assert.That(h.BasketsClosed[0].Record.ExitProfit, Is.EqualTo(78.8m));
             Assert.That(h.BasketsClosed[0].Quote, Is.EqualTo(closing));
             Assert.That(h.Engine.Basket, Is.Null, "no basket until the next quote");
             Assert.That(h.Engine.BasketsClosed, Is.EqualTo(1));
@@ -75,7 +75,7 @@ namespace MarketLab.SingleAnchor.Tests
 
             Assert.That(basket.OpenPositions, Is.EqualTo(2));
             Assert.That(basket.Legs[0].EntryPrice, Is.EqualTo(2020m));
-            Assert.That(h.BasketsClosed[0].RawProfit, Is.EqualTo(39.6m));
+            Assert.That(h.BasketsClosed[0].Record.RawProfit, Is.EqualTo(39.6m));
         }
 
         [Test]
@@ -96,6 +96,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(valuation.NetLots, Is.EqualTo(-0.01m));
             Assert.That(valuation.RawProfit, Is.EqualTo(-60.6m));
             Assert.That(valuation.ExitProfit, Is.EqualTo(-60.6m));
+            Assert.That(valuation.ExecutableProfit, Is.EqualTo(-60.6m), "no slippage or commission configured");
             Assert.That(valuation.StepMoney, Is.EqualTo(20m));
             Assert.That(valuation.HardBreakevenModeActive, Is.False);
             Assert.That(valuation.TrailingActive, Is.False);
@@ -123,7 +124,7 @@ namespace MarketLab.SingleAnchor.Tests
         public void RejectedEntryIsSurfacedOnceAndTheGridWaits()
         {
             var h = new Harness();
-            h.Executor.EntryOverride = _ => ExecutionResult.Failure("insufficient margin");
+            h.Executor.EntryOverride = _ => EntryExecution.Failure("insufficient margin");
             h.Anchor();
             h.AtUpper();
             h.AtUpper();
@@ -147,7 +148,7 @@ namespace MarketLab.SingleAnchor.Tests
         public void UnusableFillIsTreatedAsAFailure()
         {
             var h = new Harness();
-            h.Executor.EntryOverride = _ => ExecutionResult.Fill(0m, 0.01m);
+            h.Executor.EntryOverride = _ => EntryExecution.Filled(0m);
             h.Anchor();
             h.AtUpper();
 
@@ -164,7 +165,7 @@ namespace MarketLab.SingleAnchor.Tests
             h.Feed(2035m, 2035.2m);                       // trailing active, floor 10
             var basket = h.Engine.Basket!;
 
-            h.Executor.CloseOverride = _ => ExecutionResult.Failure("broker busy");
+            h.Executor.CloseOverride = _ => CloseExecution.Failure("broker busy");
             h.AtLower();                                  // trailing close fires and fails; SELL trigger is also true
 
             Assert.That(h.CloseFailures, Has.Count.EqualTo(1));
@@ -178,120 +179,8 @@ namespace MarketLab.SingleAnchor.Tests
             h.Executor.CloseOverride = null;
             h.AtLower();
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.Trailing));
+            Assert.That(h.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Trailing));
             Assert.That(h.Engine.Basket, Is.Null);
-        }
-    }
-
-    [TestFixture]
-    public class PendingExecutionTests
-    {
-        [Test]
-        public void PendingEntryIsRecordedWithTheActualFillAndQuotesAreOnlyObservedMeanwhile()
-        {
-            var h = new Harness();
-            h.Executor.EntryOverride = _ => ExecutionResult.Pending("submitted");
-            h.Anchor();
-            var trigger = h.AtUpper();
-            var basket = h.Engine.Basket!;
-
-            Assert.That(h.Engine.HasPendingExecution, Is.True);
-            Assert.That(h.Engine.PendingEntryOrder, Is.Not.Null);
-            Assert.That(h.Engine.PendingEntryOrder!.TradeNumber, Is.EqualTo(1));
-            Assert.That(h.EntriesPending, Has.Count.EqualTo(1));
-            Assert.That(basket.OpenPositions, Is.EqualTo(0));
-
-            h.AtUpper();
-            h.AtLower();                                  // would be a SELL trigger, but nothing happens while pending
-            Assert.That(h.SkippedWhilePending, Has.Count.EqualTo(1), "reported once per pending operation");
-            Assert.That(h.Executor.Entries, Has.Count.EqualTo(1));
-
-            var fillTime = trigger.Time.AddMilliseconds(5);
-            h.Engine.ConfirmPendingEntry(2020.05m, 0.01m, fillTime);
-
-            Assert.That(h.Engine.HasPendingExecution, Is.False);
-            Assert.That(basket.OpenPositions, Is.EqualTo(1));
-            Assert.That(basket.Legs[0].EntryPrice, Is.EqualTo(2020.05m), "the ledger holds the host's fill, not the trigger price");
-            Assert.That(basket.Legs[0].EntryTime, Is.EqualTo(fillTime));
-            Assert.That(h.EntriesOpened, Has.Count.EqualTo(1));
-            Assert.That(h.EntriesOpened[0].Quote, Is.EqualTo(trigger));
-
-            h.Executor.EntryOverride = null;
-            h.AtLower();                                  // normal operation resumes
-            Assert.That(basket.OpenPositions, Is.EqualTo(2));
-        }
-
-        [Test]
-        public void RejectedPendingEntryLeavesTheGridUnchanged()
-        {
-            var h = new Harness();
-            h.Executor.EntryOverride = _ => ExecutionResult.Pending();
-            h.Anchor();
-            h.AtUpper();
-
-            h.Engine.RejectPendingEntry("cancelled by broker");
-
-            Assert.That(h.Engine.HasPendingExecution, Is.False);
-            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
-            Assert.That(h.EntriesRejected, Has.Count.EqualTo(1));
-            Assert.That(h.EntriesRejected[0].Rejection.Reason, Is.EqualTo(EntryRejectionReason.ExecutionFailed));
-            Assert.That(h.EntriesRejected[0].Rejection.Message, Is.EqualTo("cancelled by broker"));
-        }
-
-        [Test]
-        public void PendingCloseCompletesOnConfirmationWithTheHostFill()
-        {
-            var h = TwoLegs.Build();
-            var basket = h.Engine.Basket!;
-            h.Executor.CloseOverride = _ => ExecutionResult.Pending();
-
-            var closing = h.Feed(1900m, 1900.2m);
-            Assert.That(h.ClosesPending, Has.Count.EqualTo(1));
-            Assert.That(h.ClosesPending[0].Reason, Is.EqualTo(ExitReason.Escape));
-            Assert.That(h.Engine.PendingCloseOrder, Is.Not.Null);
-            Assert.That(h.Engine.Basket, Is.SameAs(basket), "still open until the host confirms");
-
-            h.Feed(1890m, 1890.2m);
-            h.Feed(1890m, 1890.2m);
-            Assert.That(h.SkippedWhilePending, Has.Count.EqualTo(1));
-
-            h.Engine.ConfirmPendingClose(1900.1m);
-
-            Assert.That(h.Engine.Basket, Is.Null);
-            Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].Quote, Is.EqualTo(closing), "profit is accounted at the closing quote");
-            Assert.That(h.BasketsClosed[0].ExitProfit, Is.EqualTo(39.6m));
-            Assert.That(h.BasketsClosed[0].HostFillPrice, Is.EqualTo(1900.1m));
-            Assert.That(h.Engine.BasketsClosed, Is.EqualTo(1));
-        }
-
-        [Test]
-        public void RejectedPendingCloseKeepsTheBasketAndTheExitIsReEvaluated()
-        {
-            var h = TwoLegs.Build();
-            var basket = h.Engine.Basket!;
-            h.Executor.CloseOverride = _ => ExecutionResult.Pending();
-            h.Feed(1900m, 1900.2m);
-
-            h.Engine.RejectPendingClose("rejected");
-
-            Assert.That(h.CloseFailures, Has.Count.EqualTo(1));
-            Assert.That(h.Engine.Basket, Is.SameAs(basket));
-            Assert.That(basket.OpenPositions, Is.EqualTo(2));
-
-            h.Executor.CloseOverride = null;
-            h.Feed(1900m, 1900.2m);
-            Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-        }
-
-        [Test]
-        public void ConfirmingWithoutAPendingOperationIsAProgrammingError()
-        {
-            var h = new Harness();
-            Assert.Throws<InvalidOperationException>(() => h.Engine.ConfirmPendingEntry(1m, 1m, Harness.T0));
-            Assert.Throws<InvalidOperationException>(() => h.Engine.RejectPendingEntry("x"));
-            Assert.Throws<InvalidOperationException>(() => h.Engine.ConfirmPendingClose(null));
-            Assert.Throws<InvalidOperationException>(() => h.Engine.RejectPendingClose("x"));
         }
     }
 }

@@ -43,20 +43,49 @@ namespace MarketLab.SingleAnchor.Tests
         [Test]
         public void NetFlatBasketUsesTheSmallestOpenLotAsExitSensitivity()
         {
-            var h = new Harness();
-            // the host fills trade 2 with 0.01 instead of the requested 0.02: the ledger records the fill
-            h.Executor.EntryOverride = o => ExecutionResult.Fill(o.Side == TradeSide.Buy ? o.Quote.Ask : o.Quote.Bid, 0.01m);
-            h.Anchor();
-            h.AtUpper();
-            h.AtLower();
+            var p = Harness.Defaults();
+            var basket = new Basket(new Quote(Harness.T0, 1999.9m, 2000.1m), p);
+            basket.AddLeg(new BasketLeg(1, TradeSide.Buy, 0.03m, 2020m, Harness.T0, SizingRegime.Arithmetic));
+            basket.AddLeg(new BasketLeg(2, TradeSide.Sell, 0.01m, 1980m, Harness.T0, SizingRegime.Arithmetic));
+            basket.AddLeg(new BasketLeg(3, TradeSide.Sell, 0.02m, 1980m, Harness.T0, SizingRegime.Arithmetic));
 
-            var basket = h.Engine.Basket!;
-            Assert.That(basket.BuyLots, Is.EqualTo(0.01m));
-            Assert.That(basket.SellLots, Is.EqualTo(0.01m));
+            Assert.That(basket.BuyLots, Is.EqualTo(0.03m));
+            Assert.That(basket.SellLots, Is.EqualTo(0.03m));
             Assert.That(basket.NetLots, Is.EqualTo(0m));
             Assert.That(basket.IsNetFlat, Is.True);
+            Assert.That(basket.SmallestOpenLots, Is.EqualTo(0.01m));
             Assert.That(BasketEconomics.ExitSensitivityLots(basket), Is.EqualTo(0.01m));
-            Assert.That(BasketEconomics.StepMoney(basket, h.Parameters), Is.EqualTo(20m));
+            Assert.That(BasketEconomics.StepMoney(basket, p), Is.EqualTo(20m));
+        }
+
+        [Test]
+        public void LegVolumesMustBeWholeVolumeSteps()
+        {
+            var basket = new Basket(new Quote(Harness.T0, 1999.9m, 2000.1m), Harness.Defaults());
+            Assert.Throws<InvalidOperationException>(() => basket.AddLeg(new BasketLeg(1, TradeSide.Buy, 0.015m, 2020m, Harness.T0, SizingRegime.Arithmetic)));
+            Assert.That(basket.OpenPositions, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void AggregateValuationEqualsThePerLegSums()
+        {
+            var h = new Harness();
+            var basket = h.PingPongFourLegs();
+            h.AtUpper();                                   // BUY 0.06 @ 2020, hard-BE
+            Assert.That(basket.OpenPositions, Is.EqualTo(5));
+            Assert.That(basket.BuyNotional, Is.EqualTo(0.01m * 2020m + 0.03m * 2020m + 0.06m * 2020m));
+            Assert.That(basket.SellNotional, Is.EqualTo(0.02m * 1980m + 0.04m * 1980m));
+
+            var quote = new Quote(Harness.T0.AddMinutes(5), 2003.1m, 2003.37m);
+            var perLeg = 0m;
+            foreach (var leg in basket.Legs) perLeg += BasketEconomics.CurrentLegProfit(leg, quote, 100m);
+            Assert.That(BasketEconomics.RawProfit(basket, quote, h.Parameters), Is.EqualTo(perLeg));
+
+            var costly = h.Parameters with { CommissionPerLot = 7m, Slippage = 0.13m };
+            var target = new TargetPrices(basket.LowerTarget, 0.27m);
+            var perLegProjected = 0m;
+            foreach (var leg in basket.Legs) perLegProjected += BasketEconomics.ProjectedLegProfit(leg.Side, leg.Lots, leg.EntryPrice, leg.AccruedSwap, target, costly);
+            Assert.That(BasketEconomics.ProjectedExistingProfit(basket, target, costly), Is.EqualTo(perLegProjected));
         }
 
         [Test]
@@ -112,8 +141,8 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.BasketsClosed, Is.Empty);
             h.Feed(TwoLegs.BidForProfit(1.5m), TwoLegs.BidForProfit(1.5m) + 0.2m);
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].RawProfit, Is.EqualTo(1.5m));
-            Assert.That(h.BasketsClosed[0].ExitProfit, Is.EqualTo(1m));
+            Assert.That(h.BasketsClosed[0].Record.RawProfit, Is.EqualTo(1.5m));
+            Assert.That(h.BasketsClosed[0].Record.ExitProfit, Is.EqualTo(1m));
         }
 
         [Test]
@@ -225,22 +254,23 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void LegFilledAfterTheRolloverInstantIsNotChargedForIt()
+        public void LegOpenedAfterAnUnprocessedRolloverInstantIsNotChargedForIt()
         {
             var h = new Harness(WithBuySwap(-2m, null) with { SellSwapPerLotPerDay = 1m });
             h.FeedAt(Tuesday, 1999.9m, 2000.1m);
             h.FeedAt(Tuesday.AddSeconds(1), 2019.8m, 2020m);                       // BUY 0.01, charged from Tue 17:00
-            h.Executor.EntryOverride = _ => ExecutionResult.Pending();
-            h.FeedAt(new DateTime(2024, 1, 2, 16, 59, 59), 1980m, 1980.2m);      // SELL 0.02 submitted, pending
-            h.Engine.ConfirmPendingEntry(1980m, 0.02m, new DateTime(2024, 1, 2, 17, 0, 30)); // filled after the rollover
+            var basket = h.Engine.Basket!;
+            // a leg stamped after the rollover instant, added before any quote processed that rollover
+            basket.AddLeg(new BasketLeg(2, TradeSide.Sell, 0.02m, 1980m, new DateTime(2024, 1, 2, 17, 0, 30), SizingRegime.Arithmetic));
 
             h.FeedAt(new DateTime(2024, 1, 2, 17, 1, 0), 2000m, 2000.2m);        // Tuesday rollover is processed now
 
-            var basket = h.Engine.Basket!;
             Assert.That(basket.Legs[0].AccruedSwap, Is.EqualTo(-0.02m));
             Assert.That(basket.Legs[1].AccruedSwap, Is.EqualTo(0m), "opened after the rollover instant");
+            Assert.That(basket.AccruedSwapTotal, Is.EqualTo(-0.02m));
             h.FeedAt(new DateTime(2024, 1, 3, 17, 0, 0), 2000m, 2000.2m);
             Assert.That(basket.Legs[1].AccruedSwap, Is.EqualTo(0.02m));
+            Assert.That(basket.AccruedSwapTotal, Is.EqualTo(-0.04m + 0.02m));
         }
 
         [Test]

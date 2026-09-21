@@ -43,9 +43,9 @@ namespace MarketLab.SingleAnchor.Tests
             var at = h.Feed(TwoLegs.BidForProfit(1m), TwoLegs.BidForProfit(1m) + 0.2m);
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
             var closed = h.BasketsClosed[0];
-            Assert.That(closed.Reason, Is.EqualTo(ExitReason.Escape));
-            Assert.That(closed.Threshold, Is.EqualTo(1m), "0.05 units * 20 step money");
-            Assert.That(closed.ExitProfit, Is.EqualTo(1m));
+            Assert.That(closed.Record.Reason, Is.EqualTo(ExitReason.Escape));
+            Assert.That(closed.Record.Threshold, Is.EqualTo(1m), "0.05 units * 20 step money");
+            Assert.That(closed.Record.ExitProfit, Is.EqualTo(1m));
             Assert.That(closed.Quote, Is.EqualTo(at));
             Assert.That(closed.Basket, Is.SameAs(basket));
             Assert.That(h.Executor.Closes, Has.Count.EqualTo(1));
@@ -68,7 +68,7 @@ namespace MarketLab.SingleAnchor.Tests
             one.AtUpper();
             one.Feed(2100m, 2100.2m);
             Assert.That(one.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(one.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.Escape));
+            Assert.That(one.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Escape));
         }
 
         [Test]
@@ -89,8 +89,8 @@ namespace MarketLab.SingleAnchor.Tests
             var bid = (37.988m - 0.02m) / 0.02m; // profit 2
             h.Feed(bid, bid + 0.2m);
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].Threshold, Is.EqualTo(2m));
-            Assert.That(h.BasketsClosed[0].ExitProfit, Is.EqualTo(2m));
+            Assert.That(h.BasketsClosed[0].Record.Threshold, Is.EqualTo(2m));
+            Assert.That(h.BasketsClosed[0].Record.ExitProfit, Is.EqualTo(2m));
             Assert.That(h.BasketsClosed[0].Basket, Is.SameAs(basket));
         }
     }
@@ -115,8 +115,8 @@ namespace MarketLab.SingleAnchor.Tests
 
             h.Feed(TwoLegs.BidForProfit(40m), TwoLegs.BidForProfit(40m) + 0.2m);
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.FixedTakeProfit));
-            Assert.That(h.BasketsClosed[0].Threshold, Is.EqualTo(40m));
+            Assert.That(h.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.FixedTakeProfit));
+            Assert.That(h.BasketsClosed[0].Record.Threshold, Is.EqualTo(40m));
             Assert.That(h.Engine.Basket, Is.Null);
         }
     }
@@ -179,9 +179,9 @@ namespace MarketLab.SingleAnchor.Tests
             var quote = h.Feed(2045m, 2045.2m); // 25 <= 25
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
             var closed = h.BasketsClosed[0];
-            Assert.That(closed.Reason, Is.EqualTo(ExitReason.Trailing));
-            Assert.That(closed.Threshold, Is.EqualTo(25m), "peak 30 minus 0.25 units * 20");
-            Assert.That(closed.ExitProfit, Is.EqualTo(25m));
+            Assert.That(closed.Record.Reason, Is.EqualTo(ExitReason.Trailing));
+            Assert.That(closed.Record.Threshold, Is.EqualTo(25m), "peak 30 minus 0.25 units * 20");
+            Assert.That(closed.Record.ExitProfit, Is.EqualTo(25m));
             Assert.That(closed.Quote, Is.EqualTo(quote));
         }
 
@@ -216,7 +216,7 @@ namespace MarketLab.SingleAnchor.Tests
             var h = OneLong(Harness.Defaults() with { TrailingDropUnits = 0m });
             h.Feed(2030m, 2030.2m);
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.Trailing));
+            Assert.That(h.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Trailing));
         }
     }
 
@@ -235,7 +235,7 @@ namespace MarketLab.SingleAnchor.Tests
             var quote = h.AtLower();             // profit -40 <= 10 AND bid <= Lower
 
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.Trailing));
+            Assert.That(h.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Trailing));
             Assert.That(h.BasketsClosed[0].Quote, Is.EqualTo(quote));
             Assert.That(basket.OpenPositions, Is.EqualTo(1), "no SELL was added to the closing basket");
             Assert.That(h.Executor.Entries, Has.Count.EqualTo(1));
@@ -248,11 +248,11 @@ namespace MarketLab.SingleAnchor.Tests
         {
             var h = TwoLegs.Build(Harness.Defaults() with { FixedTakeProfitUnits = 1m }); // TP 20, escape 1
             h.Feed(1900m, 1900.2m);              // profit 39.6 satisfies both
-            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.Escape));
+            Assert.That(h.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Escape));
 
             var noEscape = TwoLegs.Build(Harness.Defaults() with { EscapeEnabled = false, FixedTakeProfitUnits = 1m });
             noEscape.Feed(1900m, 1900.2m);
-            Assert.That(noEscape.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.FixedTakeProfit));
+            Assert.That(noEscape.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.FixedTakeProfit));
         }
 
         /// <summary>
@@ -265,18 +265,20 @@ namespace MarketLab.SingleAnchor.Tests
         /// </summary>
         private static Harness TakeProfitAndTrailingBothFiring(decimal fixedTakeProfitUnits)
         {
-            var h = new Harness(Harness.Defaults() with { EscapeEnabled = false, FixedTakeProfitUnits = fixedTakeProfitUnits, TrailingDropUnits = 3m });
-            h.Executor.EntryOverride = o => ExecutionResult.Fill(o.Side == TradeSide.Buy ? o.Quote.Ask : o.Quote.Bid, o.TradeNumber == 1 ? 0.05m : 0.04m);
+            var h = new Harness(Harness.Defaults() with { BaseLot = 0.05m, EscapeEnabled = false, FixedTakeProfitUnits = fixedTakeProfitUnits, TrailingDropUnits = 3m });
             h.Anchor();
             h.AtUpper();                          // BUY 0.05 @ 2020
             h.Feed(2039m, 2039.2m);               // profit 95: trailing active, peak 95
             var basket = h.Engine.Basket!;
             Assert.That(basket.TrailingActive, Is.True);
             Assert.That(basket.PeakProfit, Is.EqualTo(95m));
-            h.AtLower();                          // profit -200 > floor -205; SELL 0.04 @ 1980 added
+            // a SELL 0.04 leg added straight to the ledger: net +0.01 shrinks M_step from 100 to 20
+            basket.AddLeg(new BasketLeg(2, TradeSide.Sell, 0.04m, 1980m, Harness.T0.AddSeconds(3), SizingRegime.Arithmetic));
             Assert.That(basket.OpenPositions, Is.EqualTo(2));
             Assert.That(basket.NetLots, Is.EqualTo(0.01m));
             Assert.That(BasketEconomics.StepMoney(basket, h.Parameters), Is.EqualTo(20m));
+            Assert.That(basket.TrailingActive, Is.True, "a new leg does not reset trailing");
+            Assert.That(basket.PeakProfit, Is.EqualTo(95m));
             Assert.That(h.BasketsClosed, Is.Empty);
             return h;
         }
@@ -287,9 +289,9 @@ namespace MarketLab.SingleAnchor.Tests
             var h = TakeProfitAndTrailingBothFiring(1m);
             var quote = h.Feed(2210.8m, 2211m);   // profit 5 * 190.8 + 4 * (1980 - 2211) = 30
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].ExitProfit, Is.EqualTo(30m));
-            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.FixedTakeProfit));
-            Assert.That(h.BasketsClosed[0].Threshold, Is.EqualTo(20m));
+            Assert.That(h.BasketsClosed[0].Record.ExitProfit, Is.EqualTo(30m));
+            Assert.That(h.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.FixedTakeProfit));
+            Assert.That(h.BasketsClosed[0].Record.Threshold, Is.EqualTo(20m));
             Assert.That(h.BasketsClosed[0].Quote, Is.EqualTo(quote));
         }
 
@@ -299,8 +301,8 @@ namespace MarketLab.SingleAnchor.Tests
             var h = TakeProfitAndTrailingBothFiring(0m);
             h.Feed(2210.8m, 2211m);
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.Trailing));
-            Assert.That(h.BasketsClosed[0].Threshold, Is.EqualTo(35m), "peak 95 minus 3 units * 20");
+            Assert.That(h.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Trailing));
+            Assert.That(h.BasketsClosed[0].Record.Threshold, Is.EqualTo(35m), "peak 95 minus 3 units * 20");
         }
 
         [Test]
@@ -309,7 +311,7 @@ namespace MarketLab.SingleAnchor.Tests
             var h = TwoLegs.Build(Harness.Defaults() with { EscapeEnabled = false }); // TP off
             h.Feed(TwoLegs.BidForProfit(12m), TwoLegs.BidForProfit(12m) + 0.2m); // activate, peak 12, floor 7
             h.Feed(TwoLegs.BidForProfit(7m), TwoLegs.BidForProfit(7m) + 0.2m);
-            Assert.That(h.BasketsClosed[0].Reason, Is.EqualTo(ExitReason.Trailing));
+            Assert.That(h.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Trailing));
         }
     }
 }

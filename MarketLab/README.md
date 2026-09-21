@@ -472,7 +472,12 @@ tests; both are built with plain `dotnet build` / `dotnet test` on top of the
 engine build and run through this helper with `-AlgorithmLocation
 MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll
 -AlgorithmTypeName SingleAnchorVNextAlgorithm` plus the `single-anchor-*`
-parameters. [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md)
+parameters. LEAN is the data and time host only: the strategy engine keeps its
+own hedged basket ledger and fills deterministically from the quotes, places no
+LEAN order, and writes its own results (`storage\single-anchor\results.json`
+in the run directory and the algorithm log); LEAN's statistics for such a run
+show an empty portfolio and are not strategy results.
+[SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md)
 has the commands, the parameter names, the deferred items and a validation
 record. Its default dates lie inside upstream's shipped Oanda XAUUSD tick
 sample (`Data\cfd\oanda\tick\xauusd`, May 2014, an engine fixture like the

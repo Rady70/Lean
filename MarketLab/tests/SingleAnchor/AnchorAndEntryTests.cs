@@ -178,15 +178,42 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void WhenBothBoundariesAreSatisfiedTheBuyConditionIsCheckedFirst()
+        public void WhenBothBoundariesAreSatisfiedNoSideIsChosen()
         {
+            // The specification defines no priority between the two entry rules; a quote wide
+            // enough to satisfy both (spread >= 2 steps) opens nothing and is reported once.
             var h = new Harness();
             h.Anchor();
             h.Feed(1979m, 2021m);
+            h.Feed(1978m, 2022m);
 
             var basket = h.Engine.Basket!;
+            Assert.That(basket.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.Executor.Entries, Is.Empty);
+            Assert.That(h.EntriesRejected, Has.Count.EqualTo(1));
+            Assert.That(h.EntriesRejected[0].Rejection.Reason, Is.EqualTo(EntryRejectionReason.AmbiguousBoundaries));
+            Assert.That(h.EntriesRejected[0].Rejection.Side, Is.Null);
+            Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(2));
+
+            h.AtLower();                       // one boundary only: opens normally
             Assert.That(basket.OpenPositions, Is.EqualTo(1));
-            Assert.That(basket.Legs[0].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(basket.Legs[0].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(basket.LastRejection, Is.Null);
+        }
+
+        [Test]
+        public void AmbiguityOnlyConcernsTheFirstEntry()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.AtUpper();                       // BUY 1: the next side is fixed
+            h.Feed(1979m, 2021m);              // both boundaries, but only a SELL is possible now
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.OpenPositions, Is.EqualTo(2));
+            Assert.That(basket.Legs[1].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(basket.Legs[1].EntryPrice, Is.EqualTo(1979m));
+            Assert.That(h.EntriesRejected, Is.Empty);
         }
 
         [Test]
@@ -237,23 +264,29 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void EntryCanTriggerOnTheAnchoringQuoteOnlyWhenTheSpreadCoversTheStep()
+        public void AnchoringQuoteCannotOpenALegUnlessTheStepIsInsideTheSpread()
         {
             // The anchor is the midpoint, so a step wider than half the spread cannot trigger on
-            // the anchoring quote itself; a step inside the spread can (both levels inside the quote).
+            // the anchoring quote itself. A step inside the spread puts both levels inside the
+            // quote, which is the ambiguous case: still nothing opens on that quote.
             var h = new Harness();
             h.Feed(1999.9m, 2000.1m);
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.EntriesRejected, Is.Empty);
 
-            var wide = new Harness(new SingleAnchorParameters
+            var narrow = new Harness(new SingleAnchorParameters
             {
                 StepPercent = 0.001m, // step 0.02 on a 2000 anchor, spread 0.2
                 BaseLot = 0.01m,
                 PointValuePerLot = 100m
             });
-            wide.Feed(1999.9m, 2000.1m);
-            Assert.That(wide.Engine.Basket!.OpenPositions, Is.EqualTo(1));
-            Assert.That(wide.Engine.Basket!.Legs[0].Side, Is.EqualTo(TradeSide.Buy));
+            narrow.Feed(1999.9m, 2000.1m);
+            Assert.That(narrow.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            Assert.That(narrow.EntriesRejected[0].Rejection.Reason, Is.EqualTo(EntryRejectionReason.AmbiguousBoundaries));
+
+            narrow.Feed(2000m, 2000.1m);      // Ask >= 2000.02, Bid > 1999.98: a plain BUY
+            Assert.That(narrow.Engine.Basket!.OpenPositions, Is.EqualTo(1));
+            Assert.That(narrow.Engine.Basket!.Legs[0].Side, Is.EqualTo(TradeSide.Buy));
         }
     }
 
@@ -320,7 +353,7 @@ namespace MarketLab.SingleAnchor.Tests
         public void EngineRefusesInvalidParameters()
         {
             var invalid = new SingleAnchorParameters { StepPercent = 1m, BaseLot = 0.01m }; // no point value
-            Assert.Throws<ArgumentException>(() => new SingleAnchorEngine(invalid, new SyntheticExecutor()));
+            Assert.Throws<ArgumentException>(() => new SingleAnchorEngine(invalid));
         }
 
         private static System.Collections.Generic.IReadOnlyList<string> With(Action<Mutable> mutate)

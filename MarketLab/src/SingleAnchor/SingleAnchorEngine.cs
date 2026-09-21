@@ -1,13 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace MarketLab.SingleAnchor
 {
     /// <summary>
     /// The SingleAnchor vNext state machine (specification section 16), independent of any host.
-    /// Feed it one <see cref="Quote"/> at a time through <see cref="OnQuote"/>; it decides, asks the
-    /// <see cref="IBasketExecutor"/> to execute, and keeps its own basket ledger. A quote that
-    /// neither triggers an entry nor fires an exit costs one pass over the open legs and no
+    /// Feed it one <see cref="Quote"/> at a time through <see cref="OnQuote"/>; it decides, has the
+    /// <see cref="IBasketExecutor"/> fill, and keeps its own basket ledger: the strategy's truth,
+    /// never a host's netted holding. A quote that neither triggers an entry nor fires an exit
+    /// costs a constant amount of work (the basket is valued from its aggregates) and no
     /// allocation; a trigger quote whose entry stays infeasible re-runs the sizing and records the
     /// attempt without raising a second event for the same situation.
     /// </summary>
@@ -17,42 +19,18 @@ namespace MarketLab.SingleAnchor
     /// <item>reject an invalid or out-of-order quote explicitly;</item>
     /// <item>with no basket, anchor a new one on this quote's midpoint;</item>
     /// <item>accrue configured swap for the legs that crossed a rollover;</item>
-    /// <item>while an execution is pending with the host, observe only;</item>
     /// <item>with open legs: escape, then fixed take-profit, then trailing; a close ends the quote
     /// (no replacement basket on the same quote); a failed close also ends the quote;</item>
-    /// <item>otherwise evaluate the next alternating entry.</item>
+    /// <item>otherwise evaluate the next alternating entry; a tail fill is verified against the
+    /// hard-BE requirement with its actual price.</item>
     /// </list>
     /// </remarks>
     public sealed class SingleAnchorEngine
     {
-        private sealed class PendingEntry
-        {
-            public PendingEntry(EntryOrder order) { Order = order; }
-            public EntryOrder Order { get; }
-            public bool SkipReported { get; set; }
-        }
-
-        private sealed class PendingClose
-        {
-            public PendingClose(CloseOrder order, decimal rawProfit, decimal exitProfit, decimal threshold)
-            {
-                Order = order;
-                RawProfit = rawProfit;
-                ExitProfit = exitProfit;
-                Threshold = threshold;
-            }
-            public CloseOrder Order { get; }
-            public decimal RawProfit { get; }
-            public decimal ExitProfit { get; }
-            public decimal Threshold { get; }
-            public bool SkipReported { get; set; }
-        }
-
         private readonly SingleAnchorParameters _p;
         private readonly IBasketExecutor _executor;
+        private readonly List<BasketCloseRecord> _closedBaskets = new List<BasketCloseRecord>();
         private Basket? _basket;
-        private PendingEntry? _pendingEntry;
-        private PendingClose? _pendingClose;
         private DateTime _lastQuoteTime;
         private bool _hasQuote;
 
@@ -66,20 +44,23 @@ namespace MarketLab.SingleAnchor
             _p.Validate();
         }
 
+        /// <summary>Creates an engine with the deterministic <see cref="ResearchExecutor"/>.</summary>
+        public SingleAnchorEngine(SingleAnchorParameters parameters)
+            : this(parameters, new ResearchExecutor(parameters ?? throw new ArgumentNullException(nameof(parameters))))
+        {
+        }
+
         /// <summary>The validated parameters.</summary>
         public SingleAnchorParameters Parameters => _p;
 
         /// <summary>The current basket (anchored, with or without legs), or null between baskets.</summary>
         public Basket? Basket => _basket;
 
-        /// <summary>The entry order awaiting the host's fill, if any.</summary>
-        public EntryOrder? PendingEntryOrder => _pendingEntry?.Order;
+        /// <summary>The strategy's own record of every closed basket, in closing order.</summary>
+        public IReadOnlyList<BasketCloseRecord> ClosedBaskets => _closedBaskets;
 
-        /// <summary>The close order awaiting the host's fill, if any.</summary>
-        public CloseOrder? PendingCloseOrder => _pendingClose?.Order;
-
-        /// <summary>True while an entry or a close is pending with the host.</summary>
-        public bool HasPendingExecution => _pendingEntry != null || _pendingClose != null;
+        /// <summary>Sum of the realized executable profit of every closed basket.</summary>
+        public decimal RealizedProfit { get; private set; }
 
         /// <summary>Quotes accepted by <see cref="OnQuote"/>.</summary>
         public long QuotesProcessed { get; private set; }
@@ -96,35 +77,32 @@ namespace MarketLab.SingleAnchor
         /// <summary>Baskets closed by an exit rule.</summary>
         public long BasketsClosed { get; private set; }
 
+        /// <summary>Tail fills that left the hard-BE requirement unmet (see <see cref="HardBreakevenViolated"/>).</summary>
+        public long HardBreakevenViolations { get; private set; }
+
         /// <summary>Raised when a basket is anchored.</summary>
         public event Action<AnchorCreatedEvent>? AnchorCreated;
 
         /// <summary>Raised when a leg is filled and added to the basket.</summary>
         public event Action<EntryOpenedEvent>? EntryOpened;
 
-        /// <summary>Raised when the host accepts an entry order it will fill later.</summary>
-        public event Action<EntryPendingEvent>? EntryPending;
-
         /// <summary>Raised once per distinct rejected-entry situation, including hard-BE infeasibility.</summary>
         public event Action<EntryRejectedEvent>? EntryRejected;
+
+        /// <summary>Raised when a tail fill fails the hard-BE verification with its actual price.</summary>
+        public event Action<HardBreakevenViolatedEvent>? HardBreakevenViolated;
 
         /// <summary>Raised when trailing activates.</summary>
         public event Action<TrailingActivatedEvent>? TrailingActivated;
 
-        /// <summary>Raised when the host accepts a close order it will fill later.</summary>
-        public event Action<BasketClosePendingEvent>? BasketClosePending;
-
         /// <summary>Raised when a basket is closed.</summary>
         public event Action<BasketClosedEvent>? BasketClosed;
 
-        /// <summary>Raised when the host could not close the basket.</summary>
+        /// <summary>Raised when the executor could not close the basket.</summary>
         public event Action<BasketCloseFailedEvent>? BasketCloseFailed;
 
         /// <summary>Raised when a quote is ignored.</summary>
         public event Action<InvalidQuoteEvent>? InvalidQuote;
-
-        /// <summary>Raised once per pending execution when quotes arrive while it is outstanding.</summary>
-        public event Action<QuoteSkippedWhilePendingEvent>? QuoteSkippedWhilePending;
 
         /// <summary>
         /// Processes one quote. Returns without side effects for an invalid or out-of-order quote.
@@ -155,29 +133,7 @@ namespace MarketLab.SingleAnchor
             if (basket.OpenPositions > 0)
             {
                 AccrueSwap(basket, quote);
-            }
 
-            if (_pendingEntry != null)
-            {
-                if (!_pendingEntry.SkipReported)
-                {
-                    _pendingEntry.SkipReported = true;
-                    QuoteSkippedWhilePending.Raise(new QuoteSkippedWhilePendingEvent(basket, quote, $"Entry order for trade {_pendingEntry.Order.TradeNumber} ({_pendingEntry.Order.Side} {F(_pendingEntry.Order.Lots)}) is still pending; observing only."));
-                }
-                return;
-            }
-            if (_pendingClose != null)
-            {
-                if (!_pendingClose.SkipReported)
-                {
-                    _pendingClose.SkipReported = true;
-                    QuoteSkippedWhilePending.Raise(new QuoteSkippedWhilePendingEvent(basket, quote, $"Close order ({_pendingClose.Order.Reason}) is still pending; observing only."));
-                }
-                return;
-            }
-
-            if (basket.OpenPositions > 0)
-            {
                 var rawProfit = BasketEconomics.RawProfit(basket, quote, _p);
                 var exitProfit = rawProfit - BasketEconomics.CommissionBufferAmount(basket, _p);
                 var stepMoney = BasketEconomics.StepMoney(basket, _p);
@@ -185,72 +141,25 @@ namespace MarketLab.SingleAnchor
                 if (reason != ExitReason.None)
                 {
                     var close = new CloseOrder(basket, reason, quote);
-                    var result = _executor.CloseBasket(close);
-                    switch (result.Status)
+                    var execution = _executor.CloseBasket(close);
+                    if (execution.Succeeded && execution.BuyClosePrice > 0m && execution.SellClosePrice > 0m)
                     {
-                        case ExecutionStatus.Filled:
-                            FinalizeClose(close, rawProfit, exitProfit, threshold, result.FillPrice > 0m ? result.FillPrice : null);
-                            break;
-                        case ExecutionStatus.Pending:
-                            _pendingClose = new PendingClose(close, rawProfit, exitProfit, threshold);
-                            BasketClosePending.Raise(new BasketClosePendingEvent(basket, reason, quote));
-                            break;
-                        default:
-                            BasketCloseFailed.Raise(new BasketCloseFailedEvent(basket, reason, quote, result.Message ?? "The host rejected the close order."));
-                            break;
+                        FinalizeClose(close, rawProfit, exitProfit, threshold, execution);
                     }
-                    // A close that fired ends the quote whether it filled, is pending or failed:
-                    // no replacement basket and no new leg on the same quote.
+                    else
+                    {
+                        var message = execution.Succeeded
+                            ? $"The executor reported non-positive close prices ({F(execution.BuyClosePrice)} / {F(execution.SellClosePrice)})."
+                            : execution.Message ?? "The executor rejected the close.";
+                        BasketCloseFailed.Raise(new BasketCloseFailedEvent(basket, reason, quote, message));
+                    }
+                    // A close that fired ends the quote whether it succeeded or failed: no
+                    // replacement basket and no new leg on the same quote.
                     return;
                 }
             }
 
             EvaluateEntry(basket, quote);
-        }
-
-        /// <summary>
-        /// Reports the fill of the pending entry order. The leg is recorded with the actual fill.
-        /// </summary>
-        public void ConfirmPendingEntry(decimal fillPrice, decimal filledLots, DateTime fillTime)
-        {
-            var pending = _pendingEntry ?? throw new InvalidOperationException("No entry order is pending.");
-            _pendingEntry = null;
-            var basket = _basket ?? throw new InvalidOperationException("An entry was pending without a basket.");
-            RecordFill(basket, pending.Order, fillPrice, filledLots, fillTime);
-        }
-
-        /// <summary>
-        /// Reports that the pending entry order was rejected or cancelled; the grid stays where it was.
-        /// </summary>
-        public void RejectPendingEntry(string message)
-        {
-            var pending = _pendingEntry ?? throw new InvalidOperationException("No entry order is pending.");
-            _pendingEntry = null;
-            var basket = _basket ?? throw new InvalidOperationException("An entry was pending without a basket.");
-            var order = pending.Order;
-            Reject(basket, order.Quote, new EntryRejection(order.TradeNumber, order.Side, EntryRejectionReason.ExecutionFailed, order.Lots, message ?? "The pending entry order was rejected.", order.Sizing));
-        }
-
-        /// <summary>
-        /// Reports the fill of the pending close order; the basket is closed and reset.
-        /// </summary>
-        public void ConfirmPendingClose(decimal? hostFillPrice)
-        {
-            var pending = _pendingClose ?? throw new InvalidOperationException("No close order is pending.");
-            _pendingClose = null;
-            FinalizeClose(pending.Order, pending.RawProfit, pending.ExitProfit, pending.Threshold, hostFillPrice);
-        }
-
-        /// <summary>
-        /// Reports that the pending close order was rejected or cancelled; the basket stays open and
-        /// the exit rules are evaluated again on the next quote.
-        /// </summary>
-        public void RejectPendingClose(string message)
-        {
-            var pending = _pendingClose ?? throw new InvalidOperationException("No close order is pending.");
-            _pendingClose = null;
-            var order = pending.Order;
-            BasketCloseFailed.Raise(new BasketCloseFailedEvent(order.Basket, order.Reason, order.Quote, message ?? "The pending close order was rejected."));
         }
 
         /// <summary>
@@ -265,8 +174,11 @@ namespace MarketLab.SingleAnchor
                 return null;
             }
             var raw = BasketEconomics.RawProfit(basket, quote, _p);
+            var (buyClose, sellClose) = BasketEconomics.ExecutableClosePrices(quote, _p);
             return new BasketValuation(quote, basket.OpenPositions, basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots,
-                raw, raw - BasketEconomics.CommissionBufferAmount(basket, _p), BasketEconomics.StepMoney(basket, _p),
+                raw, raw - BasketEconomics.CommissionBufferAmount(basket, _p),
+                BasketEconomics.ExecutableProfit(basket, buyClose, sellClose, _p),
+                BasketEconomics.StepMoney(basket, _p),
                 basket.HardBreakevenModeActive, basket.TrailingActive, basket.PeakProfit);
         }
 
@@ -315,10 +227,18 @@ namespace MarketLab.SingleAnchor
             TradeSide side;
             if (basket.OpenPositions == 0)
             {
-                // Either boundary opens the basket; the BUY condition is checked first, as written
-                // in specification section 3, for the rare quote that satisfies both.
-                if (quote.Ask >= basket.Upper) side = TradeSide.Buy;
-                else if (quote.Bid <= basket.Lower) side = TradeSide.Sell;
+                var buyTriggered = quote.Ask >= basket.Upper;
+                var sellTriggered = quote.Bid <= basket.Lower;
+                if (buyTriggered && sellTriggered)
+                {
+                    // Both entry rules of section 3 hold on one quote (spread >= 2 steps). The
+                    // specification defines no priority between them, so nothing is opened.
+                    Reject(basket, quote, new EntryRejection(basket.NextTradeNumber, null, EntryRejectionReason.AmbiguousBoundaries, 0m,
+                        $"Quote {quote} satisfies both Ask >= Upper ({F(basket.Upper)}) and Bid <= Lower ({F(basket.Lower)}); no side is chosen and no leg is opened.", null));
+                    return;
+                }
+                if (buyTriggered) side = TradeSide.Buy;
+                else if (sellTriggered) side = TradeSide.Sell;
                 else return;
             }
             else
@@ -336,7 +256,8 @@ namespace MarketLab.SingleAnchor
             {
                 regime = SizingRegime.Arithmetic;
                 var requested = _p.BaseLot * tradeNumber;
-                lots = Math.Max(VolumeMath.RoundToNearestStep(requested, _p.VolumeStep), _p.MinimumVolume);
+                // Broker normalization never reduces the requested progression: round upward.
+                lots = Math.Max(VolumeMath.CeilToStep(requested, _p.VolumeStep), _p.MinimumVolume);
                 if (lots > _p.MaximumVolume)
                 {
                     Reject(basket, quote, new EntryRejection(tradeNumber, side, EntryRejectionReason.VolumeExceedsMaximum, lots,
@@ -358,45 +279,46 @@ namespace MarketLab.SingleAnchor
             }
 
             var order = new EntryOrder(tradeNumber, side, lots, quote, regime, sizing);
-            var result = _executor.OpenPosition(order);
-            switch (result.Status)
+            var execution = _executor.OpenPosition(order);
+            if (!execution.Succeeded)
             {
-                case ExecutionStatus.Filled:
-                    RecordFill(basket, order, result.FillPrice, result.FilledLots, quote.Time);
-                    break;
-                case ExecutionStatus.Pending:
-                    _pendingEntry = new PendingEntry(order);
-                    EntryPending.Raise(new EntryPendingEvent(basket, order));
-                    break;
-                default:
-                    Reject(basket, quote, new EntryRejection(tradeNumber, side, EntryRejectionReason.ExecutionFailed, lots, result.Message ?? "The host rejected the entry order.", sizing));
-                    break;
+                Reject(basket, quote, new EntryRejection(tradeNumber, side, EntryRejectionReason.ExecutionFailed, lots, execution.Message ?? "The executor rejected the entry.", sizing));
+                return;
             }
-        }
-
-        private void RecordFill(Basket basket, EntryOrder order, decimal fillPrice, decimal filledLots, DateTime fillTime)
-        {
-            if (fillPrice <= 0m || filledLots <= 0m)
+            if (execution.FillPrice <= 0m)
             {
-                Reject(basket, order.Quote, new EntryRejection(order.TradeNumber, order.Side, EntryRejectionReason.ExecutionFailed, order.Lots,
-                    $"The host reported an unusable fill for trade {order.TradeNumber}: price {F(fillPrice)}, lots {F(filledLots)}.", order.Sizing));
+                Reject(basket, quote, new EntryRejection(tradeNumber, side, EntryRejectionReason.ExecutionFailed, lots,
+                    $"The executor reported a non-positive fill price ({F(execution.FillPrice)}) for trade {tradeNumber}.", sizing));
                 return;
             }
 
-            var leg = new BasketLeg(order.TradeNumber, order.Side, filledLots, fillPrice, fillTime, order.Regime);
+            var leg = new BasketLeg(tradeNumber, side, lots, execution.FillPrice, quote.Time, regime);
             basket.AddLeg(leg);
             if (_p.SwapConfigured && basket.OpenPositions == 1)
             {
-                basket.NextRolloverTime = NextRolloverAfter(fillTime);
+                basket.NextRolloverTime = NextRolloverAfter(quote.Time);
             }
             EntriesOpened++;
-            EntryOpened.Raise(new EntryOpenedEvent(basket, leg, order.Quote, order.Sizing));
+            EntryOpened.Raise(new EntryOpenedEvent(basket, leg, quote, sizing));
+
+            if (sizing != null)
+            {
+                // The hard-BE requirement is re-verified with the actual fill: the projected
+                // executable basket P/L at the fixed target must be non-negative after the leg.
+                var afterFill = BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, _p);
+                if (afterFill < 0m)
+                {
+                    basket.HardBreakevenViolations++;
+                    HardBreakevenViolations++;
+                    HardBreakevenViolated.Raise(new HardBreakevenViolatedEvent(basket, leg, sizing, afterFill, quote));
+                }
+            }
         }
 
         private void Reject(Basket basket, in Quote quote, EntryRejection rejection)
         {
             RejectedEntryAttempts++;
-            var isNew = !rejection.SameSituationAs(basket.LastRejection);
+            var isNew = !rejection.SameSituationAs(basket.LastRejection, _p.VolumeStep);
             basket.LastRejection = rejection;
             if (isNew)
             {
@@ -405,11 +327,20 @@ namespace MarketLab.SingleAnchor
             }
         }
 
-        private void FinalizeClose(CloseOrder order, decimal rawProfit, decimal exitProfit, decimal threshold, decimal? hostFillPrice)
+        private void FinalizeClose(CloseOrder order, decimal rawProfit, decimal exitProfit, decimal threshold, in CloseExecution execution)
         {
+            var basket = order.Basket;
+            var commission = _p.CommissionPerLot * basket.GrossLots;
+            var realized = BasketEconomics.ExecutableProfit(basket, execution.BuyClosePrice, execution.SellClosePrice, _p);
+            var record = new BasketCloseRecord(basket.CreatedTime, order.Quote.Time, basket.Anchor, order.Reason, basket.OpenPositions,
+                basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots, basket.HardBreakevenModeActive, basket.HardBreakevenViolations,
+                rawProfit, exitProfit, threshold, execution.BuyClosePrice, execution.SellClosePrice, basket.AccruedSwapTotal, commission, realized);
+
             _basket = null;
+            _closedBaskets.Add(record);
+            RealizedProfit += realized;
             BasketsClosed++;
-            BasketClosed.Raise(new BasketClosedEvent(order.Basket, order.Reason, order.Quote, rawProfit, exitProfit, threshold, hostFillPrice));
+            BasketClosed.Raise(new BasketClosedEvent(basket, record, order.Quote));
         }
 
         private void AccrueSwap(Basket basket, in Quote quote)
@@ -418,13 +349,14 @@ namespace MarketLab.SingleAnchor
             var next = basket.NextRolloverTime.Value;
             if (next > quote.Time) return;
 
+            // Rollovers are rare (at most one per day), so the per-leg pass here is not on the
+            // per-quote path; it keeps each leg's own accrued swap for audit.
             var legs = basket.Legs;
             while (next <= quote.Time)
             {
                 // The rollover at instant R ends the trading day that contains R - 1 tick. Weekend
                 // days are never charged; the configured triple-swap day is charged three times;
-                // only legs opened strictly before R are charged (a fill reported after R, from a
-                // pending order, is not).
+                // only legs opened strictly before R are charged.
                 var closingDay = next.AddTicks(-1).DayOfWeek;
                 if (closingDay != DayOfWeek.Saturday && closingDay != DayOfWeek.Sunday)
                 {
@@ -434,7 +366,7 @@ namespace MarketLab.SingleAnchor
                         var leg = legs[i];
                         if (leg.EntryTime >= next) continue;
                         var rate = leg.Side == TradeSide.Buy ? _p.BuySwapPerLotPerDay : _p.SellSwapPerLotPerDay;
-                        leg.AccruedSwap += leg.Lots * rate * multiplier;
+                        basket.AddSwap(leg, leg.Lots * rate * multiplier);
                     }
                 }
                 next = next.AddDays(1);

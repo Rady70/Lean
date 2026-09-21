@@ -108,7 +108,9 @@ namespace MarketLab.SingleAnchor
             var targetMid = side == TradeSide.Buy ? basket.UpperTarget : basket.LowerTarget;
             var spread = parameters.UseObservedSpreadForProjection ? quote.Spread : parameters.ProjectedSpread;
             var target = new TargetPrices(targetMid, spread);
-            var candidateEntry = side == TradeSide.Buy ? quote.Ask + parameters.Slippage : quote.Bid - parameters.Slippage;
+            // The same execution model the research executor fills with, so the projection and the
+            // actual fill agree (the engine re-verifies the invariant after every tail fill).
+            var candidateEntry = BasketEconomics.ExecutableEntryPrice(side, quote, parameters);
             var maximum = parameters.MaximumVolume;
 
             if (!target.IsValid || candidateEntry <= 0m)

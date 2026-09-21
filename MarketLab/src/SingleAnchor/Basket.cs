@@ -9,6 +9,13 @@ namespace MarketLab.SingleAnchor
     /// Everything here stays fixed or accumulates until the basket closes; nothing is recomputed
     /// from later prices (specification sections 2, 6, 13, 15).
     /// </summary>
+    /// <remarks>
+    /// Besides the leg list (kept for audit and reporting) the basket maintains the aggregates
+    /// that make every per-quote valuation constant-time: BUY and SELL lots, the entry-price
+    /// notionals (sum of entry price times lots per side) and the accrued swap total. Every leg
+    /// is a whole number of volume steps, so the signed net exposure is exact and "net-flat" is
+    /// exactly zero.
+    /// </remarks>
     public sealed class Basket
     {
         private readonly List<BasketLeg> _legs = new List<BasketLeg>();
@@ -47,7 +54,7 @@ namespace MarketLab.SingleAnchor
         /// <summary>T_down = A * (1 - C / 100), the hard target for a required SELL.</summary>
         public decimal LowerTarget { get; }
 
-        /// <summary>Legs in entry order.</summary>
+        /// <summary>Legs in entry order (audit; valuations use the aggregates below).</summary>
         public IReadOnlyList<BasketLeg> Legs => _legs;
 
         /// <summary>Number of open positions.</summary>
@@ -59,6 +66,15 @@ namespace MarketLab.SingleAnchor
         /// <summary>Total open SELL volume in lots.</summary>
         public decimal SellLots { get; private set; }
 
+        /// <summary>Sum of entry price times lots over the BUY legs.</summary>
+        public decimal BuyNotional { get; private set; }
+
+        /// <summary>Sum of entry price times lots over the SELL legs.</summary>
+        public decimal SellNotional { get; private set; }
+
+        /// <summary>Swap credited (positive) or charged (negative) to all legs so far, account currency.</summary>
+        public decimal AccruedSwapTotal { get; private set; }
+
         /// <summary>BuyLots + SellLots.</summary>
         public decimal GrossLots => BuyLots + SellLots;
 
@@ -66,11 +82,10 @@ namespace MarketLab.SingleAnchor
         public decimal NetLots => BuyLots - SellLots;
 
         /// <summary>
-        /// True when the signed net exposure is not meaningfully non-zero. Every leg is a whole
-        /// number of volume steps, so a real exposure is at least one step; anything smaller than
-        /// half a step is treated as flat.
+        /// True when the signed net exposure is exactly zero. Every leg is a whole number of
+        /// volume steps and the arithmetic is exact decimal, so no tolerance is needed.
         /// </summary>
-        public bool IsNetFlat => Math.Abs(NetLots) < _volumeStep / 2m;
+        public bool IsNetFlat => NetLots == 0m;
 
         /// <summary>MinLot: the smallest currently open position size, or 0 with no legs.</summary>
         public decimal SmallestOpenLots { get; private set; }
@@ -93,6 +108,13 @@ namespace MarketLab.SingleAnchor
         /// </summary>
         public bool HardBreakevenModeActive { get; private set; }
 
+        /// <summary>
+        /// Number of tail legs whose actual fill left the projected executable basket P/L at the
+        /// hard target negative (the engine verifies every tail fill; with the research executor
+        /// this stays 0 because fills use exactly the sizing model).
+        /// </summary>
+        public int HardBreakevenViolations { get; internal set; }
+
         /// <summary>True after trailing activated (specification section 13).</summary>
         public bool TrailingActive { get; private set; }
 
@@ -107,17 +129,36 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// The most recent rejected entry attempt for this basket, kept so an unchanged
-        /// infeasibility is reported once rather than on every tick; cleared by a filled entry.
+        /// situation is reported once rather than on every quote; cleared by a filled entry.
         /// </summary>
         public EntryRejection? LastRejection { get; internal set; }
 
         internal void AddLeg(BasketLeg leg)
         {
+            if (decimal.Remainder(leg.Lots, _volumeStep) != 0m)
+            {
+                throw new InvalidOperationException($"Leg volume {leg.Lots} is not a whole multiple of the volume step {_volumeStep}.");
+            }
             _legs.Add(leg);
-            if (leg.Side == TradeSide.Buy) BuyLots += leg.Lots; else SellLots += leg.Lots;
+            if (leg.Side == TradeSide.Buy)
+            {
+                BuyLots += leg.Lots;
+                BuyNotional += leg.EntryPrice * leg.Lots;
+            }
+            else
+            {
+                SellLots += leg.Lots;
+                SellNotional += leg.EntryPrice * leg.Lots;
+            }
             SmallestOpenLots = _legs.Count == 1 ? leg.Lots : Math.Min(SmallestOpenLots, leg.Lots);
             LastSide = leg.Side;
             LastRejection = null;
+        }
+
+        internal void AddSwap(BasketLeg leg, decimal amount)
+        {
+            leg.AccruedSwap += amount;
+            AccruedSwapTotal += amount;
         }
 
         internal void ActivateHardBreakevenMode()

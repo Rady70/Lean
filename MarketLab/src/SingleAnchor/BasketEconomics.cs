@@ -4,7 +4,9 @@ namespace MarketLab.SingleAnchor
 {
     /// <summary>
     /// Basket-level money arithmetic (specification sections 7, 9 and 10). Pure functions over the
-    /// basket ledger; nothing here reads host holdings.
+    /// basket ledger; nothing here reads host holdings. Every valuation uses the basket's
+    /// aggregates (BUY/SELL lots, entry notionals, swap total), so it costs the same whether the
+    /// basket holds one leg or fifty; the per-leg helpers exist for audit and tests.
     /// </summary>
     public static class BasketEconomics
     {
@@ -20,19 +22,14 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// RawProfit: the combined current profit of every leg including accrued swap (section 9).
+        /// RawProfit: the combined current profit of every leg, BUY legs marked at the Bid and
+        /// SELL legs at the Ask, plus accrued swap (section 9). Constant time.
         /// </summary>
         public static decimal RawProfit(Basket basket, in Quote quote, SingleAnchorParameters parameters)
         {
             if (basket == null) throw new ArgumentNullException(nameof(basket));
             if (parameters == null) throw new ArgumentNullException(nameof(parameters));
-            var legs = basket.Legs;
-            var total = 0m;
-            for (var i = 0; i < legs.Count; i++)
-            {
-                total += CurrentLegProfit(legs[i], quote, parameters.PointValuePerLot);
-            }
-            return total;
+            return PriceProfit(basket, quote.Bid, quote.Ask, parameters.PointValuePerLot) + basket.AccruedSwapTotal;
         }
 
         /// <summary>
@@ -75,6 +72,41 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
+        /// Executable close prices at a quote under the configured execution model: BUY legs close
+        /// at the Bid less slippage, SELL legs at the Ask plus slippage.
+        /// </summary>
+        public static (decimal BuyClose, decimal SellClose) ExecutableClosePrices(in Quote quote, SingleAnchorParameters parameters)
+        {
+            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
+            return (quote.Bid - parameters.Slippage, quote.Ask + parameters.Slippage);
+        }
+
+        /// <summary>
+        /// Executable entry price of a new leg at a quote under the configured execution model:
+        /// a BUY at the Ask plus slippage, a SELL at the Bid less slippage.
+        /// </summary>
+        public static decimal ExecutableEntryPrice(TradeSide side, in Quote quote, SingleAnchorParameters parameters)
+        {
+            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
+            return side == TradeSide.Buy ? quote.Ask + parameters.Slippage : quote.Bid - parameters.Slippage;
+        }
+
+        /// <summary>
+        /// Executable profit of the whole basket closed at the given per-side prices: price P/L,
+        /// plus accrued swap, less the round-trip commission on the gross volume. Used for the
+        /// projection at a hard target (section 7), for the realized result of a close and for
+        /// the executable mark-to-market of an open basket. Constant time.
+        /// </summary>
+        public static decimal ExecutableProfit(Basket basket, decimal buyClosePrice, decimal sellClosePrice, SingleAnchorParameters parameters)
+        {
+            if (basket == null) throw new ArgumentNullException(nameof(basket));
+            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
+            return PriceProfit(basket, buyClosePrice, sellClosePrice, parameters.PointValuePerLot)
+                + basket.AccruedSwapTotal
+                - parameters.CommissionPerLot * basket.GrossLots;
+        }
+
+        /// <summary>
         /// Projected executable profit of one leg closed at the hard target: a BUY closes at the
         /// projected Bid less slippage, a SELL at the projected Ask plus slippage; accrued swap is
         /// kept and the round-trip commission for the leg's volume is deducted (section 7).
@@ -89,18 +121,17 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// PL_existing(T): projected executable profit of every open leg at the target (section 7).
+        /// Constant time; equal to the sum of <see cref="ProjectedLegProfit"/> over the legs.
         /// </summary>
         public static decimal ProjectedExistingProfit(Basket basket, in TargetPrices target, SingleAnchorParameters parameters)
         {
-            if (basket == null) throw new ArgumentNullException(nameof(basket));
-            var legs = basket.Legs;
-            var total = 0m;
-            for (var i = 0; i < legs.Count; i++)
-            {
-                var leg = legs[i];
-                total += ProjectedLegProfit(leg.Side, leg.Lots, leg.EntryPrice, leg.AccruedSwap, target, parameters);
-            }
-            return total;
+            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
+            return ExecutableProfit(basket, target.Bid - parameters.Slippage, target.Ask + parameters.Slippage, parameters);
+        }
+
+        private static decimal PriceProfit(Basket basket, decimal buyClosePrice, decimal sellClosePrice, decimal pointValuePerLot)
+        {
+            return ((buyClosePrice * basket.BuyLots - basket.BuyNotional) + (basket.SellNotional - sellClosePrice * basket.SellLots)) * pointValuePerLot;
         }
     }
 

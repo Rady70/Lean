@@ -24,24 +24,18 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(basket.HardBreakevenModeActive, Is.False);
         }
 
-        [Test]
-        public void ArithmeticLotsAreNormalizedToTheNearestStep()
+        [TestCase(0.015, 0.02, 0.03, 0.05, 0.06)]
+        [TestCase(0.014, 0.02, 0.03, 0.05, 0.06)] // 0.014, 0.028, 0.042, 0.056: never rounded down
+        [TestCase(0.011, 0.02, 0.03, 0.04, 0.05)] // 0.011, 0.022, 0.033, 0.044
+        public void ArithmeticLotsAreNormalizedUpwardToTheStep(decimal baseLot, decimal q1, decimal q2, decimal q3, decimal q4)
         {
-            var p = Harness.NoExits();
-            var h = new Harness(new SingleAnchorParameters
-            {
-                StepPercent = p.StepPercent,
-                BaseLot = 0.015m,
-                PointValuePerLot = p.PointValuePerLot,
-                EscapeEnabled = false,
-                TrailingEnabled = false
-            });
+            var h = new Harness(Harness.NoExits() with { BaseLot = baseLot });
             var basket = h.PingPongFourLegs();
 
-            Assert.That(basket.Legs[0].Lots, Is.EqualTo(0.02m)); // 0.015 -> 0.02 (midpoint away from zero)
-            Assert.That(basket.Legs[1].Lots, Is.EqualTo(0.03m));
-            Assert.That(basket.Legs[2].Lots, Is.EqualTo(0.05m)); // 0.045 -> 0.05
-            Assert.That(basket.Legs[3].Lots, Is.EqualTo(0.06m));
+            Assert.That(basket.Legs[0].Lots, Is.EqualTo(q1));
+            Assert.That(basket.Legs[1].Lots, Is.EqualTo(q2));
+            Assert.That(basket.Legs[2].Lots, Is.EqualTo(q3));
+            Assert.That(basket.Legs[3].Lots, Is.EqualTo(q4));
         }
 
         [Test]
@@ -198,6 +192,64 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(rejection.Sizing!.NormalizedLot, Is.EqualTo(0m));
             Assert.That(rejection.TradeNumber, Is.EqualTo(5));
             Assert.That(basket.LastRejection!.Sizing!.CandidateEntryPrice, Is.EqualTo(2030.2m), "the latest attempt is kept");
+        }
+
+        [Test]
+        public void EveryTailFillIsVerifiedAgainstTheHardBreakevenRequirement()
+        {
+            var h = new Harness();
+            var basket = h.PingPongFourLegs();
+            h.AtUpper(); // trade 5 through the research executor: fill = sizing model
+
+            var sizing = h.EntriesOpened[4].Sizing!;
+            Assert.That(BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, h.Parameters), Is.EqualTo(sizing.ProjectedProfitAfter));
+            Assert.That(BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, h.Parameters), Is.EqualTo(36.64m));
+            Assert.That(basket.HardBreakevenViolations, Is.EqualTo(0));
+            Assert.That(h.Engine.HardBreakevenViolations, Is.EqualTo(0));
+            Assert.That(h.Violations, Is.Empty);
+        }
+
+        [Test]
+        public void ATailFillWorseThanTheModelIsRecordedAndReportedAsAViolation()
+        {
+            var h = new Harness(Harness.NoExits());
+            var basket = h.PingPongFourLegs();
+            h.Executor.EntryOverride = o => EntryExecution.Filled(2030m); // 10 above the modelled Ask
+
+            h.AtUpper();
+
+            // -380.12 + (2089.46 - 2030) * 0.06 * 100 = -23.36 < 0: the requirement is not met
+            Assert.That(basket.OpenPositions, Is.EqualTo(5), "the fill happened; the ledger stays truthful");
+            Assert.That(basket.Legs[4].EntryPrice, Is.EqualTo(2030m));
+            Assert.That(h.Violations, Has.Count.EqualTo(1));
+            Assert.That(h.Violations[0].ProjectedProfitAfterFill, Is.EqualTo(-23.36m));
+            Assert.That(h.Violations[0].Leg, Is.SameAs(basket.Legs[4]));
+            Assert.That(basket.HardBreakevenViolations, Is.EqualTo(1));
+            Assert.That(h.Engine.HardBreakevenViolations, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ArithmeticFillsAreNotSubjectToTheHardBreakevenCheck()
+        {
+            var h = new Harness(Harness.NoExits());
+            h.Executor.EntryOverride = o => EntryExecution.Filled(o.Side == TradeSide.Buy ? o.Quote.Ask + 10m : o.Quote.Bid - 10m);
+            h.PingPongFourLegs();
+            Assert.That(h.Violations, Is.Empty);
+        }
+
+        [Test]
+        public void RejectionIsReportedAgainWhenTheRequiredLotChangesMaterially()
+        {
+            var h = new Harness(Harness.NoExits() with { MaximumVolume = 0.05m });
+            h.PingPongFourLegs();
+            h.AtUpper();                       // Q_BE 0.0547 -> 0.06 > 0.05
+            h.AtUpper();                       // same situation
+            Assert.That(h.EntriesRejected, Has.Count.EqualTo(1));
+
+            h.Feed(2060m, 2060.2m);            // marginal 2926 -> Q_BE 0.1299 -> 0.13: materially different
+            Assert.That(h.EntriesRejected, Has.Count.EqualTo(2));
+            Assert.That(h.EntriesRejected[1].Rejection.Sizing!.RequiredLot, Is.GreaterThan(0.12m).And.LessThan(0.13m));
+            Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(3));
         }
 
         [Test]
@@ -370,7 +422,7 @@ namespace MarketLab.SingleAnchor.Tests
         {
             var p = Harness.Defaults();
             var basket = ReferenceBasket(p);
-            basket.Legs[0].AccruedSwap = -5m;
+            basket.AddSwap(basket.Legs[0], -5m);
 
             var sizing = HardBreakevenSizer.Size(basket, TradeSide.Buy, Upper, p);
 
@@ -527,20 +579,11 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(VolumeMath.CeilToStep(volume, step), Is.EqualTo(expected));
         }
 
-        [TestCase(0.015, 0.01, 0.02)]
-        [TestCase(0.014, 0.01, 0.01)]
-        [TestCase(0.045, 0.01, 0.05)]
-        [TestCase(0.001, 0.01, 0)]
-        public void RoundToNearestStepUsesMidpointAwayFromZero(decimal volume, decimal step, decimal expected)
-        {
-            Assert.That(VolumeMath.RoundToNearestStep(volume, step), Is.EqualTo(expected));
-        }
-
         [Test]
         public void NonPositiveStepIsRejected()
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => VolumeMath.CeilToStep(1m, 0m));
-            Assert.Throws<ArgumentOutOfRangeException>(() => VolumeMath.RoundToNearestStep(1m, -0.01m));
+            Assert.Throws<ArgumentOutOfRangeException>(() => VolumeMath.CeilToStep(1m, -0.01m));
         }
     }
 }

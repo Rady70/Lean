@@ -8,22 +8,14 @@ namespace MarketLab.SingleAnchor
     public static class VolumeMath
     {
         /// <summary>
-        /// Rounds upward to the next whole step: ceil(volume / step) * step (specification section 8).
+        /// Rounds upward to the next whole step: ceil(volume / step) * step. Used for every lot the
+        /// strategy places: broker normalization never reduces a requested volume (specification
+        /// section 8 for the tail; the same conservative rule for trades 1..Nnormal).
         /// </summary>
         public static decimal CeilToStep(decimal volume, decimal step)
         {
             if (step <= 0m) throw new ArgumentOutOfRangeException(nameof(step), step, "Volume step must be positive.");
             return Math.Ceiling(volume / step) * step;
-        }
-
-        /// <summary>
-        /// Rounds to the nearest whole step, midpoints away from zero (used for trades 1..Nnormal,
-        /// where the specification asks only for "a valid broker volume step").
-        /// </summary>
-        public static decimal RoundToNearestStep(decimal volume, decimal step)
-        {
-            if (step <= 0m) throw new ArgumentOutOfRangeException(nameof(step), step, "Volume step must be positive.");
-            return Math.Round(volume / step, 0, MidpointRounding.AwayFromZero) * step;
         }
     }
 }
