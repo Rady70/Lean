@@ -23,7 +23,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(buy.FillPrice, Is.EqualTo(BasketEconomics.ExecutableEntryPrice(TradeSide.Buy, quote, p)));
             Assert.That(sell.FillPrice, Is.EqualTo(2019.7m));
 
-            var basket = new Basket(quote, p);
+            var basket = new Basket(1, quote, p);
             var close = executor.CloseBasket(new CloseOrder(basket, ExitReason.Escape, quote));
             Assert.That(close.Succeeded, Is.True);
             Assert.That(close.BuyClosePrice, Is.EqualTo(2019.7m));
@@ -82,6 +82,42 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.Engine.RealizedProfit, Is.EqualTo(38.79m));
             Assert.That(h.Engine.ClosedBaskets, Has.Count.EqualTo(1));
             Assert.That(h.Engine.ClosedBaskets[0], Is.SameAs(record));
+
+            Assert.That(record.Sequence, Is.EqualTo(1));
+            Assert.That(record.LegTrace, Has.Count.EqualTo(2));
+            Assert.That(record.LegTrace[0].Basket, Is.EqualTo(1));
+            Assert.That(record.LegTrace[0].TradeNumber, Is.EqualTo(1));
+            Assert.That(record.LegTrace[0].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(record.LegTrace[0].FillPrice, Is.EqualTo(2020.1m));
+            Assert.That(record.LegTrace[0].Regime, Is.EqualTo(SizingRegime.Arithmetic));
+            Assert.That(record.LegTrace[0].HardBreakevenTarget, Is.Null);
+            Assert.That(record.LegTrace[1].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(record.LegTrace[1].Lots, Is.EqualTo(0.02m));
+        }
+
+        [Test]
+        public void TailLegsCarryTheirSizingInTheTrace()
+        {
+            var h = new Harness();
+            h.PingPongFourLegs();
+            h.AtUpper();                                  // trade 5: BUY 0.06, hard-BE
+            Assert.That(h.Engine.OpenBasketLegTrace(), Has.Count.EqualTo(5));
+            h.Feed(2100m, 2100.2m);                       // escape close
+
+            var trace = h.Engine.ClosedBaskets[0].LegTrace;
+            Assert.That(trace, Has.Count.EqualTo(5));
+            Assert.That(trace[3].Regime, Is.EqualTo(SizingRegime.Arithmetic));
+            Assert.That(trace[3].RequiredLot, Is.Null);
+            var tail = trace[4];
+            Assert.That(tail.TradeNumber, Is.EqualTo(5));
+            Assert.That(tail.Regime, Is.EqualTo(SizingRegime.HardBreakeven));
+            Assert.That(tail.Lots, Is.EqualTo(0.06m));
+            Assert.That(tail.HardBreakevenTarget, Is.EqualTo(2089.56m));
+            Assert.That(tail.ExistingProfitAtTarget, Is.EqualTo(-380.12m));
+            Assert.That(tail.MarginalProfitPerLot, Is.EqualTo(6946m));
+            Assert.That(tail.RequiredLot, Is.EqualTo(380.12m / 6946m));
+            Assert.That(tail.ProjectedProfitAfter, Is.EqualTo(36.64m));
+            Assert.That(h.Engine.OpenBasketLegTrace(), Is.Empty);
         }
 
         [Test]
@@ -125,6 +161,39 @@ namespace MarketLab.SingleAnchor.Tests
             // executable: buys close 1999.9, sells close 2000.4, commission 0.21
             Assert.That(valuation.ExecutableProfit, Is.EqualTo((1999.9m - 2020.1m) * 1m + (1979.9m - 2000.4m) * 2m - 0.21m));
         }
+
+        [Test]
+        public void MarkToMarketHasNoExecutableValueWhenSlippageMakesAClosePriceNonPositive()
+        {
+            var h = new Harness(Harness.NoExits() with { Slippage = 2100m });
+            h.Anchor();
+            h.AtUpper();                                  // BUY fills at 2020 + 2100 = 4120
+            Assert.That(h.Engine.Basket!.Legs[0].EntryPrice, Is.EqualTo(4120m));
+
+            var valuation = h.Engine.MarkToMarket(new Quote(Harness.T0.AddMinutes(1), 2019.8m, 2020m))!;
+
+            Assert.That(valuation.RawProfit, Is.EqualTo((2019.8m - 4120m) * 1m));
+            Assert.That(valuation.ExecutableProfit, Is.Null, "Bid - slippage is not a price");
+        }
+
+        [Test]
+        public void ACloseReportingANonPositivePriceFailsExplicitlyAndIsRetried()
+        {
+            var h = TwoLegs.Build();
+            var basket = h.Engine.Basket!;
+            h.Executor.CloseOverride = _ => CloseExecution.Closed(0m, 1900.2m);
+
+            h.Feed(1900m, 1900.2m);                       // escape fires, the executor's BUY close price is unusable
+
+            Assert.That(h.BasketsClosed, Is.Empty);
+            Assert.That(h.CloseFailures, Has.Count.EqualTo(1));
+            Assert.That(h.CloseFailures[0].Message, Does.Contain("non-positive close prices"));
+            Assert.That(h.Engine.Basket, Is.SameAs(basket));
+
+            h.Executor.CloseOverride = null;
+            h.Feed(1900m, 1900.2m);
+            Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
+        }
     }
 
     [TestFixture]
@@ -154,7 +223,41 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.Engine.Basket!.Legs[0].EntryPrice, Is.EqualTo(2020m));
             Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(4));
             Assert.That(feed.QuoteTicks, Is.EqualTo(4));
-            Assert.That(feed.LastQuote!.Value.Ask, Is.EqualTo(2019.2m));
+            Assert.That(feed.LastAcceptedQuote!.Value.Ask, Is.EqualTo(2019.2m));
+        }
+
+        [Test]
+        public void OutOfOrderTickIsRefusedAndDoesNotBecomeTheLastAcceptedQuote()
+        {
+            var h = new Harness();
+            var feed = new QuoteTickFeed();
+            var t = Harness.T0;
+            feed.Feed(new List<Tick> { new Tick(t.AddSeconds(5), Xauusd, 1999.9m, 2000.1m) }, h.Engine);
+            feed.Feed(new List<Tick> { new Tick(t.AddSeconds(4), Xauusd, 2019.8m, 2020m) }, h.Engine);
+
+            Assert.That(feed.RejectedQuoteTicks, Is.EqualTo(1));
+            Assert.That(feed.QuoteTicks, Is.EqualTo(1));
+            Assert.That(feed.LastAcceptedQuote!.Value.Time, Is.EqualTo(t.AddSeconds(5)));
+            Assert.That(feed.LastAcceptedQuote!.Value.Ask, Is.EqualTo(2000.1m));
+            Assert.That(h.Engine.LastAcceptedQuote, Is.EqualTo(feed.LastAcceptedQuote));
+            Assert.That(h.InvalidQuotes, Has.Count.EqualTo(1));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void AnInvariantFailurePropagatesThroughTheFeed()
+        {
+            var h = new Harness();
+            var feed = new QuoteTickFeed();
+            var t = Harness.T0;
+            feed.Feed(new List<Tick> { new Tick(t, Xauusd, 1999.9m, 2000.1m) }, h.Engine);
+
+            var fault = Assert.Throws<StrategyInvariantException>(() =>
+                feed.Feed(new List<Tick> { new Tick(t.AddSeconds(1), Xauusd, 1979m, 2021m) }, h.Engine))!;
+
+            Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.BothBoundariesSatisfied));
+            Assert.That(h.Engine.Faulted, Is.True);
+            Assert.That(feed.LastAcceptedQuote!.Value.Time, Is.EqualTo(t), "the faulting quote is not counted as accepted by the feed");
         }
 
         [Test]

@@ -44,7 +44,7 @@ namespace MarketLab.SingleAnchor.Tests
         public void NetFlatBasketUsesTheSmallestOpenLotAsExitSensitivity()
         {
             var p = Harness.Defaults();
-            var basket = new Basket(new Quote(Harness.T0, 1999.9m, 2000.1m), p);
+            var basket = new Basket(1, new Quote(Harness.T0, 1999.9m, 2000.1m), p);
             basket.AddLeg(new BasketLeg(1, TradeSide.Buy, 0.03m, 2020m, Harness.T0, SizingRegime.Arithmetic));
             basket.AddLeg(new BasketLeg(2, TradeSide.Sell, 0.01m, 1980m, Harness.T0, SizingRegime.Arithmetic));
             basket.AddLeg(new BasketLeg(3, TradeSide.Sell, 0.02m, 1980m, Harness.T0, SizingRegime.Arithmetic));
@@ -61,7 +61,7 @@ namespace MarketLab.SingleAnchor.Tests
         [Test]
         public void LegVolumesMustBeWholeVolumeSteps()
         {
-            var basket = new Basket(new Quote(Harness.T0, 1999.9m, 2000.1m), Harness.Defaults());
+            var basket = new Basket(1, new Quote(Harness.T0, 1999.9m, 2000.1m), Harness.Defaults());
             Assert.Throws<InvalidOperationException>(() => basket.AddLeg(new BasketLeg(1, TradeSide.Buy, 0.015m, 2020m, Harness.T0, SizingRegime.Arithmetic)));
             Assert.That(basket.OpenPositions, Is.EqualTo(0));
         }
@@ -107,15 +107,14 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void CommissionBufferIsAFlatAmountPlusAnAmountPerGrossLot()
+        public void CommissionBufferIsAFlatAmountDeductedFromRawProfit()
         {
             var h = new Harness(new SingleAnchorParameters
             {
                 StepPercent = 1m,
                 BaseLot = 0.01m,
                 PointValuePerLot = 100m,
-                CommissionBuffer = 3m,
-                CommissionBufferPerLot = 7m
+                CommissionBuffer = 3m
             });
             h.Anchor();
             h.AtUpper();
@@ -123,13 +122,12 @@ namespace MarketLab.SingleAnchor.Tests
             var basket = h.Engine.Basket!;
 
             var quote = new Quote(Harness.T0.AddMinutes(1), 2000m, 2000.3m);
-            Assert.That(BasketEconomics.CommissionBufferAmount(basket, h.Parameters), Is.EqualTo(3m + 7m * 0.03m));
             Assert.That(BasketEconomics.RawProfit(basket, quote, h.Parameters), Is.EqualTo(-60.6m));
-            Assert.That(BasketEconomics.ExitProfit(basket, quote, h.Parameters), Is.EqualTo(-60.6m - 3.21m));
+            Assert.That(BasketEconomics.ExitProfit(basket, quote, h.Parameters), Is.EqualTo(-63.6m));
 
             var valuation = h.Engine.MarkToMarket(quote)!;
             Assert.That(valuation.RawProfit, Is.EqualTo(-60.6m));
-            Assert.That(valuation.ExitProfit, Is.EqualTo(-63.81m));
+            Assert.That(valuation.ExitProfit, Is.EqualTo(-63.6m));
         }
 
         [Test]

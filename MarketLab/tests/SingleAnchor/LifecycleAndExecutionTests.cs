@@ -97,6 +97,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(valuation.RawProfit, Is.EqualTo(-60.6m));
             Assert.That(valuation.ExitProfit, Is.EqualTo(-60.6m));
             Assert.That(valuation.ExecutableProfit, Is.EqualTo(-60.6m), "no slippage or commission configured");
+            Assert.That(valuation.Sequence, Is.EqualTo(1));
             Assert.That(valuation.StepMoney, Is.EqualTo(20m));
             Assert.That(valuation.HardBreakevenModeActive, Is.False);
             Assert.That(valuation.TrailingActive, Is.False);

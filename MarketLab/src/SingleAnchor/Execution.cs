@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace MarketLab.SingleAnchor
 {
@@ -127,13 +128,6 @@ namespace MarketLab.SingleAnchor
         /// <summary>The arithmetic lot, after normalization, exceeds the broker's maximum volume.</summary>
         VolumeExceedsMaximum,
 
-        /// <summary>
-        /// One quote satisfied both boundaries of an empty basket (Ask >= Upper and Bid &lt;= Lower,
-        /// a spread of at least two steps). The specification defines no priority between the two
-        /// entry rules, so no side is chosen and nothing is opened on that quote.
-        /// </summary>
-        AmbiguousBoundaries,
-
         /// <summary>The executor did not fill the order.</summary>
         ExecutionFailed
     }
@@ -141,7 +135,7 @@ namespace MarketLab.SingleAnchor
     /// <summary>
     /// Record of a rejected entry attempt.
     /// </summary>
-    public sealed record EntryRejection(int TradeNumber, TradeSide? Side, EntryRejectionReason Reason, decimal RequestedLots, string Message, HardBreakevenSizing? Sizing)
+    public sealed record EntryRejection(int TradeNumber, TradeSide Side, EntryRejectionReason Reason, decimal RequestedLots, string Message, HardBreakevenSizing? Sizing)
     {
         /// <summary>
         /// True when this rejection is the same situation as <paramref name="other"/>: same trade,
@@ -165,11 +159,57 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
+    /// The strategy invariants whose violation stops a run instead of being turned into a
+    /// trading decision.
+    /// </summary>
+    public enum StrategyInvariant
+    {
+        /// <summary>
+        /// One quote satisfied both entry rules of an empty basket (Ask >= Upper and
+        /// Bid &lt;= Lower, a spread of at least two grid steps). The specification defines the
+        /// grid for quotes narrower than the grid and no rule for this case; the configuration is
+        /// not valid for the data.
+        /// </summary>
+        BothBoundariesSatisfied,
+
+        /// <summary>
+        /// A tail leg was filled at a price that leaves the projected executable basket P/L at
+        /// its hard target negative: the executor departed from the sizing model, and continuing
+        /// would mean breakeven drift after hard-BE activation.
+        /// </summary>
+        HardBreakevenViolatedByFill
+    }
+
+    /// <summary>
+    /// Thrown by the engine when a strategy invariant fails; the engine is faulted afterwards and
+    /// refuses further quotes. A host must stop the run, not continue trading.
+    /// </summary>
+    public sealed class StrategyInvariantException : InvalidOperationException
+    {
+        /// <summary>Creates the exception.</summary>
+        public StrategyInvariantException(StrategyInvariant invariant, Quote quote, string message)
+            : base(message)
+        {
+            Invariant = invariant;
+            Quote = quote;
+        }
+
+        /// <summary>Which invariant failed.</summary>
+        public StrategyInvariant Invariant { get; }
+
+        /// <summary>The quote being processed when it failed.</summary>
+        public Quote Quote { get; }
+    }
+
+    /// <summary>
     /// Values of an open basket at a quote, without any side effect (used for end-of-data
-    /// mark-to-market reporting, specification section 15).
+    /// mark-to-market reporting, specification section 15). <paramref name="ExecutableProfit"/>
+    /// is null when the configured slippage makes an executable close price non-positive at
+    /// this quote.
     /// </summary>
     public sealed record BasketValuation(
         Quote Quote,
+        int Sequence,
         int OpenPositions,
         decimal BuyLots,
         decimal SellLots,
@@ -177,17 +217,48 @@ namespace MarketLab.SingleAnchor
         decimal NetLots,
         decimal RawProfit,
         decimal ExitProfit,
-        decimal ExecutableProfit,
+        decimal? ExecutableProfit,
         decimal StepMoney,
         bool HardBreakevenModeActive,
         bool TrailingActive,
         decimal PeakProfit);
 
     /// <summary>
+    /// One leg as a machine-comparable trace row: what was filled, when, under which regime and,
+    /// for a tail leg, the sizing that produced it.
+    /// </summary>
+    public sealed record LegRecord(
+        int Basket,
+        int TradeNumber,
+        DateTime Time,
+        TradeSide Side,
+        decimal Lots,
+        decimal FillPrice,
+        SizingRegime Regime,
+        decimal AccruedSwap,
+        decimal? HardBreakevenTarget,
+        decimal? ExistingProfitAtTarget,
+        decimal? MarginalProfitPerLot,
+        decimal? RequiredLot,
+        decimal? ProjectedProfitAfter)
+    {
+        /// <summary>Builds the row for a leg of the given basket.</summary>
+        public static LegRecord From(int basket, BasketLeg leg)
+        {
+            if (leg == null) throw new ArgumentNullException(nameof(leg));
+            var s = leg.Sizing;
+            return new LegRecord(basket, leg.TradeNumber, leg.EntryTime, leg.Side, leg.Lots, leg.EntryPrice, leg.Regime, leg.AccruedSwap,
+                s?.Target.Target, s?.ExistingProfitAtTarget, s?.MarginalProfitPerLot, s?.RequiredLot, s?.ProjectedProfitAfter);
+        }
+    }
+
+    /// <summary>
     /// The strategy's own record of one closed basket: the decision quantities at the closing
-    /// quote and the realized executable result of closing every leg under the configured model.
+    /// quote, the realized executable result of closing every leg under the configured model,
+    /// and the leg trace.
     /// </summary>
     public sealed record BasketCloseRecord(
+        int Sequence,
         DateTime CreatedTime,
         DateTime ClosedTime,
         decimal Anchor,
@@ -198,7 +269,6 @@ namespace MarketLab.SingleAnchor
         decimal GrossLots,
         decimal NetLots,
         bool HardBreakevenModeActive,
-        int HardBreakevenViolations,
         decimal RawProfit,
         decimal ExitProfit,
         decimal Threshold,
@@ -206,7 +276,8 @@ namespace MarketLab.SingleAnchor
         decimal SellClosePrice,
         decimal Swap,
         decimal Commission,
-        decimal RealizedProfit);
+        decimal RealizedProfit,
+        IReadOnlyList<LegRecord> LegTrace);
 
     // ---- Events raised by the engine ----
 
@@ -220,9 +291,9 @@ namespace MarketLab.SingleAnchor
     public sealed record EntryRejectedEvent(Basket Basket, EntryRejection Rejection, Quote Quote);
 
     /// <summary>
-    /// A tail leg was filled but the projected executable basket P/L at its hard target is
-    /// negative with the actual fill: the executor did not honour the sizing model. The leg is
-    /// recorded as filled; the basket and the engine count the violation.
+    /// Diagnostic raised just before the engine faults with
+    /// <see cref="StrategyInvariant.HardBreakevenViolatedByFill"/>: the tail leg was filled and is
+    /// in the ledger, but the projected executable basket P/L at its hard target is negative.
     /// </summary>
     public sealed record HardBreakevenViolatedEvent(Basket Basket, BasketLeg Leg, HardBreakevenSizing Sizing, decimal ProjectedProfitAfterFill, Quote Quote);
 

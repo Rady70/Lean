@@ -21,8 +21,9 @@ namespace MarketLab.SingleAnchor
         private readonly List<BasketLeg> _legs = new List<BasketLeg>();
         private readonly decimal _volumeStep;
 
-        internal Basket(in Quote anchorQuote, SingleAnchorParameters parameters)
+        internal Basket(int sequence, in Quote anchorQuote, SingleAnchorParameters parameters)
         {
+            Sequence = sequence;
             CreatedTime = anchorQuote.Time;
             Anchor = anchorQuote.Mid;
             Step = Anchor * parameters.StepPercent / 100m;
@@ -32,6 +33,9 @@ namespace MarketLab.SingleAnchor
             LowerTarget = Anchor * (1m - parameters.HardBreakevenCeilingPercent / 100m);
             _volumeStep = parameters.VolumeStep;
         }
+
+        /// <summary>1-based number of this basket in the engine's lifetime.</summary>
+        public int Sequence { get; }
 
         /// <summary>Time of the quote whose midpoint became the anchor.</summary>
         public DateTime CreatedTime { get; }
@@ -108,13 +112,6 @@ namespace MarketLab.SingleAnchor
         /// </summary>
         public bool HardBreakevenModeActive { get; private set; }
 
-        /// <summary>
-        /// Number of tail legs whose actual fill left the projected executable basket P/L at the
-        /// hard target negative (the engine verifies every tail fill; with the research executor
-        /// this stays 0 because fills use exactly the sizing model).
-        /// </summary>
-        public int HardBreakevenViolations { get; internal set; }
-
         /// <summary>True after trailing activated (specification section 13).</summary>
         public bool TrailingActive { get; private set; }
 
@@ -180,7 +177,7 @@ namespace MarketLab.SingleAnchor
         /// <inheritdoc />
         public override string ToString()
         {
-            return $"anchor={Anchor} step={Step} upper={Upper} lower={Lower} targets=[{LowerTarget}, {UpperTarget}] legs={OpenPositions} buy={BuyLots} sell={SellLots} net={NetLots} hardBE={HardBreakevenModeActive} trailing={TrailingActive}";
+            return $"#{Sequence} anchor={Anchor} step={Step} upper={Upper} lower={Lower} targets=[{LowerTarget}, {UpperTarget}] legs={OpenPositions} buy={BuyLots} sell={SellLots} net={NetLots} hardBE={HardBreakevenModeActive} trailing={TrailingActive}";
         }
     }
 }

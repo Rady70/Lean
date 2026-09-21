@@ -24,6 +24,10 @@ namespace MarketLab.SingleAnchor
     /// <item>otherwise evaluate the next alternating entry; a tail fill is verified against the
     /// hard-BE requirement with its actual price.</item>
     /// </list>
+    /// Two situations are strategy invariants, not trading decisions: a quote that satisfies both
+    /// entry rules of an empty basket, and a tail fill that leaves the hard-BE requirement unmet.
+    /// Either faults the engine with a <see cref="StrategyInvariantException"/>; a host must stop
+    /// the run.
     /// </remarks>
     public sealed class SingleAnchorEngine
     {
@@ -31,8 +35,9 @@ namespace MarketLab.SingleAnchor
         private readonly IBasketExecutor _executor;
         private readonly List<BasketCloseRecord> _closedBaskets = new List<BasketCloseRecord>();
         private Basket? _basket;
-        private DateTime _lastQuoteTime;
-        private bool _hasQuote;
+        private int _basketSequence;
+        private Quote? _lastAcceptedQuote;
+        private StrategyInvariantException? _fault;
 
         /// <summary>
         /// Creates an engine. Throws <see cref="ArgumentException"/> when the parameters are invalid.
@@ -59,6 +64,15 @@ namespace MarketLab.SingleAnchor
         /// <summary>The strategy's own record of every closed basket, in closing order.</summary>
         public IReadOnlyList<BasketCloseRecord> ClosedBaskets => _closedBaskets;
 
+        /// <summary>The last quote the engine accepted (valid and in order), or null before the first.</summary>
+        public Quote? LastAcceptedQuote => _lastAcceptedQuote;
+
+        /// <summary>True after a strategy invariant failed; every later quote is refused.</summary>
+        public bool Faulted => _fault != null;
+
+        /// <summary>The invariant failure that faulted the engine, if any.</summary>
+        public StrategyInvariantException? Fault => _fault;
+
         /// <summary>Sum of the realized executable profit of every closed basket.</summary>
         public decimal RealizedProfit { get; private set; }
 
@@ -77,9 +91,6 @@ namespace MarketLab.SingleAnchor
         /// <summary>Baskets closed by an exit rule.</summary>
         public long BasketsClosed { get; private set; }
 
-        /// <summary>Tail fills that left the hard-BE requirement unmet (see <see cref="HardBreakevenViolated"/>).</summary>
-        public long HardBreakevenViolations { get; private set; }
-
         /// <summary>Raised when a basket is anchored.</summary>
         public event Action<AnchorCreatedEvent>? AnchorCreated;
 
@@ -89,7 +100,7 @@ namespace MarketLab.SingleAnchor
         /// <summary>Raised once per distinct rejected-entry situation, including hard-BE infeasibility.</summary>
         public event Action<EntryRejectedEvent>? EntryRejected;
 
-        /// <summary>Raised when a tail fill fails the hard-BE verification with its actual price.</summary>
+        /// <summary>Raised, as a diagnostic, just before the engine faults on a tail fill that fails the hard-BE verification.</summary>
         public event Action<HardBreakevenViolatedEvent>? HardBreakevenViolated;
 
         /// <summary>Raised when trailing activates.</summary>
@@ -105,27 +116,32 @@ namespace MarketLab.SingleAnchor
         public event Action<InvalidQuoteEvent>? InvalidQuote;
 
         /// <summary>
-        /// Processes one quote. Returns without side effects for an invalid or out-of-order quote.
+        /// Processes one quote. Returns false, without side effects, for an invalid or out-of-order
+        /// quote. Throws <see cref="StrategyInvariantException"/> when a strategy invariant fails,
+        /// and again on every call after that.
         /// </summary>
-        public void OnQuote(in Quote quote)
+        public bool OnQuote(in Quote quote)
         {
+            if (_fault != null)
+            {
+                throw new StrategyInvariantException(_fault.Invariant, _fault.Quote, "The engine is faulted and accepts no further quotes: " + _fault.Message);
+            }
             if (!quote.IsValid)
             {
                 InvalidQuote.Raise(new InvalidQuoteEvent(quote, "Quote ignored: bid and ask must be positive and the ask must not be below the bid."));
-                return;
+                return false;
             }
-            if (_hasQuote && quote.Time < _lastQuoteTime)
+            if (_lastAcceptedQuote.HasValue && quote.Time < _lastAcceptedQuote.Value.Time)
             {
-                InvalidQuote.Raise(new InvalidQuoteEvent(quote, $"Quote ignored: time {quote.Time:O} is earlier than the previous quote {_lastQuoteTime:O}."));
-                return;
+                InvalidQuote.Raise(new InvalidQuoteEvent(quote, $"Quote ignored: time {quote.Time:O} is earlier than the previous quote {_lastAcceptedQuote.Value.Time:O}."));
+                return false;
             }
-            _lastQuoteTime = quote.Time;
-            _hasQuote = true;
+            _lastAcceptedQuote = quote;
             QuotesProcessed++;
 
             if (_basket == null)
             {
-                _basket = new Basket(quote, _p);
+                _basket = new Basket(++_basketSequence, quote, _p);
                 AnchorCreated.Raise(new AnchorCreatedEvent(_basket, quote));
             }
             var basket = _basket;
@@ -135,14 +151,14 @@ namespace MarketLab.SingleAnchor
                 AccrueSwap(basket, quote);
 
                 var rawProfit = BasketEconomics.RawProfit(basket, quote, _p);
-                var exitProfit = rawProfit - BasketEconomics.CommissionBufferAmount(basket, _p);
+                var exitProfit = rawProfit - _p.CommissionBuffer;
                 var stepMoney = BasketEconomics.StepMoney(basket, _p);
                 var (reason, threshold) = EvaluateExits(basket, exitProfit, stepMoney, quote);
                 if (reason != ExitReason.None)
                 {
                     var close = new CloseOrder(basket, reason, quote);
                     var execution = _executor.CloseBasket(close);
-                    if (execution.Succeeded && execution.BuyClosePrice > 0m && execution.SellClosePrice > 0m)
+                    if (execution.Succeeded && BasketEconomics.ArePricesUsable(execution.BuyClosePrice, execution.SellClosePrice))
                     {
                         FinalizeClose(close, rawProfit, exitProfit, threshold, execution);
                     }
@@ -155,11 +171,12 @@ namespace MarketLab.SingleAnchor
                     }
                     // A close that fired ends the quote whether it succeeded or failed: no
                     // replacement basket and no new leg on the same quote.
-                    return;
+                    return true;
                 }
             }
 
             EvaluateEntry(basket, quote);
+            return true;
         }
 
         /// <summary>
@@ -175,11 +192,20 @@ namespace MarketLab.SingleAnchor
             }
             var raw = BasketEconomics.RawProfit(basket, quote, _p);
             var (buyClose, sellClose) = BasketEconomics.ExecutableClosePrices(quote, _p);
-            return new BasketValuation(quote, basket.OpenPositions, basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots,
-                raw, raw - BasketEconomics.CommissionBufferAmount(basket, _p),
-                BasketEconomics.ExecutableProfit(basket, buyClose, sellClose, _p),
-                BasketEconomics.StepMoney(basket, _p),
+            decimal? executable = BasketEconomics.ArePricesUsable(buyClose, sellClose)
+                ? BasketEconomics.ExecutableProfit(basket, buyClose, sellClose, _p)
+                : null;
+            return new BasketValuation(quote, basket.Sequence, basket.OpenPositions, basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots,
+                raw, raw - _p.CommissionBuffer, executable, BasketEconomics.StepMoney(basket, _p),
                 basket.HardBreakevenModeActive, basket.TrailingActive, basket.PeakProfit);
+        }
+
+        /// <summary>The trace rows of the open basket's legs (empty without a basket).</summary>
+        public IReadOnlyList<LegRecord> OpenBasketLegTrace()
+        {
+            var basket = _basket;
+            if (basket == null) return Array.Empty<LegRecord>();
+            return LegTrace(basket);
         }
 
         private (ExitReason Reason, decimal Threshold) EvaluateExits(Basket basket, decimal exitProfit, decimal stepMoney, in Quote quote)
@@ -231,11 +257,11 @@ namespace MarketLab.SingleAnchor
                 var sellTriggered = quote.Bid <= basket.Lower;
                 if (buyTriggered && sellTriggered)
                 {
-                    // Both entry rules of section 3 hold on one quote (spread >= 2 steps). The
-                    // specification defines no priority between them, so nothing is opened.
-                    Reject(basket, quote, new EntryRejection(basket.NextTradeNumber, null, EntryRejectionReason.AmbiguousBoundaries, 0m,
-                        $"Quote {quote} satisfies both Ask >= Upper ({F(basket.Upper)}) and Bid <= Lower ({F(basket.Lower)}); no side is chosen and no leg is opened.", null));
-                    return;
+                    // Both entry rules of section 3 hold on one quote: the spread is at least two
+                    // grid steps. The specification defines no such case; this is not a trading
+                    // decision to make but a configuration that is invalid for the data.
+                    throw RecordFault(new StrategyInvariantException(StrategyInvariant.BothBoundariesSatisfied, quote,
+                        $"Quote {quote} (spread {F(quote.Spread)}) satisfies both Ask >= Upper ({F(basket.Upper)}) and Bid <= Lower ({F(basket.Lower)}) of basket #{basket.Sequence} (anchor {F(basket.Anchor)}, step {F(basket.Step)}): the grid step is not wider than half the spread, so the configuration is invalid for this data. The run is stopped."));
                 }
                 if (buyTriggered) side = TradeSide.Buy;
                 else if (sellTriggered) side = TradeSide.Sell;
@@ -292,7 +318,7 @@ namespace MarketLab.SingleAnchor
                 return;
             }
 
-            var leg = new BasketLeg(tradeNumber, side, lots, execution.FillPrice, quote.Time, regime);
+            var leg = new BasketLeg(tradeNumber, side, lots, execution.FillPrice, quote.Time, regime) { Sizing = sizing };
             basket.AddLeg(leg);
             if (_p.SwapConfigured && basket.OpenPositions == 1)
             {
@@ -305,14 +331,23 @@ namespace MarketLab.SingleAnchor
             {
                 // The hard-BE requirement is re-verified with the actual fill: the projected
                 // executable basket P/L at the fixed target must be non-negative after the leg.
+                // With the research executor the fill is the sizing model and this always holds;
+                // a negative value means the executor departed from the model, and continuing
+                // would be breakeven drift after hard-BE activation, which the strategy forbids.
                 var afterFill = BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, _p);
                 if (afterFill < 0m)
                 {
-                    basket.HardBreakevenViolations++;
-                    HardBreakevenViolations++;
                     HardBreakevenViolated.Raise(new HardBreakevenViolatedEvent(basket, leg, sizing, afterFill, quote));
+                    throw RecordFault(new StrategyInvariantException(StrategyInvariant.HardBreakevenViolatedByFill, quote,
+                        $"Tail leg {leg} of basket #{basket.Sequence} was filled at {F(execution.FillPrice)} instead of the modelled {F(sizing.CandidateEntryPrice)}; the projected executable basket P/L at the hard target {F(sizing.Target.Target)} is {F(afterFill)} after the fill (sizing expected {F(sizing.ProjectedProfitAfter)}). Breakeven would drift beyond the ceiling; the run is stopped."));
                 }
             }
+        }
+
+        private StrategyInvariantException RecordFault(StrategyInvariantException exception)
+        {
+            _fault = exception;
+            return exception;
         }
 
         private void Reject(Basket basket, in Quote quote, EntryRejection rejection)
@@ -332,15 +367,27 @@ namespace MarketLab.SingleAnchor
             var basket = order.Basket;
             var commission = _p.CommissionPerLot * basket.GrossLots;
             var realized = BasketEconomics.ExecutableProfit(basket, execution.BuyClosePrice, execution.SellClosePrice, _p);
-            var record = new BasketCloseRecord(basket.CreatedTime, order.Quote.Time, basket.Anchor, order.Reason, basket.OpenPositions,
-                basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots, basket.HardBreakevenModeActive, basket.HardBreakevenViolations,
-                rawProfit, exitProfit, threshold, execution.BuyClosePrice, execution.SellClosePrice, basket.AccruedSwapTotal, commission, realized);
+            var record = new BasketCloseRecord(basket.Sequence, basket.CreatedTime, order.Quote.Time, basket.Anchor, order.Reason, basket.OpenPositions,
+                basket.BuyLots, basket.SellLots, basket.GrossLots, basket.NetLots, basket.HardBreakevenModeActive,
+                rawProfit, exitProfit, threshold, execution.BuyClosePrice, execution.SellClosePrice, basket.AccruedSwapTotal, commission, realized,
+                LegTrace(basket));
 
             _basket = null;
             _closedBaskets.Add(record);
             RealizedProfit += realized;
             BasketsClosed++;
             BasketClosed.Raise(new BasketClosedEvent(basket, record, order.Quote));
+        }
+
+        private static IReadOnlyList<LegRecord> LegTrace(Basket basket)
+        {
+            var legs = basket.Legs;
+            var rows = new LegRecord[legs.Count];
+            for (var i = 0; i < legs.Count; i++)
+            {
+                rows[i] = LegRecord.From(basket.Sequence, legs[i]);
+            }
+            return rows;
         }
 
         private void AccrueSwap(Basket basket, in Quote quote)
@@ -350,7 +397,9 @@ namespace MarketLab.SingleAnchor
             if (next > quote.Time) return;
 
             // Rollovers are rare (at most one per day), so the per-leg pass here is not on the
-            // per-quote path; it keeps each leg's own accrued swap for audit.
+            // per-quote path; it keeps each leg's own accrued swap for audit. Financing accrued
+            // here is not re-verified against the hard-BE requirement (see the implementation
+            // notes: non-zero swap is not qualified against the hard ceiling).
             var legs = basket.Legs;
             while (next <= quote.Time)
             {

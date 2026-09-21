@@ -58,6 +58,9 @@ namespace MarketLab.SingleAnchor
         /// </summary>
         public decimal AccruedSwap { get; internal set; }
 
+        /// <summary>The hard-BE sizing that produced this leg; null for an arithmetic leg.</summary>
+        public HardBreakevenSizing? Sizing { get; internal set; }
+
         /// <inheritdoc />
         public override string ToString()
         {

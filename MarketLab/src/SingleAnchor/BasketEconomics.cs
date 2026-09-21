@@ -33,22 +33,12 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// The optional commission buffer for the basket (section 9):
-        /// CommissionBuffer + CommissionBufferPerLot * GrossLots.
-        /// </summary>
-        public static decimal CommissionBufferAmount(Basket basket, SingleAnchorParameters parameters)
-        {
-            if (basket == null) throw new ArgumentNullException(nameof(basket));
-            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
-            return parameters.CommissionBuffer + parameters.CommissionBufferPerLot * basket.GrossLots;
-        }
-
-        /// <summary>
-        /// Profit used for exit decisions: RawProfit minus the optional commission buffer (section 9).
+        /// Profit used for exit decisions: RawProfit minus the optional commission buffer
+        /// (section 9: Profit = RawProfit - CommissionBuffer).
         /// </summary>
         public static decimal ExitProfit(Basket basket, in Quote quote, SingleAnchorParameters parameters)
         {
-            return RawProfit(basket, quote, parameters) - CommissionBufferAmount(basket, parameters);
+            return RawProfit(basket, quote, parameters) - parameters!.CommissionBuffer;
         }
 
         /// <summary>
@@ -73,12 +63,29 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// Executable close prices at a quote under the configured execution model: BUY legs close
-        /// at the Bid less slippage, SELL legs at the Ask plus slippage.
+        /// at the Bid less slippage, SELL legs at the Ask plus slippage. They are usable only when
+        /// both are positive (<see cref="ArePricesUsable"/>).
         /// </summary>
         public static (decimal BuyClose, decimal SellClose) ExecutableClosePrices(in Quote quote, SingleAnchorParameters parameters)
         {
             if (parameters == null) throw new ArgumentNullException(nameof(parameters));
             return (quote.Bid - parameters.Slippage, quote.Ask + parameters.Slippage);
+        }
+
+        /// <summary>
+        /// Executable close prices at a hard target: the projected Bid less slippage for BUY legs,
+        /// the projected Ask plus slippage for SELL legs.
+        /// </summary>
+        public static (decimal BuyClose, decimal SellClose) ExecutableClosePrices(in TargetPrices target, SingleAnchorParameters parameters)
+        {
+            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
+            return (target.Bid - parameters.Slippage, target.Ask + parameters.Slippage);
+        }
+
+        /// <summary>True when every executable price handed in is positive.</summary>
+        public static bool ArePricesUsable(decimal buyClose, decimal sellClose)
+        {
+            return buyClose > 0m && sellClose > 0m;
         }
 
         /// <summary>
@@ -125,8 +132,8 @@ namespace MarketLab.SingleAnchor
         /// </summary>
         public static decimal ProjectedExistingProfit(Basket basket, in TargetPrices target, SingleAnchorParameters parameters)
         {
-            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
-            return ExecutableProfit(basket, target.Bid - parameters.Slippage, target.Ask + parameters.Slippage, parameters);
+            var (buyClose, sellClose) = ExecutableClosePrices(target, parameters);
+            return ExecutableProfit(basket, buyClose, sellClose, parameters);
         }
 
         private static decimal PriceProfit(Basket basket, decimal buyClosePrice, decimal sellClosePrice, decimal pointValuePerLot)

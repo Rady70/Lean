@@ -178,31 +178,32 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void WhenBothBoundariesAreSatisfiedNoSideIsChosen()
+        public void AQuoteSatisfyingBothBoundariesOfAnEmptyBasketFaultsTheRun()
         {
-            // The specification defines no priority between the two entry rules; a quote wide
-            // enough to satisfy both (spread >= 2 steps) opens nothing and is reported once.
+            // The specification defines the grid for quotes narrower than the grid and no rule
+            // for a quote that satisfies both entry rules (spread >= 2 steps). That is not a
+            // trading decision to make: the configuration is invalid for the data and the run stops.
             var h = new Harness();
             h.Anchor();
-            h.Feed(1979m, 2021m);
-            h.Feed(1978m, 2022m);
 
-            var basket = h.Engine.Basket!;
-            Assert.That(basket.OpenPositions, Is.EqualTo(0));
+            var fault = Assert.Throws<StrategyInvariantException>(() => h.Feed(1979m, 2021m))!;
+
+            Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.BothBoundariesSatisfied));
+            Assert.That(fault.Quote.Ask, Is.EqualTo(2021m));
+            Assert.That(fault.Message, Does.Contain("invalid for this data"));
+            Assert.That(h.Engine.Faulted, Is.True);
+            Assert.That(h.Engine.Fault, Is.SameAs(fault));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "no side was chosen");
             Assert.That(h.Executor.Entries, Is.Empty);
-            Assert.That(h.EntriesRejected, Has.Count.EqualTo(1));
-            Assert.That(h.EntriesRejected[0].Rejection.Reason, Is.EqualTo(EntryRejectionReason.AmbiguousBoundaries));
-            Assert.That(h.EntriesRejected[0].Rejection.Side, Is.Null);
-            Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(2));
+            Assert.That(h.EntriesRejected, Is.Empty, "not a rejection, an invariant failure");
 
-            h.AtLower();                       // one boundary only: opens normally
-            Assert.That(basket.OpenPositions, Is.EqualTo(1));
-            Assert.That(basket.Legs[0].Side, Is.EqualTo(TradeSide.Sell));
-            Assert.That(basket.LastRejection, Is.Null);
+            var again = Assert.Throws<StrategyInvariantException>(() => h.AtLower())!;
+            Assert.That(again.Message, Does.Contain("faulted"));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "a faulted engine trades no further");
         }
 
         [Test]
-        public void AmbiguityOnlyConcernsTheFirstEntry()
+        public void AfterTheFirstLegAWideQuoteIsJustTheRequiredSide()
         {
             var h = new Harness();
             h.Anchor();
@@ -264,15 +265,14 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void AnchoringQuoteCannotOpenALegUnlessTheStepIsInsideTheSpread()
+        public void AnchoringQuoteNeverOpensALeg()
         {
             // The anchor is the midpoint, so a step wider than half the spread cannot trigger on
-            // the anchoring quote itself. A step inside the spread puts both levels inside the
-            // quote, which is the ambiguous case: still nothing opens on that quote.
+            // the anchoring quote itself; a step inside the spread puts both levels inside the
+            // quote, which is the both-boundaries invariant failure, not an entry.
             var h = new Harness();
             h.Feed(1999.9m, 2000.1m);
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
-            Assert.That(h.EntriesRejected, Is.Empty);
 
             var narrow = new Harness(new SingleAnchorParameters
             {
@@ -280,13 +280,9 @@ namespace MarketLab.SingleAnchor.Tests
                 BaseLot = 0.01m,
                 PointValuePerLot = 100m
             });
-            narrow.Feed(1999.9m, 2000.1m);
+            var fault = Assert.Throws<StrategyInvariantException>(() => narrow.Feed(1999.9m, 2000.1m))!;
+            Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.BothBoundariesSatisfied));
             Assert.That(narrow.Engine.Basket!.OpenPositions, Is.EqualTo(0));
-            Assert.That(narrow.EntriesRejected[0].Rejection.Reason, Is.EqualTo(EntryRejectionReason.AmbiguousBoundaries));
-
-            narrow.Feed(2000m, 2000.1m);      // Ask >= 2000.02, Bid > 1999.98: a plain BUY
-            Assert.That(narrow.Engine.Basket!.OpenPositions, Is.EqualTo(1));
-            Assert.That(narrow.Engine.Basket!.Legs[0].Side, Is.EqualTo(TradeSide.Buy));
         }
     }
 
@@ -327,6 +323,9 @@ namespace MarketLab.SingleAnchor.Tests
         [Test]
         public void EachConstraintIsChecked()
         {
+            Assert.That(With(p => p.StepPercent = 100m), Has.Some.Contains("StepPercent must be < 100"));
+            Assert.That(With(p => p.StepPercent = 150m), Has.Some.Contains("StepPercent must be < 100"));
+            Assert.That(With(p => p.StepPercent = 99.99m), Has.None.Contains("StepPercent"));
             Assert.That(With(p => p.NormalTradeCount = -1), Has.Some.Contains("NormalTradeCount"));
             Assert.That(With(p => p.HardBreakevenCeilingPercent = 100m), Has.Some.Contains("HardBreakevenCeilingPercent"));
             Assert.That(With(p => p.HardBreakevenCeilingPercent = 0m), Has.Some.Contains("HardBreakevenCeilingPercent"));
@@ -336,7 +335,6 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(With(p => p.TrailingActivationUnits = -1m), Has.Some.Contains("TrailingActivationUnits"));
             Assert.That(With(p => p.TrailingDropUnits = -1m), Has.Some.Contains("TrailingDropUnits"));
             Assert.That(With(p => p.CommissionBuffer = -1m), Has.Some.Contains("CommissionBuffer must"));
-            Assert.That(With(p => p.CommissionBufferPerLot = -1m), Has.Some.Contains("CommissionBufferPerLot"));
             Assert.That(With(p => p.PointValuePerLot = 0m), Has.Some.Contains("PointValuePerLot"));
             Assert.That(With(p => p.VolumeStep = 0m), Has.Some.Contains("VolumeStep"));
             Assert.That(With(p => p.MinimumVolume = 0m), Has.Some.Contains("MinimumVolume"));
@@ -365,6 +363,7 @@ namespace MarketLab.SingleAnchor.Tests
 
         private sealed class Mutable
         {
+            public decimal StepPercent = 1m;
             public int NormalTradeCount = 4;
             public decimal HardBreakevenCeilingPercent = 4.478m;
             public decimal EscapeProfitUnits = 0.05m;
@@ -373,7 +372,6 @@ namespace MarketLab.SingleAnchor.Tests
             public decimal TrailingActivationUnits = 0.5m;
             public decimal TrailingDropUnits = 0.25m;
             public decimal CommissionBuffer = 0m;
-            public decimal CommissionBufferPerLot = 0m;
             public decimal PointValuePerLot = 100m;
             public decimal VolumeStep = 0.01m;
             public decimal MinimumVolume = 0.01m;
@@ -388,7 +386,7 @@ namespace MarketLab.SingleAnchor.Tests
             {
                 return new SingleAnchorParameters
                 {
-                    StepPercent = 1m,
+                    StepPercent = StepPercent,
                     BaseLot = 0.01m,
                     NormalTradeCount = NormalTradeCount,
                     HardBreakevenCeilingPercent = HardBreakevenCeilingPercent,
@@ -398,7 +396,6 @@ namespace MarketLab.SingleAnchor.Tests
                     TrailingActivationUnits = TrailingActivationUnits,
                     TrailingDropUnits = TrailingDropUnits,
                     CommissionBuffer = CommissionBuffer,
-                    CommissionBufferPerLot = CommissionBufferPerLot,
                     PointValuePerLot = PointValuePerLot,
                     VolumeStep = VolumeStep,
                     MinimumVolume = MinimumVolume,

@@ -204,28 +204,36 @@ namespace MarketLab.SingleAnchor.Tests
             var sizing = h.EntriesOpened[4].Sizing!;
             Assert.That(BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, h.Parameters), Is.EqualTo(sizing.ProjectedProfitAfter));
             Assert.That(BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, h.Parameters), Is.EqualTo(36.64m));
-            Assert.That(basket.HardBreakevenViolations, Is.EqualTo(0));
-            Assert.That(h.Engine.HardBreakevenViolations, Is.EqualTo(0));
+            Assert.That(basket.Legs[4].Sizing, Is.SameAs(sizing));
             Assert.That(h.Violations, Is.Empty);
+            Assert.That(h.Engine.Faulted, Is.False);
         }
 
         [Test]
-        public void ATailFillWorseThanTheModelIsRecordedAndReportedAsAViolation()
+        public void ATailFillWorseThanTheModelFaultsTheRun()
         {
+            // With the research executor this cannot happen (fills are the sizing model); an
+            // executor that departs from the model would put breakeven outside the ceiling, which
+            // the strategy forbids after hard-BE activation, so the engine stops instead of trading on.
             var h = new Harness(Harness.NoExits());
             var basket = h.PingPongFourLegs();
             h.Executor.EntryOverride = o => EntryExecution.Filled(2030m); // 10 above the modelled Ask
 
-            h.AtUpper();
+            var fault = Assert.Throws<StrategyInvariantException>(() => h.AtUpper())!;
 
             // -380.12 + (2089.46 - 2030) * 0.06 * 100 = -23.36 < 0: the requirement is not met
-            Assert.That(basket.OpenPositions, Is.EqualTo(5), "the fill happened; the ledger stays truthful");
+            Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.HardBreakevenViolatedByFill));
+            Assert.That(fault.Message, Does.Contain("-23.36"));
+            Assert.That(basket.OpenPositions, Is.EqualTo(5), "the fill happened; the ledger stays truthful for the post-mortem");
             Assert.That(basket.Legs[4].EntryPrice, Is.EqualTo(2030m));
-            Assert.That(h.Violations, Has.Count.EqualTo(1));
+            Assert.That(h.Violations, Has.Count.EqualTo(1), "the diagnostic is raised before the fault");
             Assert.That(h.Violations[0].ProjectedProfitAfterFill, Is.EqualTo(-23.36m));
             Assert.That(h.Violations[0].Leg, Is.SameAs(basket.Legs[4]));
-            Assert.That(basket.HardBreakevenViolations, Is.EqualTo(1));
-            Assert.That(h.Engine.HardBreakevenViolations, Is.EqualTo(1));
+            Assert.That(h.Engine.Faulted, Is.True);
+
+            h.Executor.EntryOverride = null;
+            Assert.Throws<StrategyInvariantException>(() => h.AtLower());
+            Assert.That(basket.OpenPositions, Is.EqualTo(5), "no further trading after the fault");
         }
 
         [Test]
@@ -287,7 +295,7 @@ namespace MarketLab.SingleAnchor.Tests
         /// <summary>The four-leg reference basket built directly on the ledger.</summary>
         private static Basket ReferenceBasket(SingleAnchorParameters parameters)
         {
-            var basket = new Basket(new Quote(Time, 1999.9m, 2000.1m), parameters);
+            var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), parameters);
             basket.AddLeg(new BasketLeg(1, TradeSide.Buy, 0.01m, 2020m, Time, SizingRegime.Arithmetic));
             basket.AddLeg(new BasketLeg(2, TradeSide.Sell, 0.02m, 1980m, Time, SizingRegime.Arithmetic));
             basket.AddLeg(new BasketLeg(3, TradeSide.Buy, 0.03m, 2020m, Time, SizingRegime.Arithmetic));
@@ -359,7 +367,7 @@ namespace MarketLab.SingleAnchor.Tests
         public void BasketAlreadyInsideTheCeilingNeedsOnlyTheMinimumLot()
         {
             var p = Harness.Defaults();
-            var basket = new Basket(new Quote(Time, 1999.9m, 2000.1m), p);
+            var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), p);
             basket.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Time, SizingRegime.Arithmetic));
             basket.AddLeg(new BasketLeg(2, TradeSide.Buy, 0.50m, 2020m, Time, SizingRegime.Arithmetic));
 
@@ -482,7 +490,7 @@ namespace MarketLab.SingleAnchor.Tests
                 HardBreakevenCeilingPercent = 0.5m,
                 PointValuePerLot = d.PointValuePerLot
             };
-            var basket = new Basket(new Quote(Time, 1999.9m, 2000.1m), p);
+            var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), p);
             basket.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Time, SizingRegime.Arithmetic));
             basket.AddLeg(new BasketLeg(2, TradeSide.Buy, 0.50m, 2000m, Time, SizingRegime.Arithmetic));
 
@@ -507,7 +515,7 @@ namespace MarketLab.SingleAnchor.Tests
                 HardBreakevenCeilingPercent = 0.5m,
                 PointValuePerLot = d.PointValuePerLot
             };
-            var basket = new Basket(new Quote(Time, 1999.9m, 2000.1m), p);
+            var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), p);
             basket.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Time, SizingRegime.Arithmetic));
             basket.AddLeg(new BasketLeg(2, TradeSide.Buy, 0.04m, 2000m, Time, SizingRegime.Arithmetic)); // +39.6 - 30.1 = 9.5 at T_up
 
@@ -538,6 +546,27 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(sizing.RequiredLot, Is.EqualTo(380.12m / 6946m));
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
             Assert.That(sizing.Message, Does.Contain("not allowed to drift"));
+        }
+
+        [Test]
+        public void ProjectedClosePricesBelowZeroAfterSlippageAreInvalid()
+        {
+            // The target itself is valid (Bid 2089.46) but the executable BUY close, Bid less
+            // slippage, is not positive.
+            var d = Harness.Defaults();
+            var p = new SingleAnchorParameters
+            {
+                StepPercent = d.StepPercent,
+                BaseLot = d.BaseLot,
+                PointValuePerLot = d.PointValuePerLot,
+                Slippage = 2100m
+            };
+            var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
+
+            Assert.That(sizing.Target.IsValid, Is.True);
+            Assert.That(sizing.CandidateEntryPrice, Is.EqualTo(4120m));
+            Assert.That(sizing.Outcome, Is.EqualTo(HardBreakevenOutcome.InvalidTargetPrices));
+            Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
         }
 
         [Test]

@@ -68,13 +68,6 @@ namespace MarketLab.SingleAnchor
         /// </summary>
         public decimal CommissionBuffer { get; init; }
 
-        /// <summary>
-        /// Optional volume-scaled part of the commission buffer, account currency per lot of gross
-        /// open volume: the total deduction is CommissionBuffer + CommissionBufferPerLot * GrossLots.
-        /// 0 disables it (default).
-        /// </summary>
-        public decimal CommissionBufferPerLot { get; init; }
-
         // ---- Instrument money value and broker volume constraints (sections 8, 10, 17) ----
 
         /// <summary>V: account-currency value of a one-price-unit move for one lot (section 10). Required.</summary>
@@ -144,6 +137,7 @@ namespace MarketLab.SingleAnchor
             var errors = new List<string>();
 
             if (StepPercent <= 0m) errors.Add($"{nameof(StepPercent)} must be > 0 (got {F(StepPercent)}); the specification states no default, set it explicitly.");
+            else if (StepPercent >= 100m) errors.Add($"{nameof(StepPercent)} must be < 100 so the lower level stays positive (got {F(StepPercent)}).");
             if (BaseLot <= 0m) errors.Add($"{nameof(BaseLot)} must be > 0 (got {F(BaseLot)}); the specification states no default, set it explicitly.");
             if (NormalTradeCount < 0) errors.Add($"{nameof(NormalTradeCount)} must be >= 0 (got {NormalTradeCount}).");
             if (HardBreakevenCeilingPercent <= 0m || HardBreakevenCeilingPercent >= 100m) errors.Add($"{nameof(HardBreakevenCeilingPercent)} must be > 0 and < 100 (got {F(HardBreakevenCeilingPercent)}).");
@@ -154,7 +148,6 @@ namespace MarketLab.SingleAnchor
             if (TrailingActivationUnits < 0m) errors.Add($"{nameof(TrailingActivationUnits)} must be >= 0 (got {F(TrailingActivationUnits)}).");
             if (TrailingDropUnits < 0m) errors.Add($"{nameof(TrailingDropUnits)} must be >= 0 (got {F(TrailingDropUnits)}).");
             if (CommissionBuffer < 0m) errors.Add($"{nameof(CommissionBuffer)} must be >= 0 (got {F(CommissionBuffer)}).");
-            if (CommissionBufferPerLot < 0m) errors.Add($"{nameof(CommissionBufferPerLot)} must be >= 0 (got {F(CommissionBufferPerLot)}).");
 
             if (PointValuePerLot <= 0m) errors.Add($"{nameof(PointValuePerLot)} must be > 0 (got {F(PointValuePerLot)}).");
             if (VolumeStep <= 0m) errors.Add($"{nameof(VolumeStep)} must be > 0 (got {F(VolumeStep)}).");

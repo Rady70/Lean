@@ -22,7 +22,9 @@ namespace MarketLab.SingleAnchor
     /// folder) and to the algorithm log. Every strategy input is a LEAN parameter (config
     /// `parameters` object or the MarketLab helper's -Parameters), named below;
     /// <c>single-anchor-step-percent</c> and <c>single-anchor-base-lot</c> have no specified
-    /// default and must be given.
+    /// default and must be given. A strategy invariant failure
+    /// (<see cref="StrategyInvariantException"/>) writes the results with the failure recorded
+    /// and then stops the run as a LEAN runtime error.
     /// </summary>
     /// <remarks>
     /// The default dates cover the 13-day Oanda XAUUSD tick sample that upstream ships under
@@ -58,7 +60,6 @@ namespace MarketLab.SingleAnchor
 
         // ---- Execution economics, commission buffer, volume steps, money value ----
         [Parameter("single-anchor-commission-buffer")] private decimal _commissionBuffer = 0m;
-        [Parameter("single-anchor-commission-buffer-per-lot")] private decimal _commissionBufferPerLot = 0m;
         [Parameter("single-anchor-point-value-per-lot")] private decimal _pointValuePerLot = 100m;
         [Parameter("single-anchor-volume-step")] private decimal _volumeStep = 0.01m;
         [Parameter("single-anchor-minimum-volume")] private decimal _minimumVolume = 0.01m;
@@ -118,7 +119,6 @@ namespace MarketLab.SingleAnchor
                 TrailingActivationUnits = _trailingActivationUnits,
                 TrailingDropUnits = _trailingDropUnits,
                 CommissionBuffer = _commissionBuffer,
-                CommissionBufferPerLot = _commissionBufferPerLot,
                 PointValuePerLot = _pointValuePerLot,
                 VolumeStep = _volumeStep,
                 MinimumVolume = _minimumVolume,
@@ -141,13 +141,18 @@ namespace MarketLab.SingleAnchor
             _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters));
             WireEvents();
 
+            if (_parameters.SwapConfigured)
+            {
+                Log("SingleAnchor notice: swap is configured. The hard-BE requirement is verified immediately after each tail entry; financing accrued afterwards is not re-verified against the hard ceiling, so non-zero swap is not qualified against the no-drift rule (see SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md).");
+            }
+
             Log($"SingleAnchor vNext on {_symbol} ({_securityType}, {_market}) tick quotes; LEAN is the data host, fills are the research executor's, no LEAN order is placed.");
             var p = _parameters;
             Log($"SingleAnchor parameters: step {F(p.StepPercent)}%, base lot {F(p.BaseLot)}, Nnormal {p.NormalTradeCount}, hard-BE ceiling {F(p.HardBreakevenCeilingPercent)}%, " +
                 $"escape {(p.EscapeEnabled ? F(p.EscapeProfitUnits) + " units, min " + p.EscapeMinimumOpenPositions + " positions" : "off")}, " +
                 $"fixed TP {(p.FixedTakeProfitUnits > 0m ? F(p.FixedTakeProfitUnits) + " units" : "off")}, " +
                 $"trailing {(p.TrailingEnabled ? F(p.TrailingActivationUnits) + "/" + F(p.TrailingDropUnits) + " units" : "off")}, " +
-                $"commission buffer {F(p.CommissionBuffer)} + {F(p.CommissionBufferPerLot)}/lot, point value {F(p.PointValuePerLot)}/lot, volume step {F(p.VolumeStep)} [{F(p.MinimumVolume)}, {F(p.MaximumVolume)}], " +
+                $"commission buffer {F(p.CommissionBuffer)}, point value {F(p.PointValuePerLot)}/lot, volume step {F(p.VolumeStep)} [{F(p.MinimumVolume)}, {F(p.MaximumVolume)}], " +
                 $"commission {F(p.CommissionPerLot)}/lot round trip, slippage {F(p.Slippage)}, projected spread {(p.UseObservedSpreadForProjection ? "observed" : F(p.ProjectedSpread))}, " +
                 $"swap buy {F(p.BuySwapPerLotPerDay)} / sell {F(p.SellSwapPerLotPerDay)} per lot per day at {p.SwapRolloverTimeOfDay} (triple: {(p.TripleSwapDay.HasValue ? p.TripleSwapDay.Value.ToString() : "none")}).");
         }
@@ -155,16 +160,29 @@ namespace MarketLab.SingleAnchor
         /// <inheritdoc />
         public override void OnData(Slice slice)
         {
-            if (slice != null && slice.Ticks.TryGetValue(_symbol, out var ticks))
+            if (slice == null || !slice.Ticks.TryGetValue(_symbol, out var ticks))
+            {
+                return;
+            }
+            try
             {
                 _feed.Feed(ticks, _engine);
+            }
+            catch (StrategyInvariantException invariant)
+            {
+                // LEAN ends the run on the rethrow without calling OnEndOfAlgorithm, so the
+                // results are written here, with the failure recorded.
+                Error($"SingleAnchor strategy invariant {invariant.Invariant} failed: {invariant.Message}");
+                Log($"SingleAnchor run stopped by the {invariant.Invariant} invariant at {invariant.Quote}.");
+                WriteResults(_engine.LastAcceptedQuote.HasValue ? _engine.MarkToMarket(_engine.LastAcceptedQuote.Value) : null, invariant);
+                throw;
             }
         }
 
         /// <inheritdoc />
         public override void OnEndOfAlgorithm()
         {
-            Log($"SingleAnchor end of data: {_feed.QuoteTicks} quote ticks fed ({_feed.NonQuoteTicks} non-quote ticks unused, {_feed.InvalidQuoteTicks} invalid quote ticks skipped), {_engine.QuotesProcessed} quotes processed, {_engine.EntriesOpened} legs opened, {_engine.EntriesRejected} distinct rejected entries ({_engine.RejectedEntryAttempts} attempts), {_engine.BasketsClosed} baskets closed, realized profit {F(_engine.RealizedProfit)}, hard-BE violations {_engine.HardBreakevenViolations}.");
+            Log($"SingleAnchor end of data: {_feed.QuoteTicks} quote ticks fed ({_feed.NonQuoteTicks} non-quote ticks unused, {_feed.InvalidQuoteTicks} invalid quote ticks skipped, {_feed.RejectedQuoteTicks} out-of-order quote ticks refused), {_engine.QuotesProcessed} quotes processed, {_engine.EntriesOpened} legs opened, {_engine.EntriesRejected} distinct rejected entries ({_engine.RejectedEntryAttempts} attempts), {_engine.BasketsClosed} baskets closed, realized profit {F(_engine.RealizedProfit)}.");
 
             BasketValuation? valuation = null;
             var basket = _engine.Basket;
@@ -178,14 +196,14 @@ namespace MarketLab.SingleAnchor
             }
             else
             {
-                valuation = _feed.LastQuote.HasValue ? _engine.MarkToMarket(_feed.LastQuote.Value) : null;
+                valuation = _feed.LastAcceptedQuote.HasValue ? _engine.MarkToMarket(_feed.LastAcceptedQuote.Value) : null;
                 if (valuation == null)
                 {
                     Log($"SingleAnchor end of data: basket left open with {basket.OpenPositions} legs and no quote to mark it; not closed.");
                 }
                 else
                 {
-                    Log($"SingleAnchor end of data: open basket marked to market at {valuation.Quote} (not closed): {valuation.OpenPositions} legs, buy {F(valuation.BuyLots)} / sell {F(valuation.SellLots)} / gross {F(valuation.GrossLots)} / net {F(valuation.NetLots)} lots, raw profit {F(valuation.RawProfit)}, exit profit {F(valuation.ExitProfit)}, executable profit {F(valuation.ExecutableProfit)}, step money {F(valuation.StepMoney)}, hard-BE mode {valuation.HardBreakevenModeActive}, trailing {valuation.TrailingActive} (peak {F(valuation.PeakProfit)}).");
+                    Log($"SingleAnchor end of data: open basket #{valuation.Sequence} marked to market at {valuation.Quote} (not closed): {valuation.OpenPositions} legs, buy {F(valuation.BuyLots)} / sell {F(valuation.SellLots)} / gross {F(valuation.GrossLots)} / net {F(valuation.NetLots)} lots, raw profit {F(valuation.RawProfit)}, exit profit {F(valuation.ExitProfit)}, executable profit {(valuation.ExecutableProfit.HasValue ? F(valuation.ExecutableProfit.Value) : "n/a (an executable close price is not positive)")}, step money {F(valuation.StepMoney)}, hard-BE mode {valuation.HardBreakevenModeActive}, trailing {valuation.TrailingActive} (peak {F(valuation.PeakProfit)}).");
                     foreach (var leg in basket.Legs)
                     {
                         Log($"SingleAnchor open leg: {leg}");
@@ -193,13 +211,20 @@ namespace MarketLab.SingleAnchor
                 }
             }
 
-            WriteResults(valuation);
+            WriteResults(valuation, null);
         }
 
-        private void WriteResults(BasketValuation? openBasket)
+        private void WriteResults(BasketValuation? openBasket, StrategyInvariantException? invariant)
         {
             var results = new Dictionary<string, object?>
             {
+                ["completed"] = invariant == null,
+                ["invariantFailure"] = invariant == null ? null : new Dictionary<string, object?>
+                {
+                    ["invariant"] = invariant.Invariant.ToString(),
+                    ["quote"] = invariant.Quote,
+                    ["message"] = invariant.Message
+                },
                 ["symbol"] = _symbol.Value,
                 ["market"] = _market,
                 ["startDate"] = _startDate,
@@ -208,16 +233,16 @@ namespace MarketLab.SingleAnchor
                 ["quoteTicksFed"] = _feed.QuoteTicks,
                 ["nonQuoteTicksUnused"] = _feed.NonQuoteTicks,
                 ["invalidQuoteTicksSkipped"] = _feed.InvalidQuoteTicks,
+                ["outOfOrderQuoteTicksRefused"] = _feed.RejectedQuoteTicks,
                 ["quotesProcessed"] = _engine.QuotesProcessed,
                 ["legsOpened"] = _engine.EntriesOpened,
                 ["distinctRejectedEntries"] = _engine.EntriesRejected,
                 ["rejectedEntryAttempts"] = _engine.RejectedEntryAttempts,
                 ["basketsClosed"] = _engine.BasketsClosed,
-                ["hardBreakevenViolations"] = _engine.HardBreakevenViolations,
                 ["realizedProfit"] = _engine.RealizedProfit,
                 ["closedBaskets"] = _engine.ClosedBaskets,
                 ["openBasket"] = openBasket,
-                ["openBasketLegs"] = _engine.Basket?.Legs
+                ["openBasketLegs"] = _engine.OpenBasketLegTrace()
             };
             var settings = new JsonSerializerSettings { Formatting = Formatting.Indented, Converters = { new StringEnumConverter() } };
             if (ObjectStore.SaveJson(ResultsKey, results, settings: settings))
@@ -232,12 +257,12 @@ namespace MarketLab.SingleAnchor
 
         private void WireEvents()
         {
-            _engine.AnchorCreated += e => Log($"SingleAnchor anchor {F(e.Basket.Anchor)} at {e.Quote}: upper {F(e.Basket.Upper)}, lower {F(e.Basket.Lower)}, hard-BE targets {F(e.Basket.LowerTarget)} / {F(e.Basket.UpperTarget)}.");
+            _engine.AnchorCreated += e => Log($"SingleAnchor basket #{e.Basket.Sequence} anchor {F(e.Basket.Anchor)} at {e.Quote}: upper {F(e.Basket.Upper)}, lower {F(e.Basket.Lower)}, hard-BE targets {F(e.Basket.LowerTarget)} / {F(e.Basket.UpperTarget)}.");
             _engine.EntryOpened += e => Log($"SingleAnchor leg opened: {e.Leg}; basket buy {F(e.Basket.BuyLots)} / sell {F(e.Basket.SellLots)} / net {F(e.Basket.NetLots)} lots" + (e.Sizing != null ? "; " + e.Sizing.Message : string.Empty));
-            _engine.EntryRejected += e => Error($"SingleAnchor entry rejected ({e.Rejection.Reason}) for trade {e.Rejection.TradeNumber} {(e.Rejection.Side.HasValue ? e.Rejection.Side.Value.ToString() : "either side")} at {e.Quote}: {e.Rejection.Message}");
-            _engine.HardBreakevenViolated += e => Error($"SingleAnchor hard-BE violated by the fill of {e.Leg}: projected executable P/L at target {F(e.Sizing.Target.Target)} is {F(e.ProjectedProfitAfterFill)} after the fill (sizing expected {F(e.Sizing.ProjectedProfitAfter)}).");
+            _engine.EntryRejected += e => Error($"SingleAnchor entry rejected ({e.Rejection.Reason}) for trade {e.Rejection.TradeNumber} {e.Rejection.Side} of basket #{e.Basket.Sequence} at {e.Quote}: {e.Rejection.Message}");
+            _engine.HardBreakevenViolated += e => Error($"SingleAnchor hard-BE violated by the fill of {e.Leg} in basket #{e.Basket.Sequence}: projected executable P/L at target {F(e.Sizing.Target.Target)} is {F(e.ProjectedProfitAfterFill)} after the fill (sizing expected {F(e.Sizing.ProjectedProfitAfter)}); the run stops.");
             _engine.TrailingActivated += e => Log($"SingleAnchor trailing activated at profit {F(e.Profit)} (threshold {F(e.ActivationThreshold)}) at {e.Quote}.");
-            _engine.BasketClosed += e => Log($"SingleAnchor basket closed by {e.Record.Reason} at {e.Quote}: {e.Record.Legs} legs, raw profit {F(e.Record.RawProfit)}, exit profit {F(e.Record.ExitProfit)} vs threshold {F(e.Record.Threshold)}, realized {F(e.Record.RealizedProfit)} (buys closed {F(e.Record.BuyClosePrice)}, sells closed {F(e.Record.SellClosePrice)}, swap {F(e.Record.Swap)}, commission {F(e.Record.Commission)}); realized total {F(_engine.RealizedProfit)}.");
+            _engine.BasketClosed += e => Log($"SingleAnchor basket #{e.Record.Sequence} closed by {e.Record.Reason} at {e.Quote}: {e.Record.Legs} legs, raw profit {F(e.Record.RawProfit)}, exit profit {F(e.Record.ExitProfit)} vs threshold {F(e.Record.Threshold)}, realized {F(e.Record.RealizedProfit)} (buys closed {F(e.Record.BuyClosePrice)}, sells closed {F(e.Record.SellClosePrice)}, swap {F(e.Record.Swap)}, commission {F(e.Record.Commission)}); realized total {F(_engine.RealizedProfit)}.");
             _engine.BasketCloseFailed += e => Error($"SingleAnchor close ({e.Reason}) failed at {e.Quote}: {e.Message}");
             _engine.InvalidQuote += e => Error($"SingleAnchor {e.Message} ({e.Quote})");
         }

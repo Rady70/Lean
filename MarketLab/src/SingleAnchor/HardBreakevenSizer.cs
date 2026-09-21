@@ -11,7 +11,11 @@ namespace MarketLab.SingleAnchor
         /// <summary>A valid lot satisfies PL_after(T, Q) >= 0.</summary>
         Feasible,
 
-        /// <summary>The projected Bid or Ask at the target, or the candidate entry, is not positive; no projection is possible.</summary>
+        /// <summary>
+        /// An executable price of the projection is not positive: the projected close of a BUY
+        /// (target Bid less slippage) or of a SELL (target Ask plus slippage), or the candidate
+        /// entry price. No projection is possible.
+        /// </summary>
         InvalidTargetPrices,
 
         /// <summary>
@@ -60,7 +64,7 @@ namespace MarketLab.SingleAnchor
                     case HardBreakevenOutcome.Feasible:
                         return $"Hard-BE {Side} trade {TradeNumber}: PL_existing(T)={F(ExistingProfitAtTarget)}, PL_1lot(T)={F(MarginalProfitPerLot)}, Q_BE={F(RequiredLot)}, lot={F(NormalizedLot)}, PL_after={F(ProjectedProfitAfter)} at target {target}.";
                     case HardBreakevenOutcome.InvalidTargetPrices:
-                        return $"Projected prices at the {Side} target are not positive (target {target}, spread {F(Target.Spread)}, candidate entry {F(CandidateEntryPrice)}).";
+                        return $"Executable prices of the {Side} projection are not positive (target {target}, spread {F(Target.Spread)}, projected Bid {F(Target.Bid)} / Ask {F(Target.Ask)} before slippage, candidate entry {F(CandidateEntryPrice)}).";
                     case HardBreakevenOutcome.NonPositiveMarginalProfit:
                         return $"One lot of {Side} at {F(CandidateEntryPrice)} contributes {F(MarginalProfitPerLot)} at the hard target {target} (projected close {F(Side == TradeSide.Buy ? Target.Bid : Target.Ask)}) while the basket projects {F(ExistingProfitAtTarget)} there; the target cannot be reached by adding {Side} volume.";
                     default:
@@ -113,7 +117,8 @@ namespace MarketLab.SingleAnchor
             var candidateEntry = BasketEconomics.ExecutableEntryPrice(side, quote, parameters);
             var maximum = parameters.MaximumVolume;
 
-            if (!target.IsValid || candidateEntry <= 0m)
+            var (projectedBuyClose, projectedSellClose) = BasketEconomics.ExecutableClosePrices(target, parameters);
+            if (!target.IsValid || !BasketEconomics.ArePricesUsable(projectedBuyClose, projectedSellClose) || candidateEntry <= 0m)
             {
                 return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, 0m, 0m, 0m, 0m, 0m, maximum, HardBreakevenOutcome.InvalidTargetPrices);
             }
