@@ -205,34 +205,59 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void AQuoteSatisfyingBothBoundariesOfAnEmptyBasketStopsTheRunPendingTheOwnerDecision()
+        public void AQuoteSatisfyingBothBoundariesOpensNoTradeAndDoesNotStopTheRun()
         {
-            // The specification defines no rule for a quote that satisfies both entry rules
-            // (spread >= 2 steps) and the owner has not decided its treatment. This test pins the
-            // interim behaviour only: the engine stops rather than choose a side, skip or open both.
-            // It does not assert that stopping is the strategy.
+            // Owner decision resolved (specification section 3): a still-empty basket must not
+            // start on a quote that satisfies both boundaries; no priority, no double entry, no
+            // run-ending error. The basket waits for an unambiguous quote.
             var h = new Harness();
             h.Anchor();
 
-            var fault = Assert.Throws<StrategyInvariantException>(() => h.Feed(1979m, 2021m))!;
+            var wide = h.Feed(1979m, 2021m);
 
-            Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.BothBoundariesSatisfied));
-            Assert.That(fault.Quote.Ask, Is.EqualTo(2021m));
-            Assert.That(fault.Message, Does.Contain("unresolved owner decision"));
-            Assert.That(h.Engine.Faulted, Is.True);
-            Assert.That(h.Engine.Fault, Is.SameAs(fault));
+            Assert.That(h.Engine.Faulted, Is.False, "skipping is not an error");
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(2));
+            Assert.That(h.Engine.SkippedFirstEntryQuotes, Is.EqualTo(1));
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "no side was chosen");
             Assert.That(h.Executor.Entries, Is.Empty);
-            Assert.That(h.EntriesRejected, Is.Empty, "not a rejection, an invariant failure");
+            Assert.That(h.EntriesRejected, Is.Empty, "not a rejection");
+            Assert.That(h.SkippedFirstEntries, Has.Count.EqualTo(1), "one event per basket");
 
-            var again = Assert.Throws<StrategyInvariantException>(() => h.AtLower())!;
-            Assert.That(again.Message, Does.Contain("faulted"));
-            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0), "a faulted engine trades no further");
+            var trace = h.Engine.Basket!.SkippedFirstEntry!;
+            Assert.That(trace.Attempts, Is.EqualTo(1));
+            Assert.That(trace.FirstQuoteSequence, Is.EqualTo(2));
+            Assert.That(trace.FirstTime, Is.EqualTo(wide.Time));
+            Assert.That(trace.FirstBid, Is.EqualTo(1979m));
+            Assert.That(trace.FirstAsk, Is.EqualTo(2021m));
+            Assert.That(trace.LastQuoteSequence, Is.EqualTo(2));
 
-            var snapshot = h.Engine.MarkToMarket(fault.Quote)!;
-            Assert.That(snapshot.AnchorEvent.QuoteSequence, Is.EqualTo(1), "the anchored basket keeps its source quote");
-            Assert.That(snapshot.AnchorEvent.Bid, Is.EqualTo(1999.9m));
-            Assert.That(snapshot.RejectionTrace, Is.Empty, "not a rejection");
+            // a second wide quote before the first trade is still not a trading decision
+            h.Feed(1978m, 2022m);
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.Engine.SkippedFirstEntryQuotes, Is.EqualTo(2));
+
+            // a later unambiguous quote starts the basket
+            h.AtUpper();
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1));
+            Assert.That(h.Engine.Basket!.Legs[0].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(h.Engine.Basket!.SkippedFirstEntry!.Attempts, Is.EqualTo(2), "the trace keeps its count after the first leg");
+        }
+
+        [Test]
+        public void RepeatedAmbiguousQuotesAreCountedOnOneCompactTrace()
+        {
+            var h = new Harness();
+            h.Anchor();
+            var first = h.Feed(1979m, 2021m);
+            var second = h.Feed(1978m, 2022m);
+
+            Assert.That(h.Engine.SkippedFirstEntryQuotes, Is.EqualTo(2));
+            Assert.That(h.SkippedFirstEntries, Has.Count.EqualTo(1), "the event is raised once per basket");
+            var trace = h.Engine.Basket!.SkippedFirstEntry!;
+            Assert.That(trace.Attempts, Is.EqualTo(2));
+            Assert.That(trace.FirstTime, Is.EqualTo(first.Time));
+            Assert.That(trace.LastTime, Is.EqualTo(second.Time));
+            Assert.That(trace.LastAsk, Is.EqualTo(2022m));
         }
 
         [Test]
@@ -247,6 +272,21 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(basket.OpenPositions, Is.EqualTo(2));
             Assert.That(basket.Legs[1].Side, Is.EqualTo(TradeSide.Sell));
             Assert.That(basket.Legs[1].EntryPrice, Is.EqualTo(1979m));
+            Assert.That(h.EntriesRejected, Is.Empty);
+        }
+
+        [Test]
+        public void AfterASellFirstLegAWideQuoteIsJustTheRequiredBuy()
+        {
+            var h = new Harness();
+            h.Anchor();
+            h.AtLower();                       // SELL 1: the next side is fixed
+            h.Feed(1979m, 2021m);              // both boundaries, but only a BUY is possible now
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.OpenPositions, Is.EqualTo(2));
+            Assert.That(basket.Legs[1].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(basket.Legs[1].EntryPrice, Is.EqualTo(2021m), "the executable Ask of the wide quote");
             Assert.That(h.EntriesRejected, Is.Empty);
         }
 
@@ -302,10 +342,11 @@ namespace MarketLab.SingleAnchor.Tests
         {
             // The anchor is the midpoint, so a step wider than half the spread cannot trigger on
             // the anchoring quote itself; a step inside the spread puts both levels inside the
-            // quote, which is the both-boundaries invariant failure, not an entry.
+            // quote, which is the skipped-first-entry case, not an entry.
             var h = new Harness();
             h.Feed(1999.9m, 2000.1m);
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.Engine.SkippedFirstEntryQuotes, Is.EqualTo(0));
 
             var narrow = new Harness(new SingleAnchorParameters
             {
@@ -314,9 +355,10 @@ namespace MarketLab.SingleAnchor.Tests
                 PointValuePerLot = 100m,
                 ProjectedSpread = 0.2m
             });
-            var fault = Assert.Throws<StrategyInvariantException>(() => narrow.Feed(1999.9m, 2000.1m))!;
-            Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.BothBoundariesSatisfied));
+            narrow.Feed(1999.9m, 2000.1m);
+            Assert.That(narrow.Engine.Faulted, Is.False);
             Assert.That(narrow.Engine.Basket!.OpenPositions, Is.EqualTo(0));
+            Assert.That(narrow.Engine.SkippedFirstEntryQuotes, Is.EqualTo(1));
         }
     }
 
@@ -368,6 +410,8 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(With(p => p.HardBreakevenCeilingPercent = 0m), Has.Some.Contains("HardBreakevenCeilingPercent"));
             Assert.That(With(p => p.EscapeProfitUnits = -0.1m), Has.Some.Contains("EscapeProfitUnits"));
             Assert.That(With(p => p.EscapeMinimumOpenPositions = 0), Has.Some.Contains("EscapeMinimumOpenPositions"));
+            Assert.That(With(p => p.EscapeMinimumOpenPositions = 1), Has.Some.Contains("EscapeMinimumOpenPositions must be >= 2"), "the specification allows escape only with at least two open positions");
+            Assert.That(With(p => p.EscapeMinimumOpenPositions = 3), Has.None.Contains("EscapeMinimumOpenPositions"), "values above two stay available for research");
             Assert.That(With(p => p.FixedTakeProfitUnits = -1m), Has.Some.Contains("FixedTakeProfitUnits"));
             Assert.That(With(p => p.TrailingActivationUnits = -1m), Has.Some.Contains("TrailingActivationUnits"));
             Assert.That(With(p => p.TrailingDropUnits = -1m), Has.Some.Contains("TrailingDropUnits"));
@@ -381,8 +425,9 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(With(p => p.Slippage = -1m), Has.Some.Contains("Slippage"));
             Assert.That(With(p => p.ProjectedSpread = -1m), Has.Some.Contains("ProjectedSpread"));
             Assert.That(With(p => p.ProjectedSpread = 0m), Has.None.Contains("ProjectedSpread"), "a zero target spread is a valid sensitivity case once supplied");
-            Assert.That(With(p => p.SwapRolloverTimeOfDay = TimeSpan.FromHours(24)), Has.Some.Contains("SwapRolloverTimeOfDay"));
-            Assert.That(With(p => p.TripleSwapDay = DayOfWeek.Sunday), Has.Some.Contains("TripleSwapDay"));
+            Assert.That(With(p => p.BuySwapPerLotPerDay = -1.5m), Has.Some.Contains("must both be 0"), "financing is not supported");
+            Assert.That(With(p => p.SellSwapPerLotPerDay = 1m), Has.Some.Contains("must both be 0"));
+            Assert.That(With(p => p.BuySwapPerLotPerDay = 0m), Has.None.Contains("must both be 0"));
         }
 
         [Test]
@@ -417,8 +462,8 @@ namespace MarketLab.SingleAnchor.Tests
             public decimal CommissionPerLot = 0m;
             public decimal Slippage = 0m;
             public decimal ProjectedSpread = 0.2m;
-            public TimeSpan SwapRolloverTimeOfDay = new TimeSpan(17, 0, 0);
-            public DayOfWeek? TripleSwapDay = DayOfWeek.Wednesday;
+            public decimal BuySwapPerLotPerDay = 0m;
+            public decimal SellSwapPerLotPerDay = 0m;
 
             public SingleAnchorParameters Build()
             {
@@ -441,8 +486,8 @@ namespace MarketLab.SingleAnchor.Tests
                     CommissionPerLot = CommissionPerLot,
                     Slippage = Slippage,
                     ProjectedSpread = ProjectedSpread,
-                    SwapRolloverTimeOfDay = SwapRolloverTimeOfDay,
-                    TripleSwapDay = TripleSwapDay
+                    BuySwapPerLotPerDay = BuySwapPerLotPerDay,
+                    SellSwapPerLotPerDay = SellSwapPerLotPerDay
                 };
             }
         }

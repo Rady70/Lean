@@ -49,6 +49,7 @@ namespace MarketLab.SingleAnchor.Tests
             Executor = new SyntheticExecutor(Parameters);
             Engine = new SingleAnchorEngine(Parameters, Executor);
             Engine.AnchorCreated += e => AnchorsCreated.Add(e);
+            Engine.FirstEntrySkipped += e => SkippedFirstEntries.Add(e);
             Engine.EntryOpened += e => EntriesOpened.Add(e);
             Engine.EntryRejected += e => EntriesRejected.Add(e);
             Engine.HardBreakevenViolated += e => Violations.Add(e);
@@ -61,6 +62,7 @@ namespace MarketLab.SingleAnchor.Tests
         public SyntheticExecutor Executor { get; }
         public SingleAnchorEngine Engine { get; }
         public List<AnchorCreatedEvent> AnchorsCreated { get; } = new List<AnchorCreatedEvent>();
+        public List<FirstEntrySkippedEvent> SkippedFirstEntries { get; } = new List<FirstEntrySkippedEvent>();
         public List<EntryOpenedEvent> EntriesOpened { get; } = new List<EntryOpenedEvent>();
         public List<EntryRejectedEvent> EntriesRejected { get; } = new List<EntryRejectedEvent>();
         public List<HardBreakevenViolatedEvent> Violations { get; } = new List<HardBreakevenViolatedEvent>();

@@ -1,3 +1,4 @@
+using System;
 using NUnit.Framework;
 
 namespace MarketLab.SingleAnchor.Tests
@@ -54,7 +55,7 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void EscapeNeedsTheConfiguredMinimumNumberOfPositions()
+        public void EscapeNeedsAtLeastTwoOpenPositions()
         {
             var h = new Harness(Harness.NoExits() with { EscapeEnabled = true });
             h.Anchor();
@@ -63,12 +64,14 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.BasketsClosed, Is.Empty);
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1));
 
-            var one = new Harness(Harness.NoExits() with { EscapeEnabled = true, EscapeMinimumOpenPositions = 1 });
-            one.Anchor();
-            one.AtUpper();
-            one.Feed(2100m, 2100.2m);
-            Assert.That(one.BasketsClosed, Has.Count.EqualTo(1));
-            Assert.That(one.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Escape));
+            // a minimum of one open position violates the specification and is refused
+            Assert.Throws<ArgumentException>(() => new Harness(Harness.NoExits() with { EscapeEnabled = true, EscapeMinimumOpenPositions = 1 }));
+
+            // the same two-leg basket escapes at the specified minimum of two
+            var two = TwoLegs.Build(Harness.NoExits() with { EscapeEnabled = true });
+            two.Feed(1900m, 1900.2m);            // profit 39.6 >= escape 1
+            Assert.That(two.BasketsClosed, Has.Count.EqualTo(1));
+            Assert.That(two.BasketsClosed[0].Record.Reason, Is.EqualTo(ExitReason.Escape));
         }
 
         [Test]

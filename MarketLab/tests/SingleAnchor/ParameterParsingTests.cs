@@ -15,28 +15,6 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.Throws<ArgumentException>(() => ParameterParsing.ParseDate("", "d"));
         }
 
-        [TestCase("17:00:00", 17, 0, 0)]
-        [TestCase("17:00", 17, 0, 0)]
-        [TestCase("1700", 17, 0, 0)]
-        [TestCase("170030", 17, 0, 30)]
-        [TestCase("0000", 0, 0, 0)]
-        [TestCase("23:59:59", 23, 59, 59)]
-        public void TimesOfDayAcceptColonAndColonFreeForms(string text, int h, int m, int s)
-        {
-            Assert.That(ParameterParsing.ParseTimeOfDay(text, "t"), Is.EqualTo(new TimeSpan(h, m, s)));
-        }
-
-        [TestCase("24:00")]
-        [TestCase("2400")]
-        [TestCase("17")]
-        [TestCase("5pm")]
-        [TestCase("")]
-        public void InvalidTimesOfDayAreRejectedWithTheParameterName(string text)
-        {
-            var error = Assert.Throws<ArgumentException>(() => ParameterParsing.ParseTimeOfDay(text, "single-anchor-swap-rollover-time"));
-            Assert.That(error!.Message, Does.Contain("single-anchor-swap-rollover-time"));
-        }
-
         [Test]
         public void OptionalDecimalsDistinguishAbsentFromZero()
         {
@@ -47,16 +25,6 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(ParameterParsing.ParseOptionalDecimal(" 100 ", "p"), Is.EqualTo(100m));
             var error = Assert.Throws<ArgumentException>(() => ParameterParsing.ParseOptionalDecimal("0,5", "single-anchor-projected-spread"));
             Assert.That(error!.Message, Does.Contain("single-anchor-projected-spread"));
-        }
-
-        [Test]
-        public void TripleSwapDayAcceptsNamesAnyCaseAndNone()
-        {
-            Assert.That(ParameterParsing.ParseOptionalDayOfWeek("Wednesday", "d"), Is.EqualTo(DayOfWeek.Wednesday));
-            Assert.That(ParameterParsing.ParseOptionalDayOfWeek("friday", "d"), Is.EqualTo(DayOfWeek.Friday));
-            Assert.That(ParameterParsing.ParseOptionalDayOfWeek("none", "d"), Is.Null);
-            Assert.That(ParameterParsing.ParseOptionalDayOfWeek("", "d"), Is.Null);
-            Assert.Throws<ArgumentException>(() => ParameterParsing.ParseOptionalDayOfWeek("midweek", "d"));
         }
     }
 }

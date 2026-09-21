@@ -82,9 +82,9 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(BasketEconomics.RawProfit(basket, quote, h.Parameters), Is.EqualTo(perLeg));
 
             var costly = h.Parameters with { CommissionPerLot = 7m, Slippage = 0.13m };
-            var target = new TargetPrices(basket.LowerTarget, 0.27m);
+            var target = TargetPrices.ForLowerRecovery(basket.LowerTarget, 0.27m);
             var perLegProjected = 0m;
-            foreach (var leg in basket.Legs) perLegProjected += BasketEconomics.ProjectedLegProfit(leg.Side, leg.Lots, leg.EntryPrice, leg.AccruedSwap, target, costly);
+            foreach (var leg in basket.Legs) perLegProjected += BasketEconomics.ProjectedLegProfit(leg.Side, leg.Lots, leg.EntryPrice, target, costly);
             Assert.That(BasketEconomics.ProjectedExistingProfit(basket, target, costly), Is.EqualTo(perLegProjected));
         }
 
@@ -150,140 +150,6 @@ namespace MarketLab.SingleAnchor.Tests
             var h = new Harness();
             h.Anchor();
             Assert.Throws<InvalidOperationException>(() => BasketEconomics.StepMoney(h.Engine.Basket!, h.Parameters));
-        }
-    }
-
-    [TestFixture]
-    public class SwapAccrualTests
-    {
-        private static SingleAnchorParameters WithBuySwap(decimal buySwap, DayOfWeek? triple = DayOfWeek.Wednesday)
-        {
-            return new SingleAnchorParameters
-            {
-                StepPercent = 1m,
-                BaseLot = 0.01m,
-                PointValuePerLot = 100m,
-                ProjectedSpread = 0.2m,
-                BuySwapPerLotPerDay = buySwap,
-                SwapRolloverTimeOfDay = new TimeSpan(17, 0, 0),
-                TripleSwapDay = triple
-            };
-        }
-
-        private static readonly DateTime Tuesday = new DateTime(2024, 1, 2, 10, 0, 0);
-
-        [Test]
-        public void SwapAccruesAtWeekdayRolloversWithTripleOnTheConfiguredDay()
-        {
-            var h = new Harness(WithBuySwap(-2m));
-            h.FeedAt(Tuesday, 1999.9m, 2000.1m);
-            h.FeedAt(Tuesday.AddSeconds(1), 2019.8m, 2020m);       // BUY 0.01 @ 2020
-            var leg = h.Engine.Basket!.Legs[0];
-            Assert.That(h.Engine.Basket!.NextRolloverTime, Is.EqualTo(new DateTime(2024, 1, 2, 17, 0, 0)));
-
-            h.FeedAt(new DateTime(2024, 1, 2, 16, 59, 59), 2000m, 2000.2m);
-            Assert.That(leg.AccruedSwap, Is.EqualTo(0m));
-
-            h.FeedAt(new DateTime(2024, 1, 2, 17, 0, 0), 2000m, 2000.2m);   // Tuesday closes: 1x
-            Assert.That(leg.AccruedSwap, Is.EqualTo(-0.02m));
-
-            h.FeedAt(new DateTime(2024, 1, 3, 17, 0, 0), 2000m, 2000.2m);   // Wednesday closes: 3x
-            Assert.That(leg.AccruedSwap, Is.EqualTo(-0.08m));
-
-            h.FeedAt(new DateTime(2024, 1, 4, 17, 0, 0), 2000m, 2000.2m);   // Thursday
-            Assert.That(leg.AccruedSwap, Is.EqualTo(-0.10m));
-            h.FeedAt(new DateTime(2024, 1, 5, 17, 0, 0), 2000m, 2000.2m);   // Friday
-            Assert.That(leg.AccruedSwap, Is.EqualTo(-0.12m));
-            h.FeedAt(new DateTime(2024, 1, 6, 17, 0, 0), 2000m, 2000.2m);   // Saturday: not charged
-            h.FeedAt(new DateTime(2024, 1, 7, 17, 0, 0), 2000m, 2000.2m);   // Sunday: not charged
-            Assert.That(leg.AccruedSwap, Is.EqualTo(-0.12m));
-            h.FeedAt(new DateTime(2024, 1, 8, 17, 0, 0), 2000m, 2000.2m);   // Monday
-            Assert.That(leg.AccruedSwap, Is.EqualTo(-0.14m));
-
-            var quote = new Quote(new DateTime(2024, 1, 8, 18, 0, 0), 2020m, 2020.2m);
-            Assert.That(BasketEconomics.RawProfit(h.Engine.Basket!, quote, h.Parameters), Is.EqualTo(-0.14m), "raw profit includes accrued swap");
-        }
-
-        [Test]
-        public void GapOverSeveralRolloversAccruesThemAllAtOnce()
-        {
-            var h = new Harness(WithBuySwap(-2m));
-            h.FeedAt(Tuesday, 1999.9m, 2000.1m);
-            h.FeedAt(Tuesday.AddSeconds(1), 2019.8m, 2020m);
-            h.FeedAt(new DateTime(2024, 1, 8, 18, 0, 0), 2000m, 2000.2m);
-
-            Assert.That(h.Engine.Basket!.Legs[0].AccruedSwap, Is.EqualTo(-0.14m));
-            Assert.That(h.Engine.Basket!.NextRolloverTime, Is.EqualTo(new DateTime(2024, 1, 9, 17, 0, 0)));
-        }
-
-        [Test]
-        public void LegOpenedExactlyAtTheRolloverIsChargedFromTheNextOne()
-        {
-            var h = new Harness(WithBuySwap(-2m));
-            h.FeedAt(new DateTime(2024, 1, 2, 16, 59, 59), 1999.9m, 2000.1m);
-            h.FeedAt(new DateTime(2024, 1, 2, 17, 0, 0), 2019.8m, 2020m);   // BUY at the rollover instant
-            Assert.That(h.Engine.Basket!.NextRolloverTime, Is.EqualTo(new DateTime(2024, 1, 3, 17, 0, 0)));
-
-            h.FeedAt(new DateTime(2024, 1, 2, 17, 0, 1), 2000m, 2000.2m);
-            Assert.That(h.Engine.Basket!.Legs[0].AccruedSwap, Is.EqualTo(0m));
-            h.FeedAt(new DateTime(2024, 1, 3, 17, 0, 0), 2000m, 2000.2m);
-            Assert.That(h.Engine.Basket!.Legs[0].AccruedSwap, Is.EqualTo(-0.06m));
-        }
-
-        [Test]
-        public void SellLegsUseTheSellRateAndLaterLegsAreChargedFromTheirOwnNextRollover()
-        {
-            var h = new Harness(new SingleAnchorParameters
-            {
-                StepPercent = 1m,
-                BaseLot = 0.01m,
-                PointValuePerLot = 100m,
-                ProjectedSpread = 0.2m,
-                BuySwapPerLotPerDay = -2m,
-                SellSwapPerLotPerDay = 1m,
-                TripleSwapDay = null
-            });
-            h.FeedAt(Tuesday, 1999.9m, 2000.1m);
-            h.FeedAt(Tuesday.AddSeconds(1), 2019.8m, 2020m);               // BUY 0.01
-            h.FeedAt(new DateTime(2024, 1, 2, 17, 0, 0), 2000m, 2000.2m);  // Tuesday rollover: buy -0.02
-            h.FeedAt(new DateTime(2024, 1, 2, 18, 0, 0), 1980m, 1980.2m);  // SELL 0.02 after the rollover
-            h.FeedAt(new DateTime(2024, 1, 3, 17, 0, 0), 2000m, 2000.2m);  // Wednesday rollover, no triple
-
-            var basket = h.Engine.Basket!;
-            Assert.That(basket.Legs[0].AccruedSwap, Is.EqualTo(-0.04m));
-            Assert.That(basket.Legs[1].AccruedSwap, Is.EqualTo(0.02m));
-        }
-
-        [Test]
-        public void LegOpenedAfterAnUnprocessedRolloverInstantIsNotChargedForIt()
-        {
-            var h = new Harness(WithBuySwap(-2m, null) with { SellSwapPerLotPerDay = 1m });
-            h.FeedAt(Tuesday, 1999.9m, 2000.1m);
-            h.FeedAt(Tuesday.AddSeconds(1), 2019.8m, 2020m);                       // BUY 0.01, charged from Tue 17:00
-            var basket = h.Engine.Basket!;
-            // a leg stamped after the rollover instant, added before any quote processed that rollover
-            basket.AddLeg(new BasketLeg(2, TradeSide.Sell, 0.02m, 1980m, new DateTime(2024, 1, 2, 17, 0, 30), SizingRegime.Arithmetic));
-
-            h.FeedAt(new DateTime(2024, 1, 2, 17, 1, 0), 2000m, 2000.2m);        // Tuesday rollover is processed now
-
-            Assert.That(basket.Legs[0].AccruedSwap, Is.EqualTo(-0.02m));
-            Assert.That(basket.Legs[1].AccruedSwap, Is.EqualTo(0m), "opened after the rollover instant");
-            Assert.That(basket.AccruedSwapTotal, Is.EqualTo(-0.02m));
-            h.FeedAt(new DateTime(2024, 1, 3, 17, 0, 0), 2000m, 2000.2m);
-            Assert.That(basket.Legs[1].AccruedSwap, Is.EqualTo(0.02m));
-            Assert.That(basket.AccruedSwapTotal, Is.EqualTo(-0.04m + 0.02m));
-        }
-
-        [Test]
-        public void NoSwapConfiguredMeansNoAccrualAndNoRolloverTracking()
-        {
-            var h = new Harness();
-            h.FeedAt(Tuesday, 1999.9m, 2000.1m);
-            h.FeedAt(Tuesday.AddSeconds(1), 2019.8m, 2020m);
-            h.FeedAt(new DateTime(2024, 1, 9, 18, 0, 0), 2000m, 2000.2m);
-
-            Assert.That(h.Engine.Basket!.NextRolloverTime, Is.Null);
-            Assert.That(h.Engine.Basket!.Legs[0].AccruedSwap, Is.EqualTo(0m));
         }
     }
 }

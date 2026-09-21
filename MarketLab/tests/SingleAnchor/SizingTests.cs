@@ -82,7 +82,8 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(rejection.Reason, Is.EqualTo(EntryRejectionReason.VolumeExceedsMaximum));
             Assert.That(rejection.TradeNumber, Is.EqualTo(2));
             Assert.That(rejection.Side, Is.EqualTo(TradeSide.Sell));
-            Assert.That(rejection.RequestedLots, Is.EqualTo(120m));
+            Assert.That(rejection.RawRequestedLots, Is.EqualTo(120m), "B * n");
+            Assert.That(rejection.NormalizedRequiredLots, Is.EqualTo(120m));
             Assert.That(basket.LastRejection, Is.Not.Null);
             Assert.That(h.Executor.Entries, Has.Count.EqualTo(1), "nothing was sent to the host");
         }
@@ -115,9 +116,9 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(sixth.Regime, Is.EqualTo(SizingRegime.HardBreakeven));
             Assert.That(sixth.Side, Is.EqualTo(TradeSide.Sell));
             Assert.That(sixth.Lots, Is.EqualTo(0.10m));
-            Assert.That(h.EntriesOpened[5].Sizing!.ExistingProfitAtTarget, Is.EqualTo(-679.84m));
-            Assert.That(h.EntriesOpened[5].Sizing!.MarginalProfitPerLot, Is.EqualTo(6946m));
-            Assert.That(h.EntriesOpened[5].Sizing!.ProjectedProfitAfter, Is.EqualTo(14.76m));
+            Assert.That(h.EntriesOpened[5].Sizing!.ExistingProfitAtTarget, Is.EqualTo(-680.24m));
+            Assert.That(h.EntriesOpened[5].Sizing!.MarginalProfitPerLot, Is.EqualTo(6956m));
+            Assert.That(h.EntriesOpened[5].Sizing!.ProjectedProfitAfter, Is.EqualTo(15.36m));
         }
 
         [Test]
@@ -195,6 +196,8 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(rejection.Reason, Is.EqualTo(EntryRejectionReason.HardBreakevenInfeasible));
             Assert.That(rejection.Sizing!.Outcome, Is.EqualTo(HardBreakevenOutcome.NonPositiveMarginalProfit));
             Assert.That(rejection.Sizing!.NormalizedLot, Is.EqualTo(0m));
+            Assert.That(rejection.NormalizedRequiredLots, Is.EqualTo(0m), "no positive lot can satisfy the requirement");
+            Assert.That(rejection.ExactRequiredLots, Is.Null, "the ratio did not apply");
             Assert.That(rejection.TradeNumber, Is.EqualTo(5));
             Assert.That(basket.LastRejection!.Sizing!.CandidateEntryPrice, Is.EqualTo(2030.2m), "the latest attempt is kept");
         }
@@ -208,7 +211,7 @@ namespace MarketLab.SingleAnchor.Tests
 
             var sizing = h.EntriesOpened[4].Sizing!;
             Assert.That(BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, h.Parameters), Is.EqualTo(sizing.ProjectedProfitAfter));
-            Assert.That(BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, h.Parameters), Is.EqualTo(36.64m));
+            Assert.That(BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, h.Parameters), Is.EqualTo(37.04m));
             Assert.That(basket.Legs[4].Sizing, Is.SameAs(sizing));
             Assert.That(h.Violations, Is.Empty);
             Assert.That(h.Engine.Faulted, Is.False);
@@ -226,15 +229,17 @@ namespace MarketLab.SingleAnchor.Tests
 
             var fault = Assert.Throws<StrategyInvariantException>(() => h.AtUpper())!;
 
-            // -380.12 + (2089.46 - 2030) * 0.06 * 100 = -23.36 < 0: the requirement is not met
+            // -380.32 + (2089.56 - 2030) * 0.06 * 100 = -22.96 < 0: the requirement is not met
             Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.HardBreakevenViolatedByFill));
-            Assert.That(fault.Message, Does.Contain("-23.36"));
+            Assert.That(fault.Message, Does.Contain("-22.96"));
             Assert.That(basket.OpenPositions, Is.EqualTo(5), "the fill happened; the ledger stays truthful for the post-mortem");
             Assert.That(basket.Legs[4].EntryPrice, Is.EqualTo(2030m));
             Assert.That(h.Violations, Has.Count.EqualTo(1), "the diagnostic is raised before the fault");
-            Assert.That(h.Violations[0].ProjectedProfitAfterFill, Is.EqualTo(-23.36m));
+            Assert.That(h.Violations[0].ProjectedProfitAfterFill, Is.EqualTo(-22.96m));
             Assert.That(h.Violations[0].Leg, Is.SameAs(basket.Legs[4]));
             Assert.That(h.Engine.Faulted, Is.True);
+            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(4), "the failing tail leg is not published as a successful entry");
+            Assert.That(h.EntriesOpened, Has.Count.EqualTo(4), "and no EntryOpened event was raised for it");
 
             h.Executor.EntryOverride = null;
             Assert.Throws<StrategyInvariantException>(() => h.AtLower());
@@ -259,7 +264,7 @@ namespace MarketLab.SingleAnchor.Tests
             h.AtUpper();                       // same situation
             Assert.That(h.EntriesRejected, Has.Count.EqualTo(1));
 
-            h.Feed(2060m, 2060.2m);            // marginal 2926 -> Q_BE 0.1299 -> 0.13: materially different
+            h.Feed(2060m, 2060.2m);            // marginal 2936 -> Q_BE 0.1295 -> 0.13: materially different
             Assert.That(h.EntriesRejected, Has.Count.EqualTo(2));
             Assert.That(h.EntriesRejected[1].Rejection.Sizing!.RequiredLot, Is.GreaterThan(0.12m).And.LessThan(0.13m));
             Assert.That(h.Engine.RejectedEntryAttempts, Is.EqualTo(3));
@@ -288,8 +293,11 @@ namespace MarketLab.SingleAnchor.Tests
             var rejection = h.EntriesRejected[0].Rejection;
             Assert.That(rejection.Reason, Is.EqualTo(EntryRejectionReason.HardBreakevenInfeasible));
             Assert.That(rejection.Sizing!.Outcome, Is.EqualTo(HardBreakevenOutcome.ExceedsMaximumVolume));
-            Assert.That(rejection.Sizing!.RequiredLot, Is.EqualTo(-(-380.12m) / 6946m));
+            Assert.That(rejection.Sizing!.RequiredLot, Is.EqualTo(-(-380.32m) / 6956m));
+            Assert.That(rejection.Sizing!.NormalizedRequiredLot, Is.EqualTo(0.06m), "the needed broker lot is retained");
             Assert.That(rejection.Sizing!.NormalizedLot, Is.EqualTo(0m), "no smaller lot is substituted");
+            Assert.That(rejection.ExactRequiredLots, Is.EqualTo(-(-380.32m) / 6956m));
+            Assert.That(rejection.NormalizedRequiredLots, Is.EqualTo(0.06m));
         }
     }
 
@@ -321,18 +329,18 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(sizing.IsFeasible, Is.True);
             Assert.That(sizing.TradeNumber, Is.EqualTo(5));
             Assert.That(sizing.Target.Target, Is.EqualTo(2089.56m));
-            // The projected Bid/Ask are the interim reading of T (a midpoint with the configured
-            // 0.2 target spread split around it); which price T is remains an owner decision, and
-            // these two assertions pin the current arithmetic only, not an approved rule.
-            Assert.That(sizing.Target.Bid, Is.EqualTo(2089.46m));
-            Assert.That(sizing.Target.Ask, Is.EqualTo(2089.66m));
+            // Owner decision resolved: the upper hard-BE level is the Bid, T_up itself; the
+            // configured spread only reconstructs the opposite (Ask) side of the simultaneous close.
+            Assert.That(sizing.Target.Bid, Is.EqualTo(2089.56m), "the hard-BE level is the Bid");
+            Assert.That(sizing.Target.Ask, Is.EqualTo(2089.76m), "the spread reconstructs the opposite side only");
             Assert.That(sizing.CandidateEntryPrice, Is.EqualTo(2020m));
-            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-380.12m));
-            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6946m));
-            Assert.That(sizing.RequiredLot, Is.EqualTo(380.12m / 6946m));
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-380.32m));
+            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6956m));
+            Assert.That(sizing.RequiredLot, Is.EqualTo(380.32m / 6956m));
             Assert.That(sizing.RequiredLot, Is.GreaterThan(0.05m).And.LessThan(0.06m));
+            Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(0.06m));
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0.06m), "0.0547 rounds up to 0.06, never down to 0.05");
-            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(36.64m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(37.04m));
         }
 
         [Test]
@@ -344,17 +352,17 @@ namespace MarketLab.SingleAnchor.Tests
 
             var target = sizing.Target;
             var existing = BasketEconomics.ProjectedExistingProfit(basket, target, p);
-            var withLot = existing + BasketEconomics.ProjectedLegProfit(TradeSide.Buy, sizing.NormalizedLot, sizing.CandidateEntryPrice, 0m, target, p);
-            var withOneStepLess = existing + BasketEconomics.ProjectedLegProfit(TradeSide.Buy, sizing.NormalizedLot - p.VolumeStep, sizing.CandidateEntryPrice, 0m, target, p);
+            var withLot = existing + BasketEconomics.ProjectedLegProfit(TradeSide.Buy, sizing.NormalizedLot, sizing.CandidateEntryPrice, target, p);
+            var withOneStepLess = existing + BasketEconomics.ProjectedLegProfit(TradeSide.Buy, sizing.NormalizedLot - p.VolumeStep, sizing.CandidateEntryPrice, target, p);
 
             Assert.That(withLot, Is.EqualTo(sizing.ProjectedProfitAfter));
             Assert.That(withLot, Is.GreaterThanOrEqualTo(0m));
-            Assert.That(withOneStepLess, Is.EqualTo(-32.82m));
+            Assert.That(withOneStepLess, Is.EqualTo(-32.52m));
             Assert.That(withOneStepLess, Is.LessThan(0m));
         }
 
         [Test]
-        public void SellSideUsesTheLowerTargetAndTheBid()
+        public void SellSideUsesTheLowerTargetAsTheAsk()
         {
             var p = Harness.Defaults();
             var basket = ReferenceBasket(p);
@@ -363,13 +371,14 @@ namespace MarketLab.SingleAnchor.Tests
             var sizing = HardBreakevenSizer.Size(basket, TradeSide.Sell, Lower, p);
 
             Assert.That(sizing.Target.Target, Is.EqualTo(1910.44m));
-            Assert.That(sizing.Target.Bid, Is.EqualTo(1910.34m));
-            Assert.That(sizing.Target.Ask, Is.EqualTo(1910.54m));
+            Assert.That(sizing.Target.Ask, Is.EqualTo(1910.44m), "the lower hard-BE level is the Ask");
+            Assert.That(sizing.Target.Bid, Is.EqualTo(1910.24m), "the spread reconstructs the opposite side only");
             Assert.That(sizing.CandidateEntryPrice, Is.EqualTo(1980m));
-            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-679.84m));
-            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6946m));
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-680.24m));
+            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6956m));
+            Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(0.10m));
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0.10m));
-            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(14.76m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(15.36m));
         }
 
         [Test]
@@ -408,10 +417,11 @@ namespace MarketLab.SingleAnchor.Tests
             var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
 
             Assert.That(sizing.CandidateEntryPrice, Is.EqualTo(2020.1m));
-            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-381.82m));
-            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6919m));
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-382.02m));
+            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6929m));
+            Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(0.06m));
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0.06m));
-            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(-381.82m + 0.06m * 6919m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(-382.02m + 0.06m * 6929m));
         }
 
         [Test]
@@ -422,22 +432,29 @@ namespace MarketLab.SingleAnchor.Tests
             var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
 
             Assert.That(sizing.Target.Spread, Is.EqualTo(0.5m));
-            Assert.That(sizing.Target.Bid, Is.EqualTo(2089.31m));
-            Assert.That(sizing.Target.Ask, Is.EqualTo(2089.81m));
-            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-381.62m));
-            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6931m));
+            Assert.That(sizing.Target.Bid, Is.EqualTo(2089.56m), "the configured spread never moves the BE level");
+            Assert.That(sizing.Target.Ask, Is.EqualTo(2090.06m));
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-382.12m));
+            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(6956m));
         }
 
         [Test]
-        public void AccruedSwapIsPartOfTheExistingProjection()
+        public void TheHardTargetLevelDoesNotShiftWithTheSpread()
         {
-            var p = Harness.Defaults();
-            var basket = ReferenceBasket(p);
-            basket.AddSwap(basket.Legs[0], -5m);
+            var d = Harness.Defaults();
+            foreach (var spread in new[] { 0m, 0.2m, 5m })
+            {
+                var p = d with { ProjectedSpread = spread };
+                var buy = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
+                Assert.That(buy.Target.Target, Is.EqualTo(2089.56m));
+                Assert.That(buy.Target.Bid, Is.EqualTo(2089.56m), "upper hard-BE level is Bid = T_up");
+                Assert.That(buy.Target.Ask, Is.EqualTo(2089.56m + spread));
 
-            var sizing = HardBreakevenSizer.Size(basket, TradeSide.Buy, Upper, p);
-
-            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-385.12m));
+                var sell = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Sell, Lower, p);
+                Assert.That(sell.Target.Target, Is.EqualTo(1910.44m));
+                Assert.That(sell.Target.Ask, Is.EqualTo(1910.44m), "lower hard-BE level is Ask = T_down");
+                Assert.That(sell.Target.Bid, Is.EqualTo(1910.44m - spread));
+            }
         }
 
         [Test]
@@ -464,13 +481,13 @@ namespace MarketLab.SingleAnchor.Tests
         [Test]
         public void ExactlyZeroMarginalProfitIsInfeasible()
         {
-            // Ceiling such that the projected Bid at T_up equals the candidate entry: 2020 + 0.1 = 2020.1 -> T_up = 2020.1 -> C = 1.005%
+            // The upper hard-BE level is the Bid, so T_up = 2020 (C = 1%) makes PL_1lot exactly 0.
             var d = Harness.Defaults();
             var p = new SingleAnchorParameters
             {
                 StepPercent = d.StepPercent,
                 BaseLot = d.BaseLot,
-                HardBreakevenCeilingPercent = 1.005m,
+                HardBreakevenCeilingPercent = 1m,
                 PointValuePerLot = d.PointValuePerLot,
                 ProjectedSpread = 0.2m
             };
@@ -484,9 +501,9 @@ namespace MarketLab.SingleAnchor.Tests
         [Test]
         public void NonPositiveMarginalProfitWithTheBasketInsideTheCeilingPlacesTheMinimumLot()
         {
-            // T_up = 2010 (C = 0.5%), projected Bid 2009.9 < BUY entry 2020: PL_1lot = -1010. The
-            // basket already projects +464.9 at T_up, so the smallest valid lot, the minimum,
-            // still satisfies PL_after >= 0 (464.9 - 10.1) and is placed; more volume never helps.
+            // T_up = 2010 (C = 0.5%), Bid 2010 < BUY entry 2020: PL_1lot = -1000. The basket
+            // already projects +469.8 at T_up, so the smallest valid lot, the minimum, still
+            // satisfies PL_after >= 0 (469.8 - 10) and is placed; more volume never helps.
             var d = Harness.Defaults();
             var p = new SingleAnchorParameters
             {
@@ -502,12 +519,12 @@ namespace MarketLab.SingleAnchor.Tests
 
             var sizing = HardBreakevenSizer.Size(basket, TradeSide.Buy, Upper, p);
 
-            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(-1010m));
-            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(464.9m));
+            Assert.That(sizing.MarginalProfitPerLot, Is.EqualTo(-1000m));
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(469.8m));
             Assert.That(sizing.IsFeasible, Is.True);
             Assert.That(sizing.RequiredLot, Is.EqualTo(0m));
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0.01m));
-            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(454.8m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(459.8m));
         }
 
         [Test]
@@ -524,12 +541,12 @@ namespace MarketLab.SingleAnchor.Tests
             };
             var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), p);
             basket.AddLeg(new BasketLeg(1, TradeSide.Sell, 0.01m, 1980m, Time, SizingRegime.Arithmetic));
-            basket.AddLeg(new BasketLeg(2, TradeSide.Buy, 0.04m, 2000m, Time, SizingRegime.Arithmetic)); // +39.6 - 30.1 = 9.5 at T_up
+            basket.AddLeg(new BasketLeg(2, TradeSide.Buy, 0.04m, 2000m, Time, SizingRegime.Arithmetic)); // +40 - 30.2 = 9.8 at T_up
 
             var sizing = HardBreakevenSizer.Size(basket, TradeSide.Buy, Upper, p);
 
-            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(9.5m));
-            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(9.5m - 10.1m), "the minimum lot would push the basket below breakeven at the target");
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(9.8m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(9.8m - 10m), "the minimum lot would push the basket below breakeven at the target");
             Assert.That(sizing.IsFeasible, Is.False);
             Assert.That(sizing.Outcome, Is.EqualTo(HardBreakevenOutcome.NonPositiveMarginalProfit));
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
@@ -551,7 +568,8 @@ namespace MarketLab.SingleAnchor.Tests
 
             Assert.That(sizing.IsFeasible, Is.False);
             Assert.That(sizing.Outcome, Is.EqualTo(HardBreakevenOutcome.ExceedsMaximumVolume));
-            Assert.That(sizing.RequiredLot, Is.EqualTo(380.12m / 6946m));
+            Assert.That(sizing.RequiredLot, Is.EqualTo(380.32m / 6956m));
+            Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(0.06m), "the normalized requirement is retained exactly as the example in the plan");
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
             Assert.That(sizing.Message, Does.Contain("not allowed to drift"));
         }
@@ -559,7 +577,7 @@ namespace MarketLab.SingleAnchor.Tests
         [Test]
         public void ProjectedClosePricesBelowZeroAfterSlippageAreInvalid()
         {
-            // The target itself is valid (Bid 2089.46) but the executable BUY close, Bid less
+            // The target itself is valid (Bid 2089.56) but the executable BUY close, Bid less
             // slippage, is not positive.
             var d = Harness.Defaults();
             var p = new SingleAnchorParameters
@@ -575,16 +593,22 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(sizing.Target.IsValid, Is.True);
             Assert.That(sizing.CandidateEntryPrice, Is.EqualTo(4120m));
             Assert.That(sizing.Outcome, Is.EqualTo(HardBreakevenOutcome.InvalidTargetPrices));
+            Assert.That(sizing.NormalizedRequiredLot, Is.EqualTo(0m));
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
         }
 
         [Test]
         public void ProjectedPricesThatAreNotPositiveAreInfeasible()
         {
+            // A wide target spread makes the reconstructed opposite side non-positive on the lower
+            // recovery: Bid = T_down - 2000 < 0.
             var d = Harness.Defaults();
-            var p = Harness.Defaults() with { ProjectedSpread = 5000m };
-            var sizing = HardBreakevenSizer.Size(ReferenceBasket(p), TradeSide.Buy, Upper, p);
+            var p = Harness.Defaults() with { ProjectedSpread = 2000m };
+            var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), p);
+            basket.AddLeg(new BasketLeg(1, TradeSide.Buy, 0.01m, 2020m, Time, SizingRegime.Arithmetic));
+            var sizing = HardBreakevenSizer.Size(basket, TradeSide.Sell, Lower, p);
 
+            Assert.That(sizing.Target.Bid, Is.EqualTo(1910.44m - 2000m));
             Assert.That(sizing.Outcome, Is.EqualTo(HardBreakevenOutcome.InvalidTargetPrices));
             Assert.That(sizing.NormalizedLot, Is.EqualTo(0m));
         }
@@ -592,7 +616,7 @@ namespace MarketLab.SingleAnchor.Tests
         [Test]
         public void OnlyTheSidesPresentOrRequiredNeedAPositiveExecutablePrice()
         {
-            // SELL-only basket, SELL candidate: the projected BUY close (1910.34 - 1950 < 0) is
+            // SELL-only basket, SELL candidate: the projected BUY close (1910.24 - 1950 < 0) is
             // irrelevant, so the sizing proceeds and fails for the economic reason, not for validity.
             var p = Harness.Defaults() with { Slippage = 1950m };
             var basket = new Basket(1, new Quote(Time, 1999.9m, 2000.1m), p);

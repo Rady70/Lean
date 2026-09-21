@@ -106,7 +106,6 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(valuation.UpperTarget, Is.EqualTo(2089.56m));
             Assert.That(valuation.LastSide, Is.EqualTo(TradeSide.Sell));
             Assert.That(valuation.NextTradeNumber, Is.EqualTo(3));
-            Assert.That(valuation.AccruedSwap, Is.EqualTo(0m));
             Assert.That(valuation.StepMoney, Is.EqualTo(20m));
             Assert.That(valuation.HardBreakevenModeActive, Is.False);
             Assert.That(valuation.TrailingActive, Is.False);
