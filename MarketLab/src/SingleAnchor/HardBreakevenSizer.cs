@@ -20,7 +20,7 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// PL_1lot(T) &lt;= 0 and the basket is not already at or inside the ceiling: adding the
-        /// required side cannot make the basket break even at the target (specification section 7).
+        /// required side cannot make the basket break even at the boundary (specification section 7).
         /// </summary>
         NonPositiveMarginalProfit,
 
@@ -35,11 +35,13 @@ namespace MarketLab.SingleAnchor
     /// Full record of one hard-BE sizing, feasible or not, so the decision can be logged and tested.
     /// <see cref="RequiredLot"/> is the exact Q_BE, or 0 when the ratio is not applicable (the
     /// basket already projects at or inside the ceiling, or PL_1lot(T) is not positive);
+    /// <see cref="ExactRequired"/> is that exact requirement or null when it does not exist;
     /// <see cref="NormalizedRequiredLot"/> is the broker-valid lot the requirement needs (kept even
     /// when it exceeds the maximum volume, so infeasibility never hides the needed lot);
-    /// <see cref="NormalizedLot"/> is the lot to place, 0 when infeasible.
+    /// <see cref="NormalizedLot"/> is the lot to place, 0 when infeasible. A value type: a rejected
+    /// attempt creates no heap object on the hot path.
     /// </summary>
-    public sealed record HardBreakevenSizing(
+    public readonly record struct HardBreakevenSizing(
         TradeSide Side,
         int TradeNumber,
         TargetPrices Target,
@@ -56,6 +58,14 @@ namespace MarketLab.SingleAnchor
         /// <summary>True when <see cref="NormalizedLot"/> can be placed.</summary>
         public bool IsFeasible => Outcome == HardBreakevenOutcome.Feasible;
 
+        /// <summary>
+        /// The exact mathematically required lot Q_BE, or null when the ratio does not apply
+        /// (PL_1lot(T) &lt;= 0 means there is no finite exact requirement). The trace records use
+        /// this so a minimum-volume leg in the already-inside-the-ceiling case does not look like
+        /// an exact requirement of zero.
+        /// </summary>
+        public decimal? ExactRequired => MarginalProfitPerLot > 0m ? RequiredLot : (decimal?)null;
+
         /// <summary>Human-readable account of the sizing, built on demand (never per tick; see the engine's rejection handling).</summary>
         public string Message
         {
@@ -65,11 +75,11 @@ namespace MarketLab.SingleAnchor
                 switch (Outcome)
                 {
                     case HardBreakevenOutcome.Feasible:
-                        return $"Hard-BE {Side} trade {TradeNumber}: PL_existing(T)={F(ExistingProfitAtTarget)}, PL_1lot(T)={F(MarginalProfitPerLot)}, Q_BE={F(RequiredLot)}, normalized requirement={F(NormalizedRequiredLot)}, lot={F(NormalizedLot)}, PL_after={F(ProjectedProfitAfter)} at target {target}.";
+                        return $"Hard-BE {Side} trade {TradeNumber}: PL_existing(T)={F(ExistingProfitAtTarget)}, PL_1lot(T)={F(MarginalProfitPerLot)}, Q_BE={F(RequiredLot)}, normalized requirement={F(NormalizedRequiredLot)}, lot={F(NormalizedLot)}, PL_after={F(ProjectedProfitAfter)} at boundary {target}.";
                     case HardBreakevenOutcome.InvalidTargetPrices:
                         return $"Executable prices of the {Side} projection are not positive (target {target}, spread {F(Target.Spread)}, projected Bid {F(Target.Bid)} / Ask {F(Target.Ask)} before slippage, candidate entry {F(CandidateEntryPrice)}).";
                     case HardBreakevenOutcome.NonPositiveMarginalProfit:
-                        return $"One lot of {Side} at {F(CandidateEntryPrice)} contributes {F(MarginalProfitPerLot)} at the hard target {target} (projected close {F(Side == TradeSide.Buy ? Target.Bid : Target.Ask)}) while the basket projects {F(ExistingProfitAtTarget)} there; the target cannot be reached by adding {Side} volume.";
+                        return $"One lot of {Side} at {F(CandidateEntryPrice)} contributes {F(MarginalProfitPerLot)} at the hard boundary {target} (projected close {F(Side == TradeSide.Buy ? Target.Bid : Target.Ask)}) while the basket projects {F(ExistingProfitAtTarget)} there; the boundary cannot be reached by adding {Side} volume.";
                     default:
                         return $"Hard-BE requires exactly {F(RequiredLot)} lots of {Side} (normalized requirement {F(NormalizedRequiredLot)}) and the smallest valid lot above the maximum volume {F(MaximumVolume)}; the order is not placed and breakeven is not allowed to drift.";
                 }
@@ -84,8 +94,8 @@ namespace MarketLab.SingleAnchor
 
     /// <summary>
     /// Tail lot sizing (specification sections 6-8): the smallest broker-valid lot Q such that the
-    /// projected executable basket P/L at the applicable hard target is non-negative. The target is
-    /// the true basket-BE level: Bid = T_up for a required BUY recovery, Ask = T_down for a required
+    /// projected executable basket P/L at the applicable hard boundary is non-negative. The boundary is
+    /// Bid = T_up for a required BUY recovery and Ask = T_down for a required
     /// SELL recovery; the configured target spread only reconstructs the opposite quote side of the
     /// simultaneous basket closure (see <see cref="TargetPrices"/>).
     /// </summary>
@@ -116,7 +126,7 @@ namespace MarketLab.SingleAnchor
             if (!quote.IsValid) throw new ArgumentException("Sizing requires a valid quote; got " + quote, nameof(quote));
 
             var tradeNumber = basket.NextTradeNumber;
-            // The hard-BE level itself: Bid = T_up for a required BUY recovery, Ask = T_down for a
+            // The hard boundary itself: Bid = T_up for a required BUY recovery, Ask = T_down for a
             // required SELL recovery. The configured spread reconstructs only the opposite side of
             // the simultaneous close (section 6); it never shifts the target.
             var target = side == TradeSide.Buy

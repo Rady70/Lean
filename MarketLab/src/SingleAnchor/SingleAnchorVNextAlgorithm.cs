@@ -264,9 +264,9 @@ namespace MarketLab.SingleAnchor
 
         private void WireEvents()
         {
-            _engine.AnchorCreated += e => Log($"SingleAnchor basket #{e.Basket.Sequence} anchor {F(e.Basket.Anchor)} at {e.Quote}: upper {F(e.Basket.Upper)}, lower {F(e.Basket.Lower)}, hard-BE targets {F(e.Basket.LowerTarget)} / {F(e.Basket.UpperTarget)}.");
+            _engine.AnchorCreated += e => Log($"SingleAnchor basket #{e.Basket.Sequence} anchor {F(e.Basket.Anchor)} at {e.Quote}: upper {F(e.Basket.Upper)}, lower {F(e.Basket.Lower)}, hard-BE boundaries {F(e.Basket.LowerTarget)} / {F(e.Basket.UpperTarget)}.");
             _engine.FirstEntrySkipped += e => Log($"SingleAnchor basket #{e.Basket.Sequence} first entry skipped at {e.Quote} (spread {F(e.Quote.Spread)} satisfies both boundaries); the basket stays empty and waits for an unambiguous quote.");
-            _engine.EntryOpened += e => Log($"SingleAnchor leg opened: {e.Leg}; basket buy {F(e.Basket.BuyLots)} / sell {F(e.Basket.SellLots)} / net {F(e.Basket.NetLots)} lots" + (e.Sizing != null ? "; " + e.Sizing.Message : string.Empty));
+            _engine.EntryOpened += e => Log($"SingleAnchor leg opened: {e.Leg}; basket buy {F(e.Basket.BuyLots)} / sell {F(e.Basket.SellLots)} / net {F(e.Basket.NetLots)} lots" + (e.Sizing.HasValue ? "; " + e.Sizing.Value.Message : string.Empty));
             _engine.EntryRejected += e => Error($"SingleAnchor entry rejected ({e.Rejection.Reason}) for trade {e.Rejection.TradeNumber} {e.Rejection.Side} of basket #{e.Basket.Sequence} at {e.Quote}: {e.Rejection.Message}");
             _engine.HardBreakevenViolated += e => Error($"SingleAnchor hard-BE violated by the fill of {e.Leg} in basket #{e.Basket.Sequence}: projected executable P/L at target {F(e.Sizing.Target.Target)} is {F(e.ProjectedProfitAfterFill)} after the fill (sizing expected {F(e.Sizing.ProjectedProfitAfter)}); the run stops.");
             _engine.TrailingActivated += e => Log($"SingleAnchor trailing activated at profit {F(e.Profit)} (threshold {F(e.ActivationThreshold)}) at {e.Quote}.");

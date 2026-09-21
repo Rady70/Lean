@@ -73,7 +73,7 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// Executable close prices at a hard target: the projected Bid less slippage for BUY legs,
+        /// Executable close prices at a hard boundary: the projected Bid less slippage for BUY legs,
         /// the projected Ask plus slippage for SELL legs.
         /// </summary>
         public static (decimal BuyClose, decimal SellClose) ExecutableClosePrices(in TargetPrices target, SingleAnchorParameters parameters)
@@ -120,7 +120,7 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// Projected executable profit of one leg closed at the hard target: a BUY closes at the
+        /// Projected executable profit of one leg valued at the hard boundary: a BUY closes at the
         /// projected Bid less slippage, a SELL at the projected Ask plus slippage; the round-trip
         /// commission for the leg's volume is deducted (section 7).
         /// </summary>
@@ -133,7 +133,7 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// PL_existing(T): projected executable profit of every open leg at the target (section 7).
+        /// PL_existing(T): projected executable profit of every open leg at the boundary (section 7).
         /// Constant time; equal to the sum of <see cref="ProjectedLegProfit"/> over the legs.
         /// </summary>
         public static decimal ProjectedExistingProfit(Basket basket, in TargetPrices target, SingleAnchorParameters parameters)
@@ -149,11 +149,11 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
-    /// Executable prices of the simultaneous basket closure at a hard target (specification
-    /// section 6). The basket-BE level itself is the Bid at an upper recovery (<c>Bid = T_up</c>)
-    /// and the Ask at a lower recovery (<c>Ask = T_down</c>); the configured target spread is used
-    /// only to reconstruct the opposite quote side of that same instant. It never shifts the BE
-    /// level.
+    /// Executable prices of the simultaneous basket valuation at a hard boundary (specification
+    /// section 6). The upper boundary is the Bid (<c>Bid = T_up</c>) and the lower boundary the Ask
+    /// (<c>Ask = T_down</c>); the configured target spread is used only to reconstruct the opposite
+    /// quote side of that same instant. The boundary is a ceiling used for sizing: it is not
+    /// necessarily the actual zero-loss BE and it is not an exit price.
     /// </summary>
     public readonly record struct TargetPrices
     {
@@ -173,22 +173,22 @@ namespace MarketLab.SingleAnchor
             }
         }
 
-        /// <summary>Upper recovery projection: the BE level is the Bid; the Sell side is reconstructed as Ask = T_up + spread.</summary>
+        /// <summary>Upper recovery projection: the boundary is Bid = T_up; the SELL side is reconstructed as Ask = T_up + spread.</summary>
         public static TargetPrices ForUpperRecovery(decimal target, decimal spread)
         {
             return new TargetPrices(target, spread, upperRecovery: true);
         }
 
-        /// <summary>Lower recovery projection: the BE level is the Ask; the Buy side is reconstructed as Bid = T_down - spread.</summary>
+        /// <summary>Lower recovery projection: the boundary is Ask = T_down; the BUY side is reconstructed as Bid = T_down - spread.</summary>
         public static TargetPrices ForLowerRecovery(decimal target, decimal spread)
         {
             return new TargetPrices(target, spread, upperRecovery: false);
         }
 
-        /// <summary>T_up (upper recovery) or T_down (lower recovery), the hard basket-BE level.</summary>
+        /// <summary>T_up (upper recovery) or T_down (lower recovery), the hard basket-BE boundary.</summary>
         public decimal Target { get; }
 
-        /// <summary>Spread assumed at the target for the opposite quote side.</summary>
+        /// <summary>Spread assumed at the boundary for the opposite quote side.</summary>
         public decimal Spread { get; }
 
         /// <summary>Projected Bid of the simultaneous closing quote, the close price of BUY legs before slippage.</summary>

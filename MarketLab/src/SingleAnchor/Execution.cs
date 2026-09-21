@@ -138,9 +138,10 @@ namespace MarketLab.SingleAnchor
     /// lot of an arithmetic trade (B * n), the exact mathematically required hard-BE lot (Q_BE) and
     /// the upward broker-normalized lot the requirement needs. Nothing was placed, so there is no
     /// placed lot on a rejection. <see cref="Message"/> is built on demand only; the engine does not
-    /// format a human-readable string for every repeated attempt.
+    /// format a human-readable string for every repeated attempt. A value type: a repeated
+    /// rejection creates no heap object on the hot path.
     /// </summary>
-    public sealed record EntryRejection(
+    public readonly record struct EntryRejection(
         int TradeNumber,
         TradeSide Side,
         EntryRejectionReason Reason,
@@ -159,7 +160,7 @@ namespace MarketLab.SingleAnchor
                 switch (Reason)
                 {
                     case EntryRejectionReason.HardBreakevenInfeasible:
-                        return Sizing!.Message;
+                        return Sizing.HasValue ? Sizing.Value.Message : "Hard-BE sizing is not available.";
                     case EntryRejectionReason.VolumeExceedsMaximum:
                         return $"Arithmetic lot for trade {TradeNumber} ({F(RawRequestedLots ?? 0m)} raw -> {F(NormalizedRequiredLots)} normalized) exceeds the maximum volume {F(MaximumVolume)}; the order is not placed.";
                     default:
@@ -176,11 +177,16 @@ namespace MarketLab.SingleAnchor
         /// </summary>
         public bool SameSituationAs(EntryRejection? other)
         {
-            if (other == null || other.TradeNumber != TradeNumber || other.Side != Side || other.Reason != Reason)
+            if (!other.HasValue)
             {
                 return false;
             }
-            return other.Sizing?.Outcome == Sizing?.Outcome && other.NormalizedRequiredLots == NormalizedRequiredLots;
+            var o = other.Value;
+            if (o.TradeNumber != TradeNumber || o.Side != Side || o.Reason != Reason)
+            {
+                return false;
+            }
+            return o.Sizing?.Outcome == Sizing?.Outcome && o.NormalizedRequiredLots == NormalizedRequiredLots;
         }
 
         private static string F(decimal value)
@@ -222,7 +228,7 @@ namespace MarketLab.SingleAnchor
     {
         /// <summary>
         /// A tail leg was filled at a price that leaves the projected executable basket P/L at
-        /// its hard target negative: the executor departed from the sizing model, and continuing
+        /// its hard boundary negative: the executor departed from the sizing model, and continuing
         /// would mean breakeven drift after hard-BE activation.
         /// </summary>
         HardBreakevenViolatedByFill
@@ -306,10 +312,11 @@ namespace MarketLab.SingleAnchor
     /// What the hard-BE requirement covers under a run's configuration, for the structured results.
     /// <see cref="StrategyDefinitionResolved"/> states that the two formerly open strategy-definition
     /// points (first-entry handling and the meaning of T_up / T_down) are resolved by the
-    /// specification; <see cref="HardBEVerifiedUnderConfiguredExecutionModel"/> states that the
-    /// requirement was verified at each applicable tail entry, with the actual fill, under the
-    /// configured execution model. It is not a guarantee against arbitrary future spread or other
-    /// execution conditions that were not part of the projection.
+    /// specification; <see cref="HardBEVerifiedUnderConfiguredExecutionModel"/> is runtime state:
+    /// true while every applicable tail entry so far passed the post-fill verification with the
+    /// actual fill under the configured execution model, false once one failed (the run then stops).
+    /// It is not a guarantee against arbitrary future spread or other execution conditions that
+    /// were not part of the projection.
     /// </summary>
     public sealed record HardBreakevenVerification(
         bool StrategyDefinitionResolved,
@@ -318,26 +325,34 @@ namespace MarketLab.SingleAnchor
         IReadOnlyList<string> Assumptions,
         IReadOnlyList<string> NotCovered)
     {
-        /// <summary>Evaluates the verification metadata for a parameter set.</summary>
-        public static HardBreakevenVerification For(SingleAnchorParameters parameters)
+        /// <summary>
+        /// Evaluates the verification metadata for a parameter set and a run's post-fill
+        /// verification state.
+        /// </summary>
+        /// <param name="parameters">The validated parameters.</param>
+        /// <param name="hardBeVerifiedUnderConfiguredExecutionModel">
+        /// True when every applicable tail fill so far passed the post-fill verification; the engine
+        /// passes false once a fill failed it (the run then stops).
+        /// </param>
+        public static HardBreakevenVerification For(SingleAnchorParameters parameters, bool hardBeVerifiedUnderConfiguredExecutionModel = true)
         {
             if (parameters == null) throw new ArgumentNullException(nameof(parameters));
             var w = parameters.ProjectedSpread!.Value;
             return new HardBreakevenVerification(
                 true,
-                true,
+                hardBeVerifiedUnderConfiguredExecutionModel,
                 "PL_after(T, Q) >= 0 is verified at each applicable tail entry, with the actual fill, under the configured execution model; it is not re-verified afterwards.",
                 new[]
                 {
-                    $"upper recovery projection: Bid = T_up, Ask = T_up + {F(w)} (the hard-BE level itself is Bid = T_up)",
-                    $"lower recovery projection: Ask = T_down, Bid = T_down - {F(w)} (the hard-BE level itself is Ask = T_down)",
+                    $"upper recovery projection: Bid = T_up, Ask = T_up + {F(w)} (the boundary itself is Bid = T_up; the actual zero-loss BE must stay at or below it)",
+                    $"lower recovery projection: Ask = T_down, Bid = T_down - {F(w)} (the boundary itself is Ask = T_down; the actual zero-loss BE must stay at or above it)",
                     $"slippage {F(parameters.Slippage)} per execution",
                     $"round-trip commission {F(parameters.CommissionPerLot)} per lot",
                     "financing is not supported (both swap rates are 0)"
                 },
                 new[]
                 {
-                    "a spread at the target wider than the configured target spread",
+                    "a spread at the boundary wider than the configured target spread",
                     "a change of the execution model between the entry and the target"
                 });
         }
@@ -366,60 +381,149 @@ namespace MarketLab.SingleAnchor
         decimal UpperTarget);
 
     /// <summary>
-    /// The canonical per-attempt parity representation of a rejected entry, and the compact
-    /// aggregate kept for each rejection row. The engine does not store one row per attempt: every
-    /// attempt is folded into the row's digest and min/max values, so a Python implementation can
-    /// replay the same attempts and prove that every compressed attempt matched without one row per
-    /// tick.
+    /// A deterministic FNV-1a 64-bit accumulator for the compact parity checksums. The algorithm
+    /// and the canonical serialization are fixed so another implementation can reproduce a digest
+    /// byte for byte. A 64-bit digest is a compact high-confidence mismatch detector, not a
+    /// mathematical proof that every compressed attempt matched.
     /// </summary>
     /// <remarks>
-    /// Algorithm: FNV-1a 64-bit (offset basis 14695981039346656037, prime 1099511628211,
-    /// multiplication modulo 2^64) over the UTF-8 bytes of the canonical field sequence. The
-    /// canonical byte stream is the fields below, in order, each terminated by a single '\n'
-    /// (0x0A):
-    /// <list type="number">
-    /// <item>quote sequence (integer, invariant culture)</item>
-    /// <item>Bid (decimal, invariant culture general format)</item>
-    /// <item>Ask (decimal, invariant culture)</item>
-    /// <item>trade number (integer)</item>
-    /// <item>side (exact enum name: <c>Buy</c> or <c>Sell</c>)</item>
-    /// <item>rejection reason (exact enum name)</item>
-    /// <item>hard-BE outcome (exact enum name, or empty when not applicable)</item>
-    /// <item>candidate entry price (decimal, or empty)</item>
-    /// <item>PL_existing(T) (decimal, or empty)</item>
-    /// <item>PL_1lot(T) (decimal, or empty)</item>
-    /// <item>exact required lot Q_BE (decimal, or empty)</item>
-    /// <item>broker-normalized required lot (decimal)</item>
-    /// <item>raw requested lot B * n (decimal, or empty)</item>
-    /// <item>PL_after(T, normalized lot) (decimal, or empty)</item>
-    /// </list>
-    /// Decimal serialization: the exact invariant-culture general-format string of the engine's
-    /// decimal value (trailing zeros are part of the canonical form, so a port must reproduce the
-    /// same decimal values from the same operation order). Every attempt of one row appends its own
-    /// field sequence. The hasher writes the fields directly (no intermediate string), so a
-    /// repeated attempt stays allocation-light.
+    /// FNV-1a 64-bit: offset basis 14695981039346656037, prime 1099511628211, multiplication modulo
+    /// 2^64. Decimal canonicalization: invariant-culture general format (no exponent), then the
+    /// insignificant trailing zeros of the fractional part are removed and zero has one
+    /// representation, so numerically equal values such as <c>1.2</c>, <c>1.20</c> and <c>1.200</c>
+    /// hash identically and the checksum compares strategy values, not decimal representations.
+    /// Fields are written directly into the accumulator, without an intermediate string.
     /// </remarks>
-    internal struct RejectionParity
+    internal struct ParityHasher
     {
-        /// <summary>Human-readable description of the digest, stored with each row.</summary>
-        public const string Algorithm =
-            "FNV-1a 64-bit over UTF-8 canonical attempt fields, each '\\n'-terminated, in order: quoteSequence, Bid, Ask, tradeNumber, side, reason, hardBreakevenOutcome, candidateEntryPrice, PL_existing, PL_1lot, exactRequiredLot, normalizedRequiredLot, rawRequestedLot, PL_after; decimals as invariant-culture decimal general-format strings; enums as their exact names; not-applicable values empty.";
-
         private const ulong OffsetBasis = 14695981039346656037UL;
         private const ulong Prime = 1099511628211UL;
         private ulong _hash;
 
-        /// <summary>The initial digest of a row.</summary>
-        public static RejectionParity Start()
+        /// <summary>A fresh accumulator.</summary>
+        public static ParityHasher Start()
         {
-            return new RejectionParity { _hash = OffsetBasis };
+            return new ParityHasher { _hash = OffsetBasis };
         }
 
         /// <summary>The 16-character lower-case hexadecimal digest.</summary>
         public string Hex => _hash.ToString("x16", CultureInfo.InvariantCulture);
 
-        /// <summary>Folds one attempt into the digest.</summary>
-        public void Add(
+        /// <summary>Adds the '\n' field terminator.</summary>
+        public void Separator()
+        {
+            AddByte((byte)'\n');
+        }
+
+        /// <summary>Adds an ASCII literal (field values and enum names built from ASCII constants).</summary>
+        public void AddAscii(string text)
+        {
+            for (var i = 0; i < text.Length; i++)
+            {
+                AddByte((byte)text[i]);
+            }
+        }
+
+        /// <summary>Adds an integer in invariant culture.</summary>
+        public void AddLong(long value)
+        {
+            System.Span<char> buffer = stackalloc char[32];
+            if (value.TryFormat(buffer, out var written, default, CultureInfo.InvariantCulture))
+            {
+                AddCanonicalNumber(buffer.Slice(0, written));
+            }
+        }
+
+        /// <summary>Adds a decimal in its canonical numeric form (see the type remarks).</summary>
+        public void AddDecimal(decimal value)
+        {
+            System.Span<char> buffer = stackalloc char[64];
+            if (value.TryFormat(buffer, out var written, default, CultureInfo.InvariantCulture))
+            {
+                AddCanonicalNumber(buffer.Slice(0, written));
+            }
+        }
+
+        /// <summary>Adds a decimal when present; a not-applicable value adds nothing.</summary>
+        public void AddOptionalDecimal(decimal? value)
+        {
+            if (value.HasValue)
+            {
+                AddDecimal(value.Value);
+            }
+        }
+
+        private void AddCanonicalNumber(System.ReadOnlySpan<char> chars)
+        {
+            var end = chars.Length;
+            var dot = -1;
+            for (var i = 0; i < end; i++)
+            {
+                if (chars[i] == '.')
+                {
+                    dot = i;
+                    break;
+                }
+            }
+            if (dot >= 0)
+            {
+                while (end > dot + 1 && chars[end - 1] == '0')
+                {
+                    end--;
+                }
+                if (end == dot + 1)
+                {
+                    end = dot;
+                }
+            }
+            var allZero = true;
+            for (var i = 0; i < end; i++)
+            {
+                var c = chars[i];
+                if (c != '0' && c != '.' && c != '-')
+                {
+                    allZero = false;
+                    break;
+                }
+            }
+            if (allZero)
+            {
+                AddByte((byte)'0');
+                return;
+            }
+            for (var i = 0; i < end; i++)
+            {
+                AddByte((byte)chars[i]);
+            }
+        }
+
+        private void AddByte(byte value)
+        {
+            unchecked
+            {
+                _hash ^= value;
+                _hash *= Prime;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The canonical per-attempt parity representation of a rejected entry, folded into the digest
+    /// kept by each <see cref="EntryRejectionRecord"/>. The canonical field order is:
+    /// quoteSequence, Bid, Ask, tradeNumber, side, reason, hardBreakevenOutcome, candidateEntryPrice,
+    /// PL_existing, PL_1lot, exactRequiredLot, normalizedRequiredLot, rawRequestedLot, PL_after; each
+    /// field is '\n'-terminated, decimals use the canonical numeric form of
+    /// <see cref="ParityHasher"/>, enums their exact names and a not-applicable value is empty.
+    /// </summary>
+    internal static class RejectionParity
+    {
+        /// <summary>Human-readable description of the digest, stored with each row.</summary>
+        public const string Algorithm =
+            "FNV-1a 64-bit over UTF-8 canonical attempt fields, each '\\n'-terminated, in order: quoteSequence, Bid, Ask, tradeNumber, side, reason, hardBreakevenOutcome, candidateEntryPrice, PL_existing, PL_1lot, exactRequiredLot, normalizedRequiredLot, rawRequestedLot, PL_after; decimals in canonical numeric form (invariant culture general format, insignificant trailing zeros removed, zero as '0'); enums as their exact names; not-applicable values empty.";
+
+        /// <summary>Folds one rejection attempt into the digest.</summary>
+        public static void Add(
+            ref ParityHasher hasher,
             long quoteSequence,
             decimal bid,
             decimal ask,
@@ -435,109 +539,53 @@ namespace MarketLab.SingleAnchor
             decimal? rawRequestedLots,
             decimal? projectedProfitAfter)
         {
-            AddLong(quoteSequence);
-            Separator();
-            AddDecimal(bid);
-            Separator();
-            AddDecimal(ask);
-            Separator();
-            AddLong(tradeNumber);
-            Separator();
-            AddAscii(side == TradeSide.Buy ? "Buy" : "Sell");
-            Separator();
-            AddReason(reason);
-            Separator();
-            AddOutcome(outcome);
-            Separator();
-            AddOptional(candidateEntryPrice);
-            Separator();
-            AddOptional(existingProfitAtTarget);
-            Separator();
-            AddOptional(marginalProfitPerLot);
-            Separator();
-            AddOptional(exactRequiredLots);
-            Separator();
-            AddDecimal(normalizedRequiredLots);
-            Separator();
-            AddOptional(rawRequestedLots);
-            Separator();
-            AddOptional(projectedProfitAfter);
-            Separator();
+            hasher.AddLong(quoteSequence);
+            hasher.Separator();
+            hasher.AddDecimal(bid);
+            hasher.Separator();
+            hasher.AddDecimal(ask);
+            hasher.Separator();
+            hasher.AddLong(tradeNumber);
+            hasher.Separator();
+            hasher.AddAscii(side == TradeSide.Buy ? "Buy" : "Sell");
+            hasher.Separator();
+            AddReason(ref hasher, reason);
+            hasher.Separator();
+            AddOutcome(ref hasher, outcome);
+            hasher.Separator();
+            hasher.AddOptionalDecimal(candidateEntryPrice);
+            hasher.Separator();
+            hasher.AddOptionalDecimal(existingProfitAtTarget);
+            hasher.Separator();
+            hasher.AddOptionalDecimal(marginalProfitPerLot);
+            hasher.Separator();
+            hasher.AddOptionalDecimal(exactRequiredLots);
+            hasher.Separator();
+            hasher.AddDecimal(normalizedRequiredLots);
+            hasher.Separator();
+            hasher.AddOptionalDecimal(rawRequestedLots);
+            hasher.Separator();
+            hasher.AddOptionalDecimal(projectedProfitAfter);
+            hasher.Separator();
         }
 
-        private void AddByte(byte value)
-        {
-            unchecked
-            {
-                _hash ^= value;
-                _hash *= Prime;
-            }
-        }
-
-        private void Separator()
-        {
-            AddByte((byte)'\n');
-        }
-
-        private void AddAscii(string text)
-        {
-            for (var i = 0; i < text.Length; i++)
-            {
-                AddByte((byte)text[i]);
-            }
-        }
-
-        private void AddLong(long value)
-        {
-            System.Span<char> buffer = stackalloc char[32];
-            if (value.TryFormat(buffer, out var written, default, CultureInfo.InvariantCulture))
-            {
-                AddChars(buffer.Slice(0, written));
-            }
-        }
-
-        private void AddDecimal(decimal value)
-        {
-            System.Span<char> buffer = stackalloc char[64];
-            if (value.TryFormat(buffer, out var written, default, CultureInfo.InvariantCulture))
-            {
-                AddChars(buffer.Slice(0, written));
-            }
-        }
-
-        private void AddOptional(decimal? value)
-        {
-            if (value.HasValue)
-            {
-                AddDecimal(value.Value);
-            }
-        }
-
-        private void AddChars(System.ReadOnlySpan<char> chars)
-        {
-            for (var i = 0; i < chars.Length; i++)
-            {
-                AddByte((byte)chars[i]);
-            }
-        }
-
-        private void AddReason(EntryRejectionReason reason)
+        private static void AddReason(ref ParityHasher hasher, EntryRejectionReason reason)
         {
             switch (reason)
             {
                 case EntryRejectionReason.HardBreakevenInfeasible:
-                    AddAscii("HardBreakevenInfeasible");
+                    hasher.AddAscii("HardBreakevenInfeasible");
                     break;
                 case EntryRejectionReason.VolumeExceedsMaximum:
-                    AddAscii("VolumeExceedsMaximum");
+                    hasher.AddAscii("VolumeExceedsMaximum");
                     break;
                 default:
-                    AddAscii("ExecutionFailed");
+                    hasher.AddAscii("ExecutionFailed");
                     break;
             }
         }
 
-        private void AddOutcome(HardBreakevenOutcome? outcome)
+        private static void AddOutcome(ref ParityHasher hasher, HardBreakevenOutcome? outcome)
         {
             if (!outcome.HasValue)
             {
@@ -546,18 +594,43 @@ namespace MarketLab.SingleAnchor
             switch (outcome.Value)
             {
                 case HardBreakevenOutcome.Feasible:
-                    AddAscii("Feasible");
+                    hasher.AddAscii("Feasible");
                     break;
                 case HardBreakevenOutcome.InvalidTargetPrices:
-                    AddAscii("InvalidTargetPrices");
+                    hasher.AddAscii("InvalidTargetPrices");
                     break;
                 case HardBreakevenOutcome.NonPositiveMarginalProfit:
-                    AddAscii("NonPositiveMarginalProfit");
+                    hasher.AddAscii("NonPositiveMarginalProfit");
                     break;
                 default:
-                    AddAscii("ExceedsMaximumVolume");
+                    hasher.AddAscii("ExceedsMaximumVolume");
                     break;
             }
+        }
+    }
+
+    /// <summary>
+    /// The canonical compact parity representation of the skipped first-entry attempts of one
+    /// basket. The canonical field order is: quoteSequence, Bid, Ask, each '\n'-terminated, with
+    /// decimals in the canonical numeric form of <see cref="ParityHasher"/>. One digest per basket
+    /// over every skipped quote, so a one-tick decision mismatch between two engines is detectable
+    /// without one JSON row per skipped tick.
+    /// </summary>
+    internal static class SkippedFirstEntryParity
+    {
+        /// <summary>Human-readable description of the digest, stored with each trace.</summary>
+        public const string Algorithm =
+            "FNV-1a 64-bit over UTF-8 canonical skipped first-entry attempt fields, each '\\n'-terminated, in order: quoteSequence, Bid, Ask; decimals in canonical numeric form (invariant culture general format, insignificant trailing zeros removed, zero as '0').";
+
+        /// <summary>Folds one skipped first-entry quote into the digest.</summary>
+        public static void Add(ref ParityHasher hasher, long quoteSequence, decimal bid, decimal ask)
+        {
+            hasher.AddLong(quoteSequence);
+            hasher.Separator();
+            hasher.AddDecimal(bid);
+            hasher.Separator();
+            hasher.AddDecimal(ask);
+            hasher.Separator();
         }
     }
 
@@ -571,7 +644,7 @@ namespace MarketLab.SingleAnchor
     /// </summary>
     public sealed class EntryRejectionRecord
     {
-        private RejectionParity _parity;
+        private ParityHasher _parity;
 
         internal EntryRejectionRecord(int basket, long quoteSequence, DateTime time, decimal bid, decimal ask, EntryRejection rejection)
         {
@@ -603,7 +676,7 @@ namespace MarketLab.SingleAnchor
             LastTime = time;
             LastBid = bid;
             LastAsk = ask;
-            _parity = RejectionParity.Start();
+            _parity = ParityHasher.Start();
             Include(rejection);
         }
 
@@ -655,10 +728,10 @@ namespace MarketLab.SingleAnchor
         /// <summary>Target spread of the hard-BE sizing; null otherwise.</summary>
         public decimal? TargetSpread { get; }
 
-        /// <summary>Projected Bid at the target; null otherwise.</summary>
+        /// <summary>Projected Bid at the boundary; null otherwise.</summary>
         public decimal? TargetBid { get; }
 
-        /// <summary>Projected Ask at the target; null otherwise.</summary>
+        /// <summary>Projected Ask at the boundary; null otherwise.</summary>
         public decimal? TargetAsk { get; }
 
         /// <summary>PL_existing(T) of the first attempt; null otherwise.</summary>
@@ -731,7 +804,8 @@ namespace MarketLab.SingleAnchor
         private void Include(EntryRejection rejection)
         {
             var s = rejection.Sizing;
-            _parity.Add(
+            RejectionParity.Add(
+                ref _parity,
                 LastQuoteSequence,
                 LastBid,
                 LastAsk,
@@ -789,6 +863,8 @@ namespace MarketLab.SingleAnchor
     /// </summary>
     public sealed class SkippedFirstEntryRecord
     {
+        private ParityHasher _parity;
+
         internal SkippedFirstEntryRecord(int basket, long quoteSequence, in Quote quote)
         {
             Basket = basket;
@@ -801,6 +877,8 @@ namespace MarketLab.SingleAnchor
             LastTime = quote.Time;
             LastBid = quote.Bid;
             LastAsk = quote.Ask;
+            _parity = ParityHasher.Start();
+            SkippedFirstEntryParity.Add(ref _parity, quoteSequence, quote.Bid, quote.Ask);
         }
 
         /// <summary>Basket sequence number.</summary>
@@ -833,6 +911,12 @@ namespace MarketLab.SingleAnchor
         /// <summary>Ask of the last skipped quote.</summary>
         public decimal LastAsk { get; private set; }
 
+        /// <summary>Name of the parity algorithm used by <see cref="ParityHash"/>.</summary>
+        public string ParityAlgorithm => SkippedFirstEntryParity.Algorithm;
+
+        /// <summary>FNV-1a 64-bit digest over the canonical tuple of every skipped quote of this basket.</summary>
+        public string ParityHash => _parity.Hex;
+
         internal void Repeat(long quoteSequence, in Quote quote)
         {
             Attempts++;
@@ -840,6 +924,7 @@ namespace MarketLab.SingleAnchor
             LastTime = quote.Time;
             LastBid = quote.Bid;
             LastAsk = quote.Ask;
+            SkippedFirstEntryParity.Add(ref _parity, quoteSequence, quote.Bid, quote.Ask);
         }
     }
 
@@ -916,7 +1001,7 @@ namespace MarketLab.SingleAnchor
             return new LegRecord(basket, leg.TradeNumber, leg.QuoteSequence, leg.EntryTime, leg.TriggerQuote.Bid, leg.TriggerQuote.Ask,
                 leg.Side, leg.Lots, leg.EntryPrice, leg.Regime,
                 leg.RawRequestedLots,
-                s?.RequiredLot,
+                s?.ExactRequired,
                 s?.NormalizedRequiredLot ?? leg.Lots,
                 s?.Target.Target, s?.Target.Spread, s?.Target.Bid, s?.Target.Ask,
                 s?.ExistingProfitAtTarget, s?.MarginalProfitPerLot, s?.ProjectedProfitAfter);
@@ -978,7 +1063,7 @@ namespace MarketLab.SingleAnchor
     /// Diagnostic raised just before the engine throws
     /// <see cref="StrategyInvariant.HardBreakevenViolatedByFill"/> (the fault is already recorded):
     /// the tail leg was filled and is in the ledger, but the projected executable basket P/L at
-    /// its hard target is negative. The leg is not published as a normal successful entry.
+    /// its hard boundary is negative. The leg is not published as a normal successful entry.
     /// </summary>
     public sealed record HardBreakevenViolatedEvent(Basket Basket, BasketLeg Leg, HardBreakevenSizing Sizing, decimal ProjectedProfitAfterFill, Quote Quote);
 

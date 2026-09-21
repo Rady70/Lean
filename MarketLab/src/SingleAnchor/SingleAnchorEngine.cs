@@ -43,6 +43,7 @@ namespace MarketLab.SingleAnchor
         private int _basketSequence;
         private Quote? _lastProcessedQuote;
         private SingleAnchorRunException? _fault;
+        private bool _hardBreakevenVerificationFailed;
 
         /// <summary>
         /// Creates an engine. Throws <see cref="ArgumentException"/> when the parameters are invalid.
@@ -85,8 +86,13 @@ namespace MarketLab.SingleAnchor
         /// <summary>The failure that faulted the engine, if any.</summary>
         public SingleAnchorRunException? Fault => _fault;
 
-        /// <summary>What the hard-BE requirement covers under these parameters (see <see cref="HardBreakevenVerification"/>).</summary>
-        public HardBreakevenVerification HardBreakevenStatus => HardBreakevenVerification.For(_p);
+        /// <summary>
+        /// What the hard-BE requirement covers under these parameters and this run
+        /// (see <see cref="HardBreakevenVerification"/>). <c>HardBEVerifiedUnderConfiguredExecutionModel</c>
+        /// is runtime state: it becomes false if a tail fill ever fails the post-fill verification,
+        /// even though the run then stops.
+        /// </summary>
+        public HardBreakevenVerification HardBreakevenStatus => HardBreakevenVerification.For(_p, !_hardBreakevenVerificationFailed);
 
         /// <summary>Sum of the realized executable profit of every closed basket.</summary>
         public decimal RealizedProfit { get; private set; }
@@ -336,14 +342,15 @@ namespace MarketLab.SingleAnchor
             {
                 regime = SizingRegime.HardBreakeven;
                 basket.ActivateHardBreakevenMode();
-                sizing = HardBreakevenSizer.Size(basket, side, quote, _p);
-                if (!sizing.IsFeasible)
+                var tail = HardBreakevenSizer.Size(basket, side, quote, _p);
+                if (!tail.IsFeasible)
                 {
                     Reject(basket, quote, new EntryRejection(tradeNumber, side, EntryRejectionReason.HardBreakevenInfeasible,
-                        null, ExactRequiredLots(sizing), sizing.NormalizedRequiredLot, sizing, maximum, null));
+                        null, tail.ExactRequired, tail.NormalizedRequiredLot, tail, maximum, null));
                     return;
                 }
-                lots = sizing.NormalizedLot;
+                sizing = tail;
+                lots = tail.NormalizedLot;
             }
 
             var order = new EntryOrder(tradeNumber, side, lots, quote, regime, sizing);
@@ -351,13 +358,13 @@ namespace MarketLab.SingleAnchor
             if (!execution.Succeeded)
             {
                 Reject(basket, quote, new EntryRejection(tradeNumber, side, EntryRejectionReason.ExecutionFailed,
-                    rawRequested, ExactRequiredLots(sizing), sizing?.NormalizedRequiredLot ?? lots, sizing, maximum, execution.Message));
+                    rawRequested, sizing?.ExactRequired, sizing?.NormalizedRequiredLot ?? lots, sizing, maximum, execution.Message));
                 return;
             }
             if (execution.FillPrice <= 0m)
             {
                 Reject(basket, quote, new EntryRejection(tradeNumber, side, EntryRejectionReason.ExecutionFailed,
-                    rawRequested, ExactRequiredLots(sizing), sizing?.NormalizedRequiredLot ?? lots, sizing, maximum,
+                    rawRequested, sizing?.ExactRequired, sizing?.NormalizedRequiredLot ?? lots, sizing, maximum,
                     $"The executor reported a non-positive fill price ({F(execution.FillPrice)}) for trade {tradeNumber}."));
                 return;
             }
@@ -365,35 +372,30 @@ namespace MarketLab.SingleAnchor
             var leg = new BasketLeg(tradeNumber, side, lots, execution.FillPrice, quote.Time, regime, QuotesProcessed, quote) { Sizing = sizing, RawRequestedLots = rawRequested };
             basket.AddLeg(leg);
 
-            if (sizing != null)
+            if (sizing.HasValue)
             {
                 // The hard-BE requirement is re-verified with the actual fill before the entry is
-                // published: the projected executable basket P/L at the fixed target must be
+                // published: the projected executable basket P/L at the fixed boundary must be
                 // non-negative after the leg. With the research executor the fill is the sizing
                 // model and this always holds; a negative value means the executor departed from
                 // the model, and continuing would be breakeven drift after hard-BE activation.
-                var afterFill = BasketEconomics.ProjectedExistingProfit(basket, sizing.Target, _p);
+                var tail = sizing.Value;
+                var afterFill = BasketEconomics.ProjectedExistingProfit(basket, tail.Target, _p);
                 if (afterFill < 0m)
                 {
                     // The fault is recorded before observers are told, so the engine is faulted
                     // even if an observer throws. The leg stays in the ledger for the post-mortem,
                     // but no normal EntryOpened is raised for it.
+                    _hardBreakevenVerificationFailed = true;
                     var fault = RecordFault(new StrategyInvariantException(StrategyInvariant.HardBreakevenViolatedByFill, quote,
-                        $"Tail leg {leg} of basket #{basket.Sequence} was filled at {F(execution.FillPrice)} instead of the modelled {F(sizing.CandidateEntryPrice)}; the projected executable basket P/L at the hard target {F(sizing.Target.Target)} is {F(afterFill)} after the fill (sizing expected {F(sizing.ProjectedProfitAfter)}). Breakeven would drift beyond the ceiling; the run is stopped."));
-                    HardBreakevenViolated.Raise(new HardBreakevenViolatedEvent(basket, leg, sizing, afterFill, quote));
+                        $"Tail leg {leg} of basket #{basket.Sequence} was filled at {F(execution.FillPrice)} instead of the modelled {F(tail.CandidateEntryPrice)}; the projected executable basket P/L at the hard boundary {F(tail.Target.Target)} is {F(afterFill)} after the fill (sizing expected {F(tail.ProjectedProfitAfter)}). Breakeven would drift beyond the ceiling; the run is stopped."));
+                    HardBreakevenViolated.Raise(new HardBreakevenViolatedEvent(basket, leg, tail, afterFill, quote));
                     throw fault;
                 }
             }
 
             EntriesOpened++;
             EntryOpened.Raise(new EntryOpenedEvent(basket, leg, quote, sizing));
-        }
-
-        private static decimal? ExactRequiredLots(HardBreakevenSizing? sizing)
-        {
-            // The exact Q_BE exists only when the ratio applied (PL_1lot(T) > 0); otherwise there
-            // is no finite exact requirement and the field stays null.
-            return sizing != null && sizing.MarginalProfitPerLot > 0m ? sizing.RequiredLot : (decimal?)null;
         }
 
         private T RecordFault<T>(T exception) where T : SingleAnchorRunException

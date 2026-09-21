@@ -13,10 +13,12 @@ open are resolved in the specification and implemented here:
 - a still-empty basket does not start on a quote that satisfies both first-entry
   boundaries; the quote is skipped and the run continues (section 3 of the
   specification);
-- `T_up` / `T_down` are true basket-BE levels: Bid = T_up for an upper
-  recovery, Ask = T_down for a lower recovery; the configured target spread only
-  reconstructs the opposite quote side of the projected simultaneous close
-  (section 6).
+- `T_up` / `T_down` are the hard basket-BE **boundaries**: `Bid = T_up` is the
+  maximum permitted upper BE Bid level and `Ask = T_down` the minimum permitted
+  lower BE Ask level. They are ceilings used for sizing, not necessarily the
+  actual zero-loss BE (which normally lies inside them after volume rounding)
+  and not an exit rule: the configured target spread only reconstructs the
+  opposite quote side of the sizing valuation (section 6).
 
 ## 1. Architecture and where it lives
 
@@ -109,7 +111,7 @@ culture; `true`/`false` for booleans.
 | `single-anchor-volume-step`, `-minimum-volume`, `-maximum-volume` | V_step and broker limits (section 8) | 0.01, 0.01, 100 |
 | `single-anchor-commission-per-lot` | round-trip commission per lot: in the executable projection (section 7) and in every realized result | 0 |
 | `single-anchor-slippage` | adverse slippage per execution, price units: in the projection and in every fill (section 7) | 0 |
-| `single-anchor-projected-spread` | W: the spread assumed at the hard target to reconstruct the opposite quote side of the projected simultaneous close (section 6); it never shifts the BE level itself | none, must be supplied; 0 is allowed |
+| `single-anchor-projected-spread` | W: the spread assumed at the hard boundary to reconstruct the opposite quote side of the projected simultaneous basket valuation (section 6); it never shifts the boundary itself | none, must be supplied; 0 is allowed |
 | `single-anchor-buy-swap-per-lot-per-day`, `-sell-swap-per-lot-per-day` | financing (sections 7, 9, 17); must both be 0 in a strategy-qualified run | 0, 0 |
 | `single-anchor-symbol`, `-market`, `-security-type` | host instrument; the host is XAUUSD-focused, another ticker is accepted only with its own explicit point value | `XAUUSD`, `oanda`, `Cfd` (`Forex` accepted) |
 | `single-anchor-start-date`, `-end-date`, `-cash` | host run settings (`cash` only satisfies LEAN's setup; the strategy sizes in lots) | `2014-05-02`, `2014-05-14` (the shipped sample), 100000 |
@@ -122,18 +124,24 @@ culture; `true`/`false` for booleans.
   priority, no skip-as-trade, no double entry. The quote is skipped, the basket
   stays empty, the anchor stays fixed and the run continues. The engine counts
   every skip (`skippedFirstEntryQuotes`) and keeps one compact trace per basket
-  (first and last skipped quote, attempts) in the results. One event is raised
+  (first and last skipped quote, attempts, and a parity digest over every
+  skipped quote) in the results. One event is raised
   when a basket first skips; later skips are counted on the trace, not logged
   per tick. After the first leg only the opposite side of the previous trade is
   evaluated, even on a quote that also satisfies the other boundary.
-- **Hard-BE levels (resolved, specification section 6).** `T_up` is the maximum
-  upper BE Bid level and `T_down` the maximum lower BE Ask level. The projection
-  prices the simultaneous close exactly there: upper recovery closes BUY legs at
-  `Bid = T_up` and SELL legs at `Ask = T_up + W`; lower recovery closes SELL legs
-  at `Ask = T_down` and BUY legs at `Bid = T_down - W`. `W` is the configured
-  target spread, used only for the opposite side; the level itself is never
-  shifted by it, nor by slippage or commission, which are applied as execution
-  economics to the executable close price.
+- **Hard-BE boundaries (resolved, specification section 6).** Basket BE is the
+  level at which every open position closes at the same instant with total
+  executable P/L zero. `T_up` is the maximum permitted upper BE Bid level and
+  `T_down` the minimum permitted lower BE Ask level. They are hard boundaries,
+  not necessarily the actual zero-loss BE: after upward volume normalization the
+  actual BE normally lies inside the boundary, and that satisfies the rule
+  `PL(T_up) >= 0` / `PL(T_down) >= 0`. The sizing valuation prices the
+  simultaneous close at the boundary: upper recovery `Bid = T_up`,
+  `Ask = T_up + W`; lower recovery `Ask = T_down`, `Bid = T_down - W`. `W` is
+  the configured target spread, used only for the opposite side; the boundary is
+  never shifted by it, nor by slippage or commission. The boundary is not an
+  exit: the basket is closed only by escape, fixed TP or trailing (section 14),
+  never automatically at its BE boundary.
 - **`Smallest valid Q`.** With PL_1lot(T) > 0: Q_BE = -PL_existing / PL_1lot
   when PL_existing < 0, otherwise 0; the broker-normalized requirement is
   `ceil(max(Q_BE, minimum) / step) * step`, verified by direct recomputation of
@@ -148,14 +156,20 @@ culture; `true`/`false` for booleans.
   is the broker-valid lot the hard-BE condition needs, retained even when it
   exceeds the maximum volume; `NormalizedLot` is 0 when nothing can be placed.
   The rejection trace carries both, so no infeasible case hides the needed lot.
+  `ExactRequired` (and the leg/rejection traces' `ExactRequiredLot`) is null
+  whenever `PL_1lot(T) <= 0`, because then there is no finite exact Q_BE; a
+  minimum-volume leg placed while the basket already projects inside the
+  boundary carries `ExactRequiredLot = null`, not zero.
 - **Hard-BE verification after the fill, before publication.** The sizing uses
   the execution model and the research executor fills with exactly that model,
   so the projected and the actual entry price are the same number. The engine
-  still recomputes the projected executable basket P/L at the fixed target with
-  the actual fill after every tail leg. Only after that check does it raise the
-  normal `EntryOpened` event. A negative value (only possible with an executor
-  that departs from the model) is not a trading event: the engine records the
-  fault first, then raises the diagnostic `HardBreakevenViolated` (the leg stays
+  still recomputes the projected executable basket P/L at the fixed boundary
+  with the actual fill after every tail leg. Only after that check does it raise
+  the normal `EntryOpened` event. A negative value (only possible with an
+  executor that departs from the model) is not a trading event: the engine
+  records the fault first (and sets the run's
+  `HardBEVerifiedUnderConfiguredExecutionModel` state to false), then raises the
+  diagnostic `HardBreakevenViolated` (the leg stays
   in the ledger for the post-mortem, no `EntryOpened` is raised for it), then
   throws the `StrategyInvariantException` (`HardBreakevenViolatedByFill`) that
   stops the run, because continuing would be breakeven drift after hard-BE
@@ -163,7 +177,7 @@ culture; `true`/`false` for booleans.
 - **Financing is rejected (specification sections 7, 9, 17).** A non-zero
   `buy-swap-per-lot-per-day` or `sell-swap-per-lot-per-day` fails parameter
   validation: financing accrued after a tail entry moves the projected P/L at
-  the hard target and the engine spends no quote re-verifying it, so such a run
+  the hard boundary and the engine spends no quote re-verifying it, so such a run
   could violate the hard ceiling. The engine therefore has no financing accrual
   and no swap fields; zero is the only accepted configuration until continuous
   financing behaviour is specified.
@@ -176,12 +190,21 @@ culture; `true`/`false` for booleans.
   deterministic FNV-1a 64-bit parity digest over the canonical tuple of every
   attempt (quote sequence, Bid, Ask, trade number, side, reason, outcome,
   candidate entry, PL_existing, PL_1lot, exact required lot, broker-normalized
-  required lot, raw requested lot, PL_after; fields newline-terminated,
-  decimals in invariant culture, enums by exact name) plus min/max values of
-  the exact required lot, PL_existing, PL_1lot and PL_after. A Python
-  implementation can replay the same attempts and compare the digest without
-  one JSON row per tick. A materially changed normalized requirement is a new
-  row.
+  required lot, raw requested lot, PL_after; fields newline-terminated, enums by
+  exact name, decimals in canonical numeric form: invariant culture, no
+  exponent, insignificant trailing zeros removed, zero as `0`) plus min/max
+  values of the exact required lot, PL_existing, PL_1lot and PL_after. The
+  canonical decimal form means numerically equal values such as `1.2`, `1.20`
+  and `1.200` hash identically, so the checksum compares strategy values rather
+  than .NET decimal scales. A Python implementation can replay the same attempts
+  and compare the digest to detect a divergence; a 64-bit checksum is a compact
+  high-confidence mismatch detector, not a mathematical proof. A materially
+  changed normalized requirement is a new row.
+- **Skipped first-entry attempts carry the same kind of digest.** The
+  `SkippedFirstEntryTrace` row folds every skipped quote into an FNV-1a 64-bit
+  digest over quote sequence, Bid and Ask (canonical decimals as above) next to
+  the first/last quote and the count, so a one-tick decision mismatch between two
+  engines is detectable even when first quote, last quote and count agree.
 - **Lot concepts are separate in the traces.** Arithmetic legs and rejections
   carry `RawRequestedLot` (B * n) and `NormalizedRequiredLots`; hard-BE legs and
   rejections carry `ExactRequiredLot` (Q_BE when the ratio applies) and
@@ -189,11 +212,14 @@ culture; `true`/`false` for booleans.
   and is null on a rejection. Exact required lots that exceed the maximum volume
   are still reported (for example Q_BE 0.054725... normalizes to 0.06 and stays
   0.06 even when the maximum is 0.05).
-- **Repeated rejections are allocation-light.** The engine decides whether an
-  attempt is a new situation before building anything human-readable; the
-  detailed message is only formatted for a new row (and raised to the host once),
-  while the compact parity digest updates on every attempt. The digest writer
-  serializes fields directly, without building a string per attempt.
+- **Repeated rejections do not allocate on the hot path (measured).** The engine
+  decides whether an attempt is a new situation before building anything
+  human-readable; the detailed message is only formatted for a new row (and
+  raised to the host once). The sizing and rejection records are value types and
+  the digest writer serializes fields directly into the accumulator, so a
+  repeated rejected attempt allocates nothing (section 7: 0 bytes per attempt
+  over a one-million-tick probe; the earlier class-based revision measured 808
+  and 352 bytes per attempt).
 - **Arithmetic lots** (trades 1..Nnormal) are normalized upward to the volume
   step (never below the requested B * n), raised to the minimum volume, and
   refused explicitly above the maximum.
@@ -303,16 +329,17 @@ own results are:
   `SkippedFirstEntryTrace` (a zero-leg anchored basket is represented with its
   anchor event). The `AnchorEvent` of every basket is the exact source quote
   (sequence number, time, Bid and Ask) and the derived anchor, step, upper,
-  lower and both hard-BE targets. A `LegTrace` row carries basket number, trade
+  lower and both hard-BE boundaries. A `LegTrace` row carries basket number, trade
   number, the triggering quote's sequence number, time, decision Bid and Ask,
   side, `PlacedLot`, fill price, sizing regime, `RawRequestedLot`,
   `ExactRequiredLot`, `NormalizedRequiredLot` and, for a tail leg, the hard-BE
-  target, the target spread, the projected Bid/Ask used, PL_existing(T),
+  boundary, the target spread, the projected Bid/Ask used, PL_existing(T),
   PL_1lot(T) and the projected P/L after the leg. A `RejectionTrace` row
   carries the lot distinction, the first attempt's full sizing figures, the
   attempt count and last quote, the parity digest and the min/max aggregates.
-  A `SkippedFirstEntryTrace` row carries the first and last skipped quote and
-  the attempt count. Quote sequence numbers make same-timestamp ticks
+  A `SkippedFirstEntryTrace` row carries the first and last skipped quote, the
+  attempt count and a parity digest over every skipped quote. Quote sequence
+  numbers make same-timestamp ticks
   distinguishable; per-row times are in `quoteTimeZone`.
 
 ## 7. Validation record (2026-09-21, Windows, .NET SDK 10.0.401)
@@ -327,7 +354,7 @@ sample's data quality or of a sensible parameter choice. The target spread
   upstream projects print their own analyzer warnings, as recorded for the
   engine build).
 - `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`:
-  126 passed, 0 failed, 0 skipped.
+  130 passed, 0 failed, 0 skipped.
 - `MarketLab\tests\Test-MarketLabBacktesting.ps1` (fast mode): 150 passed,
   0 failed.
 - `pwsh -File MarketLab\scripts\run-backtest.ps1 -AlgorithmTypeName SingleAnchorVNextAlgorithm
@@ -354,25 +381,29 @@ sample's data quality or of a sensible parameter choice. The target spread
     PL_after = 15.43919834;
   LEAN's own report: 0 orders, End Equity 100,000.
 - Rejection-heavy configuration, same command plus
-  `,single-anchor-hard-be-ceiling-percent:0.1` (the tail target sits between the
-  entry level and the anchor, so the required side cannot reach breakeven):
+  `,single-anchor-hard-be-ceiling-percent:0.1` (the tail boundary sits between
+  the entry level and the anchor, so the required side cannot reach breakeven):
   helper exit code 0; 18 legs, 11 baskets closed, realized profit 17.752;
   1 distinct rejected-entry situation over 985,370 attempts folded into 1 row
   with `reason=HardBreakevenInfeasible`, `outcome=NonPositiveMarginalProfit`,
-  a 16-character parity digest and min/max aggregates; `results.json` 31,145
-  bytes (no per-tick rows).
+  a 16-character parity digest, its algorithm string and min/max aggregates;
+  `results.json` 31,205 bytes (no per-tick rows).
 - Wide-first-entry configuration, same command with
   `single-anchor-step-percent:0.1` (the previously run-ending case): helper exit
   code 0; the quote 1275.507 / 1278.152 (spread 2.645) on 2014-05-02 08:30:01 is
-  skipped, counted once (`skippedFirstEntryQuotes: 1`) and recorded in one
-  compact `SkippedFirstEntryTrace` (attempts 1); the run completes with 21 legs,
+  skipped, counted once (`skippedFirstEntryQuotes: 1`) and folded into one
+  compact `SkippedFirstEntryTrace` (attempts 1, parity digest
+  `5902baf022001a2c`); the run completes with 21 legs,
   6 baskets closed, realized profit 3.080 and an open 14-leg basket;
-  `results.json` 26,332 bytes.
+  `results.json` 26,653 bytes.
 - Independent allocation probe (temporary console project outside the
   repository, 1,000,000 trigger ticks with a persisting hard-BE rejection):
-  352 bytes allocated per rejected attempt and ~1.1 microseconds per tick, one
+  0 bytes allocated per rejected attempt and ~1.17 microseconds per tick, one
   rejection row; ordinary no-action ticks allocate 0 bytes and cost ~60 ns.
-  (The same probe measured 808 bytes per attempt for the earlier revision that
-  formatted a message on every attempt.)
+  (The same probe measured 808 bytes per attempt for the earlier class-based
+  revision that formatted a message on every attempt, and 352 bytes after the
+  message was made lazy but before the sizing and rejection records became value
+  types.)
 - Determinism: two identical runs of the shipped configuration produce
-  byte-identical `results.json`.
+  byte-identical `results.json` (SHA-256
+  `0AE2CBD856A922F634E5FF6065D25E8047F3E7C6857ACDD8FB30CCD13C26584A`).

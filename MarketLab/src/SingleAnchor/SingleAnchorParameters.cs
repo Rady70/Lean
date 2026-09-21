@@ -93,15 +93,15 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// Adverse slippage assumed per execution, in price units: the candidate leg's projected
-        /// entry and every leg's projected close at the target are moved against the basket by
+        /// entry and every leg's projected close at the boundary are moved against the basket by
         /// this amount. Default 0.
         /// </summary>
         public decimal Slippage { get; init; }
 
         /// <summary>
-        /// The configured spread assumed at the hard target. It reconstructs only the opposite
+        /// The configured spread assumed at the hard boundary. It reconstructs only the opposite
         /// quote side of the projected simultaneous basket closure (upper: Bid = T_up,
-        /// Ask = T_up + W; lower: Ask = T_down, Bid = T_down - W); the hard-BE level itself is
+        /// Ask = T_up + W; lower: Ask = T_down, Bid = T_down - W); the boundary itself is
         /// always Bid = T_up or Ask = T_down, exactly as the specification defines it. Must be
         /// supplied; zero is a valid sensitivity case, negative is not.
         /// </summary>
@@ -111,7 +111,7 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// Swap per lot per day for BUY legs. The specification does not support financing in
-        /// this revision: accrued financing can move the projected P/L at the hard target after
+        /// this revision: accrued financing can move the projected P/L at the hard boundary after
         /// the entry, which the engine does not re-verify, so a strategy-qualified run requires
         /// zero. Non-zero values are rejected by <see cref="GetValidationErrors"/>.
         /// </summary>
@@ -156,7 +156,7 @@ namespace MarketLab.SingleAnchor
 
             if (BuySwapPerLotPerDay != 0m || SellSwapPerLotPerDay != 0m)
             {
-                errors.Add($"{nameof(BuySwapPerLotPerDay)} and {nameof(SellSwapPerLotPerDay)} must both be 0 (got {F(BuySwapPerLotPerDay)} / {F(SellSwapPerLotPerDay)}): financing accrued after a tail entry can move the projected P/L at the hard target without re-verification and would violate the hard ceiling; the specification does not support financing in this revision.");
+                errors.Add($"{nameof(BuySwapPerLotPerDay)} and {nameof(SellSwapPerLotPerDay)} must both be 0 (got {F(BuySwapPerLotPerDay)} / {F(SellSwapPerLotPerDay)}): financing accrued after a tail entry can move the projected P/L at the hard boundary without re-verification and would violate the hard ceiling; the specification does not support financing in this revision.");
             }
 
             return errors;

@@ -65,10 +65,10 @@ namespace MarketLab.SingleAnchor
         /// <summary>Lower = A - S; a SELL triggers when Bid <= Lower.</summary>
         public decimal Lower { get; }
 
-        /// <summary>T_up = A * (1 + C / 100), the hard target for a required BUY.</summary>
+        /// <summary>T_up = A * (1 + C / 100), the upper hard-BE boundary for a required BUY (the actual BE must stay at or below it).</summary>
         public decimal UpperTarget { get; }
 
-        /// <summary>T_down = A * (1 - C / 100), the hard target for a required SELL.</summary>
+        /// <summary>T_down = A * (1 - C / 100), the lower hard-BE boundary for a required SELL (the actual BE must stay at or above it).</summary>
         public decimal LowerTarget { get; }
 
         /// <summary>Legs in entry order (audit; valuations use the aggregates below).</summary>

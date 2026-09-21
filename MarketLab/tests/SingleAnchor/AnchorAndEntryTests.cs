@@ -258,6 +258,80 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(trace.FirstTime, Is.EqualTo(first.Time));
             Assert.That(trace.LastTime, Is.EqualTo(second.Time));
             Assert.That(trace.LastAsk, Is.EqualTo(2022m));
+            Assert.That(trace.ParityHash, Has.Length.EqualTo(16));
+            Assert.That(trace.ParityAlgorithm, Does.Contain("FNV-1a"));
+        }
+
+        [Test]
+        public void TheSkippedFirstEntryDigestDetectsADifferentIntermediateQuote()
+        {
+            // Same attempt count and identical first/last quotes, different middle quote: the
+            // compact trace must still distinguish the two runs.
+            static SingleAnchorEngine Replay(decimal middleBid, decimal middleAsk)
+            {
+                var h = new Harness();
+                h.Anchor();
+                h.Feed(1979m, 2021m);
+                h.Feed(middleBid, middleAsk);
+                h.Feed(1979m, 2021m);
+                return h.Engine;
+            }
+
+            var a = Replay(1978m, 2022m);
+            var b = Replay(1977m, 2023m);
+            var ta = a.Basket!.SkippedFirstEntry!;
+            var tb = b.Basket!.SkippedFirstEntry!;
+
+            Assert.That(tb.Attempts, Is.EqualTo(ta.Attempts));
+            Assert.That(tb.FirstBid, Is.EqualTo(ta.FirstBid));
+            Assert.That(tb.FirstAsk, Is.EqualTo(ta.FirstAsk));
+            Assert.That(tb.LastBid, Is.EqualTo(ta.LastBid));
+            Assert.That(tb.LastAsk, Is.EqualTo(ta.LastAsk));
+            Assert.That(tb.ParityHash, Is.Not.EqualTo(ta.ParityHash), "a one-tick decision mismatch must be detectable");
+        }
+
+        [Test]
+        public void EquivalentDecimalRepresentationsHashIdentically()
+        {
+            // 1979.0 / 1979.00 are the same numeric quote: the digest compares values, not the
+            // .NET decimal scale.
+            static string HashOf(decimal bid, decimal ask)
+            {
+                var h = new Harness();
+                h.Anchor();
+                h.Feed(bid, ask);
+                return h.Engine.Basket!.SkippedFirstEntry!.ParityHash;
+            }
+
+            Assert.That(HashOf(1979.0m, 2021.00m), Is.EqualTo(HashOf(1979m, 2021m)));
+
+            static string DecimalHash(decimal value)
+            {
+                var hasher = ParityHasher.Start();
+                hasher.AddDecimal(value);
+                return hasher.Hex;
+            }
+
+            Assert.That(DecimalHash(1.2m), Is.EqualTo(DecimalHash(1.20m)));
+            Assert.That(DecimalHash(1.2m), Is.EqualTo(DecimalHash(1.200m)));
+            Assert.That(DecimalHash(0m), Is.EqualTo(DecimalHash(0.00m)));
+            Assert.That(DecimalHash(0m), Is.EqualTo(DecimalHash(-0.000m)));
+            Assert.That(DecimalHash(1.2m), Is.Not.EqualTo(DecimalHash(1.25m)));
+        }
+
+        [Test]
+        public void TheSkippedFirstEntryDigestIsDeterministicAcrossIdenticalReplays()
+        {
+            static string Replay()
+            {
+                var h = new Harness();
+                h.Anchor();
+                h.Feed(1979m, 2021m);
+                h.Feed(1978m, 2022m);
+                return h.Engine.Basket!.SkippedFirstEntry!.ParityHash;
+            }
+
+            Assert.That(Replay(), Is.EqualTo(Replay()));
         }
 
         [Test]
