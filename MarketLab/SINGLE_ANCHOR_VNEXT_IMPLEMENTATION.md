@@ -7,6 +7,9 @@ implementation choices it makes, and what is deferred. Nothing outside
 `MarketLab\` is modified; the upstream engine, solution and projects are
 unchanged.
 
+The approved next-phase historical research roadmap is
+[SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md](SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md). It is deliberately separate from this record of already-implemented behaviour.
+
 The two strategy-definition questions that the specification previously left
 open are resolved in the specification and implemented here:
 
