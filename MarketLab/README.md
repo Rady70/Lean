@@ -26,6 +26,7 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `tests\Test-MarketLabBacktesting.ps1` | self-contained assertions for the above |
 | `SINGLE_ANCHOR_VNEXT_STRATEGY.md` | the SingleAnchor vNext strategy specification (authoritative behaviour) |
 | `SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` | where its C# implementation lives, how it is built, tested and run, what is deferred |
+| `SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md` | approved roadmap for historical-data qualification, C# research analytics, account survival and the first baseline research run |
 | `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
 | `.gitignore` | ignores `output\` (generated runs) |
