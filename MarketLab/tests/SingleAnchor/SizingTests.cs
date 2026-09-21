@@ -321,6 +321,9 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(sizing.IsFeasible, Is.True);
             Assert.That(sizing.TradeNumber, Is.EqualTo(5));
             Assert.That(sizing.Target.Target, Is.EqualTo(2089.56m));
+            // The projected Bid/Ask are the interim reading of T (a midpoint with the configured
+            // 0.2 target spread split around it); which price T is remains an owner decision, and
+            // these two assertions pin the current arithmetic only, not an approved rule.
             Assert.That(sizing.Target.Bid, Is.EqualTo(2089.46m));
             Assert.That(sizing.Target.Ask, Is.EqualTo(2089.66m));
             Assert.That(sizing.CandidateEntryPrice, Is.EqualTo(2020m));
