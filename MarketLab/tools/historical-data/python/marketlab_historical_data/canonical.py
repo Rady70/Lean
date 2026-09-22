@@ -82,7 +82,10 @@ def parse_decimal_text(text: str, field: str) -> Decimal:
         raise CanonicalValueError(f"{field} is blank")
     if not DECIMAL_TEXT_PATTERN.match(stripped):
         raise CanonicalValueError(f"{field} is not a decimal value: {text!r}")
-    value = Decimal(stripped)
+    try:
+        value = Decimal(stripped)
+    except ArithmeticError as error:
+        raise CanonicalValueError(f"{field} cannot be parsed exactly: {text!r}") from error
     if not value.is_finite():
         raise CanonicalValueError(f"{field} is not a finite decimal value: {text!r}")
     return value
@@ -97,6 +100,10 @@ def canonical_decimal_text(value: Decimal) -> str:
     if value == 0:
         return "0"
     sign, digits, exponent = value.as_tuple()
+    if exponent > 4096 or exponent < -4096:
+        raise CanonicalValueError(
+            f"decimal exponent {exponent} is too extreme to render canonically"
+        )
     digit_text = "".join(str(digit) for digit in digits).lstrip("0") or "0"
     while len(digit_text) > 1 and digit_text.endswith("0"):
         digit_text = digit_text[:-1]
@@ -117,23 +124,39 @@ def lean_decimal_representable(value: Decimal) -> bool:
 
     The reader (`StreamReaderExtensions.GetDecimal`) accumulates the coefficient
     of the written line into a signed 64-bit integer with a zeroed high word and
-    a byte scale, so the check is made on the *canonical* text the converter
+    a byte scale, so the check is made on the *canonical* form the converter
     writes: coefficient at most ``long.MaxValue`` and at most 28 fractional
     digits. Integer trailing zeros belong to the coefficient (``1000`` is
     coefficient 1000, scale 0), while fractional trailing zeros carry no value
-    and are not part of the canonical text (``1900.00`` is ``1900``).
+    and are not part of the canonical form (``1900.00`` is ``1900``).
+
+    The check works from the decimal tuple and never expands a fixed-point
+    string, so extreme exponents produce ``False`` instead of an exception or a
+    huge allocation.
     """
     if value.is_nan() or value.is_infinite():
         return False
-    text = canonical_decimal_text(value)
-    if text.startswith("-"):
-        text = text[1:]
-    whole, _, fraction = text.partition(".")
-    coefficient = int(whole + fraction)
-    return (
-        coefficient <= LEAN_DECIMAL_MAX_COEFFICIENT
-        and len(fraction) <= LEAN_DECIMAL_MAX_SCALE
-    )
+    if value == 0:
+        return True
+    _, digits, exponent = value.as_tuple()
+    digit_list = list(digits)
+    while exponent < 0 and digit_list and digit_list[-1] == 0:
+        digit_list.pop()
+        exponent += 1
+    if not digit_list:
+        return True
+    if exponent > 0:
+        integer_digits = len(digit_list) + exponent
+    else:
+        integer_digits = max(len(digit_list) + exponent, 0)
+    if integer_digits > 19:
+        return False
+    if exponent < 0 and -exponent > LEAN_DECIMAL_MAX_SCALE:
+        return False
+    coefficient = int("".join(str(digit) for digit in digit_list))
+    if exponent > 0:
+        coefficient *= 10 ** exponent
+    return coefficient <= LEAN_DECIMAL_MAX_COEFFICIENT
 
 
 def utc_is_millisecond_exact(value: datetime) -> bool:

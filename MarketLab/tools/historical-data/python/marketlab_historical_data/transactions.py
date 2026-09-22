@@ -103,21 +103,27 @@ class OutputTransaction:
                 os.replace(stage, final_path)
                 installed.append(final_path)
         except OSError as error:
+            rollback_errors: list[str] = []
             for final_path in installed:
                 try:
                     final_path.unlink()
-                except OSError:
-                    pass
+                except OSError as cleanup_error:
+                    rollback_errors.append(f"could not remove {final_path}: {cleanup_error}")
             for final_path, backup in backups:
                 try:
                     os.replace(backup, final_path)
-                except OSError:
-                    pass
+                except OSError as cleanup_error:
+                    rollback_errors.append(f"could not restore {final_path}: {cleanup_error}")
             for final_path, backup in removals:
                 try:
                     os.replace(backup, final_path)
-                except OSError:
-                    pass
+                except OSError as cleanup_error:
+                    rollback_errors.append(f"could not restore {final_path}: {cleanup_error}")
+            if rollback_errors:
+                raise OutputTransactionError(
+                    "output publication failed and rollback was incomplete; the outputs may be "
+                    "mixed: " + "; ".join(rollback_errors) + f" (original failure: {error})"
+                ) from error
             raise OutputTransactionError(f"output publication failed and was rolled back: {error}") from error
         for _, backup in backups + removals:
             try:

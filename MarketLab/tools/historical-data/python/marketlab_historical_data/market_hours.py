@@ -146,11 +146,19 @@ def load_market_hours(
     market_key = market.strip().lower()
     exact_key = f"{type_key}-{market_key}-{symbol}"
     wildcard_key = f"{type_key}-{market_key}-[*]"
-    entry = entries.get(exact_key)
+    keys_by_lowercase = {str(key).lower(): key for key in entries}
+    exact_match = keys_by_lowercase.get(exact_key.lower())
+    wildcard_match = keys_by_lowercase.get(wildcard_key.lower())
+    entry = None
     entry_source = "exact"
-    if entry is None:
-        entry = entries.get(wildcard_key)
+    resolved_key = exact_key
+    if exact_match is not None:
+        entry = entries[exact_match]
+        resolved_key = exact_match
+    elif wildcard_match is not None:
+        entry = entries[wildcard_match]
         entry_source = "wildcard"
+        resolved_key = wildcard_match
     if entry is None:
         raise MarketHoursDatabaseError(
             f"no market-hours entry for {exact_key!r} or {wildcard_key!r} in {database_path}"
@@ -161,7 +169,7 @@ def load_market_hours(
         exchange_time_zone = entry["exchangeTimeZone"]
     except KeyError as error:
         raise MarketHoursDatabaseError(
-            f"market-hours entry {exact_key if entry_source == 'exact' else wildcard_key} is "
+            f"market-hours entry {resolved_key} is "
             f"missing {error.args[0]!r}"
         ) from error
 
@@ -171,7 +179,7 @@ def load_market_hours(
         for segment in entry.get(weekday, []) or []:
             if not isinstance(segment, dict):
                 raise MarketHoursDatabaseError(
-                    f"market-hours entry {exact_key} has a malformed {weekday} segment"
+                    f"market-hours entry {resolved_key} has a malformed {weekday} segment"
                 )
             segments.append(
                 MarketHoursSegment(
@@ -197,7 +205,7 @@ def load_market_hours(
     resolved = ResolvedMarketHours(
         database_path=str(database_path),
         database_sha256=database_sha256,
-        entry_key=exact_key if entry_source == "exact" else wildcard_key,
+        entry_key=resolved_key,
         entry_source=entry_source,
         data_time_zone=data_time_zone,
         exchange_time_zone=exchange_time_zone,

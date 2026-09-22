@@ -66,6 +66,11 @@ class ResolvedMarketHoursTests(unittest.TestCase):
         self.assertEqual(hours.entry_key, "Cfd-oanda-[*]")
         self.assertEqual(hours.entry_source, "wildcard")
 
+    def test_symbol_matching_is_case_insensitive_like_lean(self):
+        hours, _ = load_market_hours(self.root, "Cfd", "oanda", "xauusd")
+        self.assertEqual(hours.entry_key, "Cfd-oanda-XAUUSD")
+        self.assertEqual(hours.entry_source, "exact")
+
     def test_sessions_break_weekend_and_holiday(self):
         hours, _ = load_market_hours(self.root, "Cfd", "oanda", "XAUUSD")
         evaluator = SessionEvaluator(hours)

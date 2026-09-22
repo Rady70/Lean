@@ -57,6 +57,9 @@ namespace MarketLab.HistoricalDataProbe
         [JsonProperty("per_partition_digests_match")]
         public bool PerPartitionDigestsMatch { get; set; }
 
+        [JsonProperty("engine_quotes_match_delivered")]
+        public bool EngineQuotesMatchDelivered { get; set; }
+
         [JsonProperty("session_delivery_difference")]
         public long SessionDeliveryDifference { get; set; }
     }
@@ -109,6 +112,9 @@ namespace MarketLab.HistoricalDataProbe
 
         [JsonProperty("engine_non_quote_ticks")]
         public long EngineNonQuoteTicks { get; set; }
+
+        [JsonProperty("assemblies")]
+        public Dictionary<string, string> Assemblies { get; set; } = new Dictionary<string, string>();
 
         [JsonProperty("engine_fault")]
         public EngineFault? EngineFault { get; set; }
@@ -210,7 +216,10 @@ namespace MarketLab.HistoricalDataProbe
     /// <summary>Compares the qualified source expectation with the delivered stream.</summary>
     public static class ReplayQualification
     {
-        public static ReplayComparison Compare(ReplayExpectation expected, DeliveredSummary delivered)
+        public static ReplayComparison Compare(
+            ReplayExpectation expected,
+            DeliveredSummary delivered,
+            long engineQuotesProcessed)
         {
             var expectedPartitions = expected.Partitions ?? new Dictionary<string, ExpectedPartition>();
             var partitionCountsMatch = expectedPartitions.Count == delivered.PerPartition.Count;
@@ -255,6 +264,7 @@ namespace MarketLab.HistoricalDataProbe
                     StringComparison.Ordinal),
                 PerPartitionCountsMatch = partitionCountsMatch,
                 PerPartitionDigestsMatch = partitionDigestsMatch,
+                EngineQuotesMatchDelivered = engineQuotesProcessed == delivered.QuoteCount,
                 SessionDeliveryDifference = expected.AcceptedRowCount - delivered.QuoteCount
             };
         }
@@ -290,6 +300,11 @@ namespace MarketLab.HistoricalDataProbe
             if (!comparison.PerPartitionDigestsMatch)
             {
                 reasons.Add("PerPartitionDigestsDiffer");
+            }
+
+            if (!comparison.EngineQuotesMatchDelivered)
+            {
+                reasons.Add("EngineDidNotProcessEveryDeliveredQuote");
             }
 
             return reasons;

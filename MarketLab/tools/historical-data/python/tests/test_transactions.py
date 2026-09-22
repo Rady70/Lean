@@ -6,9 +6,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from marketlab_historical_data import transactions as transactions_module  # noqa: E402
 from marketlab_historical_data.transactions import (  # noqa: E402
     OutputTransaction,
     OutputTransactionError,
@@ -103,6 +105,55 @@ class OutputTransactionTests(unittest.TestCase):
         transaction.stage_text(target, "one")
         with self.assertRaises(OutputTransactionError):
             transaction.stage_text(target, "two")
+
+    def test_failed_commit_restores_overwritten_and_removed_files(self):
+        replaced = self.root / "one.json"
+        replaced.write_text("previous", encoding="utf-8")
+        removed = self.root / "old.zip"
+        removed.write_bytes(b"old-zip")
+        real_replace = transactions_module.os.replace
+
+        def failing_replace(source, destination):
+            if str(source).endswith(".stage"):
+                raise OSError("simulated install failure")
+            return real_replace(source, destination)
+
+        with mock.patch.object(transactions_module.os, "replace", side_effect=failing_replace):
+            with self.assertRaises(OutputTransactionError) as raised:
+                with OutputTransaction(allow_overwrite=True) as transaction:
+                    transaction.register_removal(removed)
+                    transaction.stage_text(replaced, "new")
+                    transaction.commit()
+        self.assertIn("was rolled back", str(raised.exception))
+        self.assertEqual(replaced.read_text(encoding="utf-8"), "previous")
+        self.assertEqual(removed.read_bytes(), b"old-zip")
+        self.assertFalse(any(self.root.rglob("*.stage")))
+        self.assertFalse(any(self.root.rglob("*.backup")))
+        self.assertFalse(any(self.root.rglob("*.removed")))
+
+    def test_incomplete_rollback_is_reported_instead_of_claimed(self):
+        removed = self.root / "old.zip"
+        removed.write_bytes(b"old-zip")
+        real_replace = transactions_module.os.replace
+
+        def failing_install_and_restore(source, destination):
+            text = str(source)
+            if text.endswith(".stage"):
+                raise OSError("simulated install failure")
+            if text.endswith(".removed") or text.endswith(".backup"):
+                raise OSError("simulated restore failure")
+            return real_replace(source, destination)
+
+        with mock.patch.object(
+            transactions_module.os, "replace", side_effect=failing_install_and_restore
+        ):
+            transaction = OutputTransaction()
+            transaction.register_removal(removed)
+            transaction.stage_text(self.root / "new.json", "new")
+            with self.assertRaises(OutputTransactionError) as raised:
+                transaction.commit()
+        self.assertIn("rollback was incomplete", str(raised.exception))
+        transaction._discard()
 
 
 if __name__ == "__main__":

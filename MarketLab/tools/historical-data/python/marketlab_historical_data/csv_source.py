@@ -185,6 +185,7 @@ class SourceQualification:
     spread_max: str | None
     spread_mean: str | None
     spread_median: str | None
+    spread_statistics_complete: bool
     nonzero_decimal_unrepresentable_count: int
     session_preview: SessionPreview | None
 
@@ -616,6 +617,7 @@ def qualify_source(
     prev_utc: datetime | None = None
     prev_slot: tuple[str, int] | None = None
     rows_in_slot = 0
+    distinct_in_slot = 0
     first_utc: datetime | None = None
     last_utc: datetime | None = None
     spread_histogram: Counter = Counter()
@@ -623,6 +625,7 @@ def qualify_source(
     spread_min: Decimal | None = None
     spread_max: Decimal | None = None
     unrepresentable_count = 0
+    spread_statistics_complete = True
 
     for row_number, parsed_row, rejection in _iter_source_rows(
         source_path, layout, config, tracker, source_zone
@@ -647,40 +650,49 @@ def qualify_source(
             )
             continue
 
+        is_duplicate = prev_utc is not None and row.utc == prev_utc
         local = row.utc.astimezone(data_zone)
         partition_key = local.date().isoformat()
         slot = (partition_key, local.hour * 3600000 + local.minute * 60000 + local.second * 1000 + local.microsecond // 1000)
         if prev_slot is not None and slot == prev_slot:
-            counters.same_lean_millisecond_collision_count += 1
             rows_in_slot += 1
+            if not is_duplicate:
+                counters.same_lean_millisecond_collision_count += 1
+                distinct_in_slot += 1
         else:
-            if rows_in_slot > 1:
+            if distinct_in_slot > 1:
                 counters.same_lean_millisecond_collision_groups += 1
             counters.maximum_rows_per_lean_millisecond = max(
                 counters.maximum_rows_per_lean_millisecond, rows_in_slot
             )
             rows_in_slot = 1
+            distinct_in_slot = 1
             prev_slot = slot
-        if prev_utc is not None and row.utc == prev_utc:
+        if is_duplicate:
             counters.duplicate_timestamp_count += 1
 
-        spread = row.ask - row.bid
-        spread_histogram[spread] += 1
-        spread_sum += spread
-        spread_min = spread if spread_min is None else min(spread_min, spread)
-        spread_max = spread if spread_max is None else max(spread_max, spread)
-
+        representable = lean_decimal_representable(row.bid) and lean_decimal_representable(
+            row.ask
+        )
+        if not representable:
+            unrepresentable_count += 1
+            digest_valid = False
+            spread_statistics_complete = False
+        else:
+            spread = row.ask - row.bid
+            spread_histogram[spread] += 1
+            spread_sum += spread
+            spread_min = spread if spread_min is None else min(spread_min, spread)
+            spread_max = spread if spread_max is None else max(spread_max, spread)
         if parsed_row.sub_millisecond:
             counters.sub_millisecond_row_count += 1
             digest_valid = False
-        else:
+        elif representable:
             if digest_valid:
                 digest.add(row.utc, row.bid, row.ask)
             counters.per_partition_digests.setdefault(partition_key, SemanticStreamDigest()).add(
                 row.utc, row.bid, row.ask
             )
-        if not lean_decimal_representable(row.bid) or not lean_decimal_representable(row.ask):
-            unrepresentable_count += 1
 
         counters.accepted_row_count += 1
         counters.per_day_accepted_counts[partition_key] += 1
@@ -695,7 +707,7 @@ def qualify_source(
         last_utc = row.utc
         prev_utc = row.utc
 
-    if rows_in_slot > 1:
+    if distinct_in_slot > 1:
         counters.same_lean_millisecond_collision_groups += 1
     counters.maximum_rows_per_lean_millisecond = max(
         counters.maximum_rows_per_lean_millisecond, rows_in_slot
@@ -718,8 +730,9 @@ def qualify_source(
     spread_max_text = canonical_decimal_text(spread_max) if spread_max is not None else None
     spread_mean_text = None
     spread_median_text = None
-    if counters.accepted_row_count > 0:
-        spread_mean_text = canonical_decimal_text(spread_sum / counters.accepted_row_count)
+    spread_count = sum(spread_histogram.values())
+    if spread_count > 0:
+        spread_mean_text = canonical_decimal_text(spread_sum / spread_count)
         spread_median_text = canonical_decimal_text(_median_from_histogram(spread_histogram))
 
     return SourceQualification(
@@ -734,6 +747,7 @@ def qualify_source(
         spread_max=spread_max_text,
         spread_mean=spread_mean_text,
         spread_median=spread_median_text,
+        spread_statistics_complete=spread_statistics_complete,
         nonzero_decimal_unrepresentable_count=unrepresentable_count,
         session_preview=session_preview,
     )

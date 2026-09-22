@@ -45,7 +45,9 @@ The historical bid/ask CSV to qualify.
 
 .PARAMETER DataFolder
 The runtime LEAN data folder. Converted native partitions and the
-marketlab-qualification artifacts are written here; it must be outside Git.
+marketlab-qualification artifacts are written here; it must be outside the
+LEAN Git worktree (the qualifier refuses an in-repository folder because
+replacing a generation removes native partitions).
 
 .PARAMETER TimestampColumn,DateColumn,TimeColumn,BidColumn,AskColumn
 Explicit source columns; otherwise the deterministic header detection of the
@@ -83,9 +85,11 @@ fixtures (default: <LeanRoot>\Data).
 Do not link auxiliary data; expect missing-data warnings from the helper.
 
 .PARAMETER Force
-Replace existing native partitions, manifest, expectation and record; native
-partitions inside cfd\oanda\tick\xauusd that the new qualification does not
-describe are removed with the same transactional rollback.
+Replace an existing qualification generation. A forced success invalidates the
+previous `qualification-record.json` in the same transaction; a forced
+requalification that fails clears the superseded expectation, record and native
+partitions while publishing the new failure manifest. Without `-Force`, an
+existing generation is refused (exit 2) instead of mixed.
 
 Exit codes:
   0  qualification record PASS
@@ -289,6 +293,10 @@ try {
     if ($verifyExit -eq 2) {
         Write-Host "qualification driver: the record could not be written (exit 2)"
         exit 2
+    }
+    if ($helperExit -eq 4) {
+        Write-ErrorMessage "the LEAN helper exited 4: the engine reported errors during the run; the run is not clean (see the helper output and the run's log.txt)"
+        exit 3
     }
     if ($helperExit -ne 0 -and $helperExit -ne 3 -and $verifyExit -eq 0) {
         Write-ErrorMessage "the LEAN helper exited ${helperExit}: the replay run was not clean; the record is not accepted"

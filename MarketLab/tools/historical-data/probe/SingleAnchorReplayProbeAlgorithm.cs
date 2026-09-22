@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using NodaTime;
 using Newtonsoft.Json;
@@ -107,6 +109,7 @@ namespace MarketLab.HistoricalDataProbe
             _runtime.MarketHoursDatabaseSha256 = File.Exists(marketHoursPath)
                 ? Sha256File(marketHoursPath)
                 : string.Empty;
+            _runtime.Assemblies = CollectRuntimeAssemblies();
             _delivered = new DeliveredStream(config.ExchangeTimeZone, config.DataTimeZone);
 
             var parameters = new SingleAnchorParameters
@@ -247,6 +250,25 @@ namespace MarketLab.HistoricalDataProbe
             return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
         }
 
+        private static Dictionary<string, string> CollectRuntimeAssemblies()
+        {
+            var assemblies = new Dictionary<string, string>(StringComparer.Ordinal);
+            void Add(Assembly? assembly)
+            {
+                var location = assembly?.Location;
+                if (!string.IsNullOrEmpty(location) && File.Exists(location))
+                {
+                    assemblies[Path.GetFileName(location)] = Sha256File(location);
+                }
+            }
+
+            Add(Assembly.GetEntryAssembly());
+            Add(typeof(SingleAnchorReplayProbeAlgorithm).Assembly);
+            Add(typeof(QCAlgorithm).Assembly);
+            Add(typeof(QuantConnect.Data.Market.Tick).Assembly);
+            return assemblies;
+        }
+
         private void WriteResult()
         {
             if (_resultWritten)
@@ -256,7 +278,8 @@ namespace MarketLab.HistoricalDataProbe
 
             _resultWritten = true;
             var delivered = _delivered.ToSummary();
-            var comparison = ReplayQualification.Compare(_expectation, delivered);
+            var comparison = ReplayQualification.Compare(
+                _expectation, delivered, _engine != null ? _engine.QuotesProcessed : -1);
             var reasons = ReplayQualification.FailureReasons(comparison);
             if (_fault != null)
             {

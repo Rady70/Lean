@@ -88,8 +88,10 @@ published on failure.
 - A runtime LEAN **research data folder outside Git**. It must contain
   `market-hours\market-hours-database.json` and
   `symbol-properties\symbol-properties-database.csv` (the same requirement as
-  `MarketLab\scripts\run-backtest.ps1`). The driver links the remaining
-  auxiliary runtime data automatically (section 6).
+  `MarketLab\scripts\run-backtest.ps1`). The qualifier refuses any output
+  folder inside the LEAN Git worktree, because replacing a generation removes
+  native partitions. The driver links the remaining auxiliary runtime data
+  automatically (section 6).
 
 ## 3. Quick start
 
@@ -110,11 +112,15 @@ timestamp contract in the manifest; it never guesses an economically meaningful
 timezone. If timestamps are naive, `-SourceTimezone` is required; if they carry
 an embedded UTC offset, it must not be given.
 
-Re-running over an existing output set requires `-Force`: it atomically
-replaces the converted partitions, manifest, expectation and record, and
-removes `YYYYMMDD_quote.zip` partitions inside `cfd\oanda\tick\xauusd` that the
-new qualification does not describe (with the same rollback as every other
-output). A research data folder should still be dedicated to one dataset.
+Re-running over an existing output set requires `-Force`. Qualification
+generations are coherent: a first run publishes the partitions, manifest and
+expectation; a forced replacement invalidates the previous
+`qualification-record.json` in the same transaction; and a forced requalification
+that fails clears the superseded expectation, record and native partitions
+while publishing the new failure manifest. Without `-Force`, any existing
+generation is refused (exit 2) rather than mixed. Output folders inside the
+LEAN Git worktree are refused, because replacing a generation removes native
+partitions.
 
 ### The three underlying steps
 
@@ -197,7 +203,9 @@ All generated research data stays **outside Git**.
 ```text
 accepted source rows == converted native rows == LEAN-delivered rows
 the source SHA-256 is verified unchanged across qualification and conversion
+the probe's engine processed every delivered quote (QuoteTickFeed invariant)
 source semantic digest == delivered semantic digest
+the probe's embedded expectation matches this manifest (digest, source hash, identity, zones)
 first/last canonical UTC agree
 every per-partition count and semantic digest agrees
 runtime DataTimeZone/ExchangeTimeZone and market-hours database SHA agree with the manifest
@@ -206,26 +214,39 @@ no failed data request for a partition that carries accepted rows
 no failed data request inside the qualified window without source rows
 ```
 
+The probe result is validated against the exact probe contract
+(`marketlab-single-anchor-replay-probe-v1`); a wrong-schema or wrong-contract
+manifest/probe file is a configuration error (exit 2), never a qualification
+verdict.
+
 Any failure produces `overall_qualification: FAIL` and a machine-readable
 `failure_reasons` list. Common reasons:
 
 | Reason | Meaning |
 |---|---|
 | `SourceRejectedRows` | at least one source row failed the contract; see `counts.rejected_row_reasons` |
-| `SourceChangedDuringQualification` | the source file changed between qualification and conversion; nothing was published |
 | `SourcePrecisionExceedsLeanTickFormat` | meaningful sub-millisecond source precision; native millisecond parity is impossible |
-| `SourcePriceExceedsLeanDecimalFormat` | a price cannot be represented as a C# decimal |
+| `SourcePriceExceedsLeanDecimalFormat` | a price does not round-trip through the native LEAN reader (`StreamReaderExtensions.GetDecimal`: signed 64-bit coefficient, scale ≤ 28) |
 | `NativeLeanConversionFailed` | conversion/publish refused or failed; nothing was published |
 | `NativePartitionMissing` | LEAN could not read a partition that carries accepted rows |
 | `SourceCoverageGap` | a market day inside the qualified window has no source rows |
 | `StaleNativePartition` | the tick directory holds a partition the current manifest does not describe |
 | `NativeReplayProbeResultMissing` / `NativeReplayProbeDidNotComplete` | the probe did not run or the engine faulted |
+| `EngineDidNotProcessEveryAcceptedQuote` | the engine processed fewer quotes than the source accepted |
+| `EngineDidNotProcessEveryDeliveredQuote` | `QuoteTickFeed` delivered fewer quotes to the engine than the probe captured |
+| `ProbeExpectationDoesNotMatchManifest` | the probe compared against an expectation that is not this manifest's |
 | `ExpectedAndDeliveredCountsDiffer` | LEAN delivered fewer/more quotes than accepted (for example market-hours/session filtering) |
 | `DeliveredSemanticDigestMismatches` | price/order/timestamp content differs after canonical UTC normalization |
 | `ReplayRuntimeDataTimeZoneMismatch` / `ReplayRuntimeExchangeTimeZoneMismatch` | the probe's runtime timezones differ from the manifest's resolved values |
 | `ReplayRuntimeMarketHoursDatabaseMismatch` | the probe's runtime market-hours database SHA-256 differs from the manifest's |
 | `FirstDeliveredQuoteMismatches` / `LastDeliveredQuoteMismatches` | boundary quote mismatch |
 | `NativePartitionFileMissing` / `NativePartitionHashMismatch` | converted output changed after conversion |
+
+Configuration/infrastructure errors (exit 2, no qualification verdict) include
+`DataFolderInsideRepository`, `OutputsExistWithoutForce`,
+`SymbolPropertiesDatabaseMissing`, `MarketHoursDatabaseUnusable`,
+`SourceChangedDuringQualification` (the source changed mid-run; nothing was
+published) and wrong-schema manifest/probe inputs.
 
 **Session filtering must not silently pass.** LEAN drops ticks outside the
 resolved exchange sessions (for Oanda XAUUSD: the New York 16:58-18:03 break,
@@ -274,11 +295,11 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (116 tests)
+# Python offline tool (133 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
-# C# probe canonical values/digest/comparison (25 tests)
+# C# probe canonical values/digest/comparison (26 tests)
 dotnet test MarketLab\tools\historical-data\probe-tests\MarketLab.HistoricalDataProbe.Tests.csproj --configuration Release
 
 # end-to-end Windows test: CSV -> native files -> actual LEAN replay -> record
@@ -313,3 +334,12 @@ material only; nothing here is a runtime dependency on them.
 - LEAN probes the trading days adjacent to the window for continuity and logs
   them as failed data requests when the source does not extend there; the
   record classifies those as `out_of_window_failed_data_requests` warnings.
+- Source values are bounded by what the native LEAN decimal reader can parse;
+  extreme exponents are rejected with a controlled
+  `SourcePriceExceedsLeanDecimalFormat` failure instead of an exception, and
+  spread diagnostics are marked `complete: false` when such a row is present.
+- The subscription identity is the driver-enforced XAUUSD/oanda/Cfd scope; a
+  non-default identity is refused rather than loosely supported.
+- `lean_checkout_git_sha` is source provenance. The runtime binary identity is
+  recorded by the probe as SHA-256 of the assemblies it actually executes
+  (`runtime.assemblies`); the driver does not rebuild them.

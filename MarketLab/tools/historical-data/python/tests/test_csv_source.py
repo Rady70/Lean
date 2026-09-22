@@ -127,6 +127,19 @@ class SourceContractTests(CsvQualificationCase):
         )
         self.assertEqual(result.counters.accepted_row_count, 2)
         self.assertEqual(result.counters.duplicate_timestamp_count, 1)
+        self.assertEqual(result.counters.same_lean_millisecond_collision_count, 0)
+        self.assertEqual(result.counters.same_lean_millisecond_collision_groups, 0)
+        self.assertEqual(result.counters.maximum_rows_per_lean_millisecond, 2)
+
+    def test_distinct_sub_millisecond_timestamps_in_one_millisecond_collide(self):
+        result, _ = self.qualify(
+            HEADER
+            + "2014-05-05 08:00:00.123100,1.0,1.1\n"
+            + "2014-05-05 08:00:00.123900,1.0,1.1\n"
+        )
+        self.assertEqual(result.counters.accepted_row_count, 2)
+        self.assertEqual(result.counters.duplicate_timestamp_count, 0)
+        self.assertEqual(result.counters.sub_millisecond_row_count, 2)
         self.assertEqual(result.counters.same_lean_millisecond_collision_count, 1)
         self.assertEqual(result.counters.same_lean_millisecond_collision_groups, 1)
         self.assertEqual(result.counters.maximum_rows_per_lean_millisecond, 2)
@@ -149,8 +162,19 @@ class SourceContractTests(CsvQualificationCase):
         result, _ = self.qualify(text)
         self.assertEqual(result.counters.accepted_row_count, 3)
         self.assertEqual(result.counters.duplicate_timestamp_count, 2)
-        self.assertEqual(result.counters.same_lean_millisecond_collision_count, 2)
+        self.assertEqual(result.counters.same_lean_millisecond_collision_count, 0)
         self.assertEqual(result.counters.maximum_rows_per_lean_millisecond, 3)
+
+    def test_extreme_exponent_price_fails_the_decimal_gate_without_crashing(self):
+        result, _ = self.qualify(
+            HEADER + "2014-05-05 08:00:00.000,1e999999999,1e999999999\n"
+        )
+        self.assertEqual(result.counters.accepted_row_count, 1)
+        self.assertEqual(result.nonzero_decimal_unrepresentable_count, 1)
+        self.assertFalse(result.decimal_parity_passed)
+        self.assertFalse(result.spread_statistics_complete)
+        self.assertIsNone(result.source_semantic_digest)
+        self.assertIsNone(result.spread_min)
 
     def test_per_day_and_first_last(self):
         result, _ = self.qualify(

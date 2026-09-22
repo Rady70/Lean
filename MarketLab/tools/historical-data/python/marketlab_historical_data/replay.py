@@ -16,17 +16,95 @@ from .canonical import sha256_file
 
 __all__ = [
     "EXPECTATION_CONTRACT",
+    "MANIFEST_CONTRACT",
     "RECORD_CONTRACT",
+    "REPLAY_PROBE_CONTRACT",
     "build_expectation",
     "build_record",
     "classify_failed_data_requests",
+    "require_manifest_structure",
+    "require_probe_structure",
     "semantic_digest_line_format",
 ]
 
 EXPECTATION_CONTRACT = "marketlab-single-anchor-replay-expectation-v1"
+REPLAY_PROBE_CONTRACT = "marketlab-single-anchor-replay-probe-v1"
+MANIFEST_CONTRACT = "marketlab-historical-data-qualification-v1"
 RECORD_CONTRACT = "marketlab-historical-data-qualification-record-v1"
 
 _DIGEST_LINE_FORMAT = "{ordinal}|{yyyy-MM-ddTHH:mm:ss.fffZ}|{canonical bid}|{canonical ask}\\n"
+
+_MANIFEST_REQUIRED = {
+    "source": ("path", "sha256"),
+    "lean": (
+        "symbol",
+        "market",
+        "security_type",
+        "data_time_zone",
+        "exchange_time_zone",
+        "market_hours_database",
+    ),
+    "counts": ("accepted_row_count", "converted_row_count"),
+    "per_day": ("accepted",),
+    "semantic": ("ordered_source_semantic_digest",),
+    "native": ("layout", "partitions"),
+    "qualification": (
+        "source_qualification",
+        "native_lean_timestamp_parity",
+        "native_price_decimal_parity",
+        "native_conversion",
+    ),
+}
+
+_PROBE_REQUIRED = (
+    "completed",
+    "qualification",
+    "failure_reasons",
+    "expected",
+    "delivered",
+    "comparison",
+    "runtime",
+)
+
+
+def require_manifest_structure(manifest) -> None:
+    """Raises ``ValueError`` when a manifest is not a complete MarketLab manifest."""
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest is not a JSON object")
+    if manifest.get("contract") != MANIFEST_CONTRACT:
+        raise ValueError("manifest contract is missing or unknown")
+    for section, keys in _MANIFEST_REQUIRED.items():
+        value = manifest.get(section)
+        if not isinstance(value, dict):
+            raise ValueError(f"manifest section {section!r} is missing or not an object")
+        for key in keys:
+            if key not in value:
+                raise ValueError(f"manifest section {section!r} is missing {key!r}")
+
+
+def require_probe_structure(probe, label: str = "probe result") -> None:
+    """Raises ``ValueError`` when replay evidence is not a complete probe result."""
+    if not isinstance(probe, dict):
+        raise ValueError(f"{label} is not a JSON object")
+    if probe.get("contract") != REPLAY_PROBE_CONTRACT:
+        raise ValueError(f"{label} contract is missing or unknown")
+    for key in _PROBE_REQUIRED:
+        if key not in probe:
+            raise ValueError(f"{label} is missing {key!r}")
+    for section in ("expected", "delivered", "comparison", "runtime"):
+        if not isinstance(probe[section], dict):
+            raise ValueError(f"{label} section {section!r} is not an object")
+    delivered = probe["delivered"]
+    if delivered.get("quote_count") is None or not delivered.get("semantic_digest"):
+        raise ValueError(f"{label} delivered quote_count/semantic_digest is missing")
+    runtime = probe["runtime"]
+    for key in ("engine_quotes_processed", "data_time_zone", "exchange_time_zone", "market_hours_database_sha256"):
+        if runtime.get(key) is None:
+            raise ValueError(f"{label} runtime is missing {key!r}")
+    if probe["comparison"].get("engine_quotes_match_delivered") is None:
+        raise ValueError(f"{label} comparison is missing 'engine_quotes_match_delivered'")
+    if probe["expected"].get("contract") != EXPECTATION_CONTRACT:
+        raise ValueError(f"{label} embedded expectation contract is missing or unknown")
 
 
 def semantic_digest_line_format() -> str:
@@ -203,6 +281,28 @@ def build_record(
         manifest_mhdb_sha = manifest["lean"].get("market_hours_database", {}).get("database_sha256")
         if runtime.get("market_hours_database_sha256") != manifest_mhdb_sha:
             failures.append("ReplayRuntimeMarketHoursDatabaseMismatch")
+        if runtime.get("engine_quotes_processed") != accepted_count:
+            failures.append("EngineDidNotProcessEveryAcceptedQuote")
+        if comparison.get("engine_quotes_match_delivered") is not True:
+            failures.append("EngineDidNotProcessEveryDeliveredQuote")
+        expected_bindings = {
+            "contract": EXPECTATION_CONTRACT,
+            "accepted_row_count": accepted_count,
+            "ordered_source_semantic_digest": manifest["semantic"].get(
+                "ordered_source_semantic_digest"
+            ),
+            "source_file_sha256": manifest["source"].get("sha256"),
+            "symbol": manifest["lean"].get("symbol"),
+            "market": manifest["lean"].get("market"),
+            "security_type": manifest["lean"].get("security_type"),
+            "data_time_zone": manifest["lean"].get("data_time_zone"),
+            "exchange_time_zone": manifest["lean"].get("exchange_time_zone"),
+        }
+        expected = probe_result.get("expected") or {}
+        for name, required in expected_bindings.items():
+            if expected.get(name) != required:
+                failures.append("ProbeExpectationDoesNotMatchManifest")
+                break
 
     session_difference = None
     if probe_present and delivered.get("quote_count") is not None:

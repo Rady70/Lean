@@ -86,9 +86,21 @@ def base_manifest(zip_sha256, digest=DIGEST, counts=(4, 4), days=("2014-05-05",)
 def base_probe(digest=DIGEST, count=4):
     return {
         "probe": "MarketLab.HistoricalDataReplayProbe",
+        "contract": "marketlab-single-anchor-replay-probe-v1",
         "completed": True,
         "qualification": "PASS",
         "failure_reasons": [],
+        "expected": {
+            "contract": "marketlab-single-anchor-replay-expectation-v1",
+            "symbol": "XAUUSD",
+            "market": "oanda",
+            "security_type": "Cfd",
+            "data_time_zone": "UTC",
+            "exchange_time_zone": "America/New_York",
+            "accepted_row_count": 4,
+            "ordered_source_semantic_digest": DIGEST,
+            "source_file_sha256": "b" * 64,
+        },
         "delivered": {
             "quote_count": count,
             "semantic_digest": digest,
@@ -98,7 +110,10 @@ def base_probe(digest=DIGEST, count=4):
                 "2014-05-05": {"quote_count": count, "semantic_digest": digest}
             },
         },
-        "comparison": {"session_delivery_difference": 0},
+        "comparison": {
+            "session_delivery_difference": 0,
+            "engine_quotes_match_delivered": True,
+        },
         "runtime": {
             "engine_quotes_processed": count,
             "data_time_zone": "UTC",
@@ -204,6 +219,24 @@ class RecordTests(unittest.TestCase):
         probe["runtime"]["market_hours_database_sha256"] = "c" * 64
         record = self.build(probe)
         self.assertIn("ReplayRuntimeMarketHoursDatabaseMismatch", record["failure_reasons"])
+
+    def test_engine_that_missed_a_quote_fails(self):
+        probe = base_probe()
+        probe["runtime"]["engine_quotes_processed"] = 3
+        record = self.build(probe)
+        self.assertIn("EngineDidNotProcessEveryAcceptedQuote", record["failure_reasons"])
+
+    def test_engine_match_flag_false_fails(self):
+        probe = base_probe()
+        probe["comparison"]["engine_quotes_match_delivered"] = False
+        record = self.build(probe)
+        self.assertIn("EngineDidNotProcessEveryDeliveredQuote", record["failure_reasons"])
+
+    def test_probe_expectation_that_does_not_match_the_manifest_fails(self):
+        probe = base_probe()
+        probe["expected"]["source_file_sha256"] = "c" * 64
+        record = self.build(probe)
+        self.assertIn("ProbeExpectationDoesNotMatchManifest", record["failure_reasons"])
 
     def test_probe_missing_fails(self):
         record = self.build(None)

@@ -107,6 +107,16 @@ class CanonicalDecimalTests(unittest.TestCase):
             lean_decimal_representable(Decimal("0.0000000000000000000000000001"))
         )
 
+    def test_extreme_exponents_are_rejected_without_expanding_them(self):
+        self.assertFalse(lean_decimal_representable(Decimal("1e999999999")))
+        self.assertFalse(lean_decimal_representable(Decimal("1e-999999999")))
+        self.assertFalse(lean_decimal_representable(Decimal("1e1000000")))
+        self.assertTrue(lean_decimal_representable(Decimal("1e18")))
+
+    def test_extreme_exponent_canonical_text_is_refused(self):
+        with self.assertRaises(CanonicalValueError):
+            canonical_decimal_text(Decimal("1e999999999"))
+
 
 class CanonicalTimestampTests(unittest.TestCase):
     def test_canonical_text_is_fixed_millisecond_form(self):

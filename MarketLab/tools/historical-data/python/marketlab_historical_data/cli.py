@@ -9,7 +9,6 @@ from pathlib import Path
 
 from .csv_source import CsvSourceConfig
 from .qualification import (
-    CONTRACT,
     artifacts_directory,
     dump_json,
     load_json,
@@ -17,7 +16,7 @@ from .qualification import (
     record_path,
     run_qualification,
 )
-from .replay import build_record
+from .replay import build_record, require_manifest_structure, require_probe_structure
 from .transactions import OutputTransaction, OutputTransactionError
 
 __all__ = ["main"]
@@ -188,8 +187,10 @@ def _run_verify(args) -> int:
     if not isinstance(manifest, dict):
         print(f"ERROR: manifest is not a JSON object: {manifest_file}", file=sys.stderr)
         return 2
-    if manifest.get("contract") != CONTRACT:
-        print(f"ERROR: not a MarketLab qualification manifest: {manifest_file}", file=sys.stderr)
+    try:
+        require_manifest_structure(manifest)
+    except ValueError as error:
+        print(f"ERROR: not a usable MarketLab qualification manifest: {manifest_file}: {error}", file=sys.stderr)
         return 2
     if data_folder is None:
         recorded = manifest.get("lean", {}).get("data_folder")
@@ -207,8 +208,10 @@ def _run_verify(args) -> int:
         except (OSError, json.JSONDecodeError) as error:
             print(f"ERROR: probe result is not readable JSON: {probe_file}: {error}", file=sys.stderr)
             return 2
-        if not isinstance(probe_result, dict):
-            print(f"ERROR: probe result is not a JSON object: {probe_file}", file=sys.stderr)
+        try:
+            require_probe_structure(probe_result)
+        except ValueError as error:
+            print(f"ERROR: not a usable replay probe result: {probe_file}: {error}", file=sys.stderr)
             return 2
 
     failed_requests: list[str] = []

@@ -59,7 +59,7 @@ namespace MarketLab.HistoricalDataProbe.Tests
         [Test]
         public void Compare_AcceptsAnExactDelivery()
         {
-            var comparison = ReplayQualification.Compare(Expected(), MatchingDelivered());
+            var comparison = ReplayQualification.Compare(Expected(), MatchingDelivered(), 2);
 
             Assert.That(comparison.CountMatches, Is.True);
             Assert.That(comparison.DigestMatches, Is.True);
@@ -79,7 +79,7 @@ namespace MarketLab.HistoricalDataProbe.Tests
             delivered.LastCanonicalUtc = delivered.FirstCanonicalUtc;
             delivered.PerPartition["2014-05-05"].QuoteCount = 1;
 
-            var comparison = ReplayQualification.Compare(Expected(), delivered);
+            var comparison = ReplayQualification.Compare(Expected(), delivered, delivered.QuoteCount);
             var reasons = ReplayQualification.FailureReasons(comparison);
 
             Assert.That(comparison.SessionDeliveryDifference, Is.EqualTo(1));
@@ -96,7 +96,7 @@ namespace MarketLab.HistoricalDataProbe.Tests
             delivered.SemanticDigest = "sha256:other";
             delivered.PerPartition["2014-05-05"].SemanticDigest = "sha256:other";
 
-            var comparison = ReplayQualification.Compare(Expected(), delivered);
+            var comparison = ReplayQualification.Compare(Expected(), delivered, delivered.QuoteCount);
             var reasons = ReplayQualification.FailureReasons(comparison);
 
             Assert.That(comparison.CountMatches, Is.True);
@@ -113,11 +113,23 @@ namespace MarketLab.HistoricalDataProbe.Tests
             delivered.FirstCanonicalUtc = "2014-05-05T08:00:00.123Z";
             delivered.LastCanonicalUtc = "2014-05-05T08:00:00.999Z";
 
-            var comparison = ReplayQualification.Compare(Expected(), delivered);
+            var comparison = ReplayQualification.Compare(Expected(), delivered, delivered.QuoteCount);
             var reasons = ReplayQualification.FailureReasons(comparison);
 
             Assert.That(reasons, Does.Contain("FirstDeliveredQuoteMismatches"));
             Assert.That(reasons, Does.Contain("LastDeliveredQuoteMismatches"));
+        }
+
+        [Test]
+        public void Compare_FailsWhenTheEngineDidNotProcessEveryDeliveredQuote()
+        {
+            var delivered = MatchingDelivered();
+
+            var comparison = ReplayQualification.Compare(Expected(), delivered, 1);
+            var reasons = ReplayQualification.FailureReasons(comparison);
+
+            Assert.That(comparison.EngineQuotesMatchDelivered, Is.False);
+            Assert.That(reasons, Does.Contain("EngineDidNotProcessEveryDeliveredQuote"));
         }
 
         [Test]

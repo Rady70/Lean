@@ -171,13 +171,74 @@ class PassingQualificationTests(QualificationCase):
 
         with mock.patch.object(qualification_module, "sha256_file", side_effect=changing_hash):
             outcome = self.qualify(PASS_CSV)
-        self.assertEqual(outcome.exit_code, 1)
-        self.assertIn("SourceChangedDuringQualification", outcome.failures)
-        self.assertEqual(outcome.manifest["qualification"]["native_conversion"], "FAIL")
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("SourceChangedDuringQualification"))
+        self.assertIsNone(outcome.manifest)
+        self.assertFalse((self.data / "marketlab-qualification" / "qualification-manifest.json").exists())
         tick_directory = self.data / "cfd" / "oanda" / "tick" / "xauusd"
         self.assertFalse(
             tick_directory.is_dir() and list(tick_directory.glob("*_quote.zip"))
         )
+
+    def test_source_identity_change_during_a_failing_qualification_publishes_nothing(self):
+        real_sha256_file = qualification_module.sha256_file
+        calls = {"count": 0}
+
+        def changing_hash(path, chunk_size=1 << 20):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                return "0" * 64
+            return real_sha256_file(path, chunk_size)
+
+        source = "timestamp,bid,ask\n2014-05-05 08:00:00.000,1291.7,1291.6\n"
+        with mock.patch.object(qualification_module, "sha256_file", side_effect=changing_hash):
+            outcome = self.qualify(source, name="changing-fail.csv")
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("SourceChangedDuringQualification"))
+        self.assertFalse((self.data / "marketlab-qualification" / "qualification-manifest.json").exists())
+
+    def test_forced_success_invalidates_the_previous_record(self):
+        self.qualify(PASS_CSV)
+        record = self.data / "marketlab-qualification" / "qualification-record.json"
+        record.write_text("{}", encoding="utf-8")
+        outcome = self.qualify(PASS_CSV, force=True)
+        self.assertEqual(outcome.exit_code, 0, outcome.failures)
+        self.assertFalse(record.exists())
+        self.assertTrue(
+            (self.data / "marketlab-qualification" / "qualification-manifest.json").is_file()
+        )
+
+    def test_forced_failure_clears_the_superseded_generation(self):
+        self.qualify(PASS_CSV)
+        record = self.data / "marketlab-qualification" / "qualification-record.json"
+        record.write_text("{}", encoding="utf-8")
+        expectation = self.data / "marketlab-qualification" / "replay-expectation.json"
+        partition = self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140505_quote.zip"
+        self.assertTrue(expectation.is_file() and partition.is_file())
+        outcome = self.qualify(
+            "timestamp,bid,ask\n2014-05-05 08:00:00.000,1291.7,1291.6\n",
+            force=True,
+            name="failing-replacement.csv",
+        )
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertEqual(outcome.manifest["qualification"]["native_conversion"], "NOT_RUN")
+        self.assertFalse(expectation.exists())
+        self.assertFalse(record.exists())
+        self.assertFalse(partition.exists())
+        self.assertTrue(
+            (self.data / "marketlab-qualification" / "qualification-manifest.json").is_file()
+        )
+
+    def test_data_folder_inside_the_repository_is_refused(self):
+        repository = Path(__file__).resolve().parents[5]
+        outcome = run_qualification(
+            source_path=self.write_source(PASS_CSV, "inside-repo.csv"),
+            data_folder=repository,
+            config=CsvSourceConfig(source_timezone="UTC"),
+            force=False,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("DataFolderInsideRepository"))
 
 
 class FailingQualificationTests(QualificationCase):
@@ -212,6 +273,15 @@ class FailingQualificationTests(QualificationCase):
         self.assertIn("SourcePriceExceedsLeanDecimalFormat", outcome.failures)
         self.assertFalse((self.data / "cfd").exists())
 
+    def test_extreme_exponent_price_fails_the_decimal_gate_controlled(self):
+        outcome = self.qualify(
+            "timestamp,bid,ask\n2014-05-05 08:00:00.000,1e999999999,1e999999999\n"
+        )
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertIn("SourcePriceExceedsLeanDecimalFormat", outcome.failures)
+        self.assertEqual(outcome.manifest["counts"]["accepted_row_count"], 1)
+        self.assertFalse((self.data / "cfd").exists())
+
     def test_second_run_without_force_is_refused(self):
         self.qualify(PASS_CSV)
         outcome = run_qualification(
@@ -221,7 +291,7 @@ class FailingQualificationTests(QualificationCase):
             force=False,
         )
         self.assertEqual(outcome.exit_code, 2)
-        self.assertIn("ManifestNotWritten", outcome.failures[0])
+        self.assertTrue(outcome.failures[0].startswith("OutputsExistWithoutForce"))
 
     def test_missing_runtime_market_hours_database_is_a_configuration_error(self):
         data = self.root / "no-market-hours"

@@ -30,14 +30,14 @@ from .market_hours import (
     SessionEvaluator,
     load_market_hours,
 )
-from .replay import build_expectation, semantic_digest_line_format
+from .replay import MANIFEST_CONTRACT, build_expectation, semantic_digest_line_format
 from .transactions import OutputTransaction, OutputTransactionError
 
 ARTIFACTS_DIRECTORY = "marketlab-qualification"
 MANIFEST_NAME = "qualification-manifest.json"
 EXPECTATION_NAME = "replay-expectation.json"
 RECORD_NAME = "qualification-record.json"
-CONTRACT = "marketlab-historical-data-qualification-v1"
+CONTRACT = MANIFEST_CONTRACT
 
 
 @dataclass
@@ -73,13 +73,12 @@ def load_json(path: Path) -> dict:
 
 
 def repository_identity(start_path: Path) -> dict:
-    """Records the checkout identity that holds both the converter and the engine."""
-    root = None
-    current = Path(start_path).resolve()
-    for candidate in (current, *current.parents):
-        if (candidate / ".git").exists():
-            root = candidate
-            break
+    """Records the checkout identity that holds both the converter and the engine.
+
+    This is source provenance only: the actual runtime binary identity is
+    recorded by the probe from the assemblies it executes.
+    """
+    root = repository_root(start_path)
     identity = {"root": str(root) if root else None, "head_sha": None, "branch": None, "dirty": None}
     if root is None:
         return identity
@@ -116,11 +115,59 @@ def repository_identity(start_path: Path) -> dict:
     return identity
 
 
+def repository_root(start: Path) -> Path | None:
+    """Returns the enclosing Git worktree root, or None outside a checkout."""
+    current = Path(start).resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
 def _hash_file(path: Path) -> str | None:
     try:
         return sha256_file(path)
     except OSError:
         return None
+
+
+def _existing_generation_outputs(data_folder: Path, native_layout: NativeLeanTickLayout) -> list[Path]:
+    """Every artifact of a previous qualification generation in this data folder."""
+    outputs = [
+        candidate
+        for candidate in (
+            manifest_path(data_folder),
+            expectation_path(data_folder),
+            record_path(data_folder),
+        )
+        if candidate.is_file()
+    ]
+    tick_directory = data_folder / native_layout.relative_directory
+    if tick_directory.is_dir():
+        outputs.extend(sorted(tick_directory.glob("*_quote.zip")))
+    return outputs
+
+
+def _register_record_invalidation(data_folder: Path, transaction: OutputTransaction) -> None:
+    """A replaced qualification invalidates the record that certified the old manifest."""
+    record = record_path(data_folder)
+    if record.is_file():
+        transaction.register_removal(record)
+
+
+def _register_generation_cleanup(
+    data_folder: Path, native_layout: NativeLeanTickLayout, transaction: OutputTransaction
+) -> None:
+    """A forced failed replacement clears the superseded expectation, record and partitions."""
+    for candidate in (expectation_path(data_folder), record_path(data_folder)):
+        if candidate.is_file():
+            transaction.register_removal(candidate)
+    tick_directory = data_folder / native_layout.relative_directory
+    if tick_directory.is_dir():
+        for candidate in sorted(tick_directory.glob("*_quote.zip")):
+            day = candidate.name[:8]
+            if day.isdigit() and len(day) == 8:
+                transaction.register_removal(candidate)
 
 
 class SourceIdentityChanged(Exception):
@@ -136,7 +183,14 @@ def run_qualification(
     security_type: str = "Cfd",
     force: bool = False,
 ) -> QualificationOutcome:
-    """Validates the source, converts only after PASS, and writes the manifest."""
+    """Validates the source, converts only after PASS, and writes the manifest.
+
+    Qualification generations are coherent: a failing first run publishes only a
+    failure manifest; ``force`` replaces the previous generation atomically and
+    invalidates its record; a forced failing replacement clears the superseded
+    expectation, record and native partitions. Output folders inside the Git
+    worktree are refused because ``force`` can remove stale native partitions.
+    """
     source_path = Path(source_path).resolve()
     data_folder = Path(data_folder).resolve()
 
@@ -144,6 +198,23 @@ def run_qualification(
         return QualificationOutcome(2, [f"SourceFileNotFound: {source_path}"], None, None)
     if not data_folder.is_dir():
         return QualificationOutcome(2, [f"DataFolderNotFound: {data_folder}"], None, None)
+
+    worktree_root = repository_root(Path(__file__))
+    if worktree_root is not None:
+        try:
+            data_folder.relative_to(worktree_root)
+            return QualificationOutcome(
+                2,
+                [
+                    "DataFolderInsideRepository: "
+                    f"{data_folder} is inside the Git worktree {worktree_root}; "
+                    "qualification outputs and native partitions must stay outside the repository"
+                ],
+                None,
+                None,
+            )
+        except ValueError:
+            pass
 
     symbol_properties = data_folder / "symbol-properties" / "symbol-properties-database.csv"
     if not symbol_properties.is_file():
@@ -153,6 +224,12 @@ def run_qualification(
             None,
             None,
         )
+
+    try:
+        source_sha256 = sha256_file(source_path)
+        source_size = source_path.stat().st_size
+    except OSError as error:
+        return QualificationOutcome(2, [f"SourceFileUnreadable: {error}"], None, None)
 
     try:
         hours, _ = load_market_hours(data_folder, security_type, market, symbol)
@@ -177,15 +254,37 @@ def run_qualification(
     except QualificationFailure as error:
         return QualificationOutcome(2, [f"SourceLayoutUnusable: {error}"], None, None)
 
-    try:
-        source_sha256 = sha256_file(source_path)
-        source_size = source_path.stat().st_size
-    except OSError as error:
-        return QualificationOutcome(2, [f"SourceFileUnreadable: {error}"], None, None)
+    identity = repository_identity(Path(__file__))
+    native_layout = NativeLeanTickLayout(symbol=symbol, market=market, security_type=security_type)
+
+    if not force:
+        existing_outputs = _existing_generation_outputs(data_folder, native_layout)
+        if existing_outputs:
+            return QualificationOutcome(
+                2,
+                [
+                    "OutputsExistWithoutForce: an existing qualification generation is present "
+                    f"({len(existing_outputs)} file(s), first: {existing_outputs[0]}); "
+                    "pass --force to replace it"
+                ],
+                None,
+                None,
+            )
 
     qualification = qualify_source(
         source_path, layout, config, data_zone, source_zone, session_evaluator
     )
+
+    if sha256_file(source_path) != source_sha256:
+        return QualificationOutcome(
+            2,
+            [
+                "SourceChangedDuringQualification: the source file changed while it was being "
+                "qualified; no manifest or native data was published"
+            ],
+            None,
+            None,
+        )
 
     failures: list[str] = []
     if not qualification.source_qualification_passed:
@@ -194,9 +293,6 @@ def run_qualification(
         failures.append("SourcePrecisionExceedsLeanTickFormat")
     if not qualification.decimal_parity_passed:
         failures.append("SourcePriceExceedsLeanDecimalFormat")
-
-    identity = repository_identity(Path(__file__))
-    native_layout = NativeLeanTickLayout(symbol=symbol, market=market, security_type=security_type)
 
     partitions = ()
     conversion_status = "PASS" if not failures else "NOT_RUN"
@@ -225,6 +321,7 @@ def run_qualification(
                     _register_stale_partition_removals(
                         data_folder, native_layout, partitions, transaction
                     )
+                    _register_record_invalidation(data_folder, transaction)
                 manifest = _build_manifest(
                     qualification=qualification,
                     hours=hours,
@@ -248,9 +345,12 @@ def run_qualification(
                 transaction.commit()
                 published = True
         except SourceIdentityChanged as error:
-            conversion_status = "FAIL"
-            conversion_error = str(error)
-            failures.append("SourceChangedDuringQualification")
+            return QualificationOutcome(
+                2,
+                [f"SourceChangedDuringQualification: {error}"],
+                None,
+                None,
+            )
         except (
             QualificationFailure,
             NativeConversionError,
@@ -283,6 +383,8 @@ def run_qualification(
         try:
             with OutputTransaction(allow_overwrite=force) as transaction:
                 transaction.stage_text(manifest_path(data_folder), dump_json(manifest))
+                if force:
+                    _register_generation_cleanup(data_folder, native_layout, transaction)
                 transaction.commit()
         except OutputTransactionError as error:
             return QualificationOutcome(2, [f"ManifestNotWritten: {error}"], None, None)
@@ -376,8 +478,12 @@ def _build_manifest(
             "security_type": security_type,
             "data_folder": str(data_folder),
             "converter_git_sha": identity.get("head_sha"),
-            "lean_git_sha": identity.get("head_sha"),
+            "lean_checkout_git_sha": identity.get("head_sha"),
             "converter_checkout": identity,
+            "runtime_identity_note": (
+                "lean_checkout_git_sha is source provenance; the replay probe records the "
+                "SHA-256 of the assemblies it actually executes under probe.runtime.assemblies"
+            ),
             "data_time_zone": hours.data_time_zone,
             "exchange_time_zone": hours.exchange_time_zone,
             "market_hours_database": hours.describe(),
@@ -416,6 +522,7 @@ def _build_manifest(
                 "exact-decimal diagnostics; binary floating point is not used for conversion "
                 "or comparison"
             ),
+            "complete": qualification.spread_statistics_complete,
             "min": qualification.spread_min,
             "max": qualification.spread_max,
             "mean": qualification.spread_mean,
