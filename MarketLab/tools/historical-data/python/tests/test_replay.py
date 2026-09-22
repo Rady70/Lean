@@ -18,6 +18,7 @@ from marketlab_historical_data.replay import (  # noqa: E402
 )
 
 DIGEST = "sha256:" + "a" * 64
+MARKET_HOURS_SHA = "b" * 64
 
 
 def base_manifest(zip_sha256, digest=DIGEST, counts=(4, 4), days=("2014-05-05",)):
@@ -33,7 +34,10 @@ def base_manifest(zip_sha256, digest=DIGEST, counts=(4, 4), days=("2014-05-05",)
             "data_folder": "data",
             "data_time_zone": "UTC",
             "exchange_time_zone": "America/New_York",
-            "market_hours_database": {"entry_key": "Cfd-oanda-XAUUSD"},
+            "market_hours_database": {
+                "entry_key": "Cfd-oanda-XAUUSD",
+                "database_sha256": MARKET_HOURS_SHA,
+            },
             "native_layout": {"zip_directory": "cfd/oanda/tick/xauusd"},
         },
         "counts": {
@@ -99,6 +103,7 @@ def base_probe(digest=DIGEST, count=4):
             "engine_quotes_processed": count,
             "data_time_zone": "UTC",
             "exchange_time_zone": "America/New_York",
+            "market_hours_database_sha256": MARKET_HOURS_SHA,
         },
     }
 
@@ -193,6 +198,12 @@ class RecordTests(unittest.TestCase):
         probe["runtime"]["data_time_zone"] = "Europe/London"
         record = self.build(probe)
         self.assertIn("ReplayRuntimeDataTimeZoneMismatch", record["failure_reasons"])
+
+    def test_runtime_market_hours_database_mismatch_fails(self):
+        probe = base_probe()
+        probe["runtime"]["market_hours_database_sha256"] = "c" * 64
+        record = self.build(probe)
+        self.assertIn("ReplayRuntimeMarketHoursDatabaseMismatch", record["failure_reasons"])
 
     def test_probe_missing_fails(self):
         record = self.build(None)

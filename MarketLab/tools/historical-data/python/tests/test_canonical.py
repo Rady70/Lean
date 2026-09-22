@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -18,6 +19,8 @@ from marketlab_historical_data.canonical import (  # noqa: E402
     format_semantic_line,
     lean_decimal_representable,
     parse_decimal_text,
+    sha256_file,
+    sha256_hex,
     utc_is_millisecond_exact,
 )
 
@@ -34,11 +37,26 @@ class ParseDecimalTextTests(unittest.TestCase):
         self.assertEqual(parse_decimal_text(" .5 ", "ask"), Decimal("0.5"))
         self.assertEqual(parse_decimal_text("+1.", "bid"), Decimal("1"))
 
+    def test_exact_exponent_notation_is_accepted_exactly(self):
+        self.assertEqual(parse_decimal_text("1.9e3", "bid"), Decimal("1900"))
+        self.assertEqual(parse_decimal_text("1.9E+3", "ask"), Decimal("1900"))
+        self.assertEqual(canonical_decimal_text(parse_decimal_text("1e5", "bid")), "100000")
+
     def test_non_decimal_spellings_are_rejected(self):
-        for text in ("", "   ", "nan", "NaN", "inf", "-inf", "1e5", "1_000", "1,5", "0x10", "abc"):
+        for text in ("", "   ", "nan", "NaN", "inf", "-inf", "Infinity", "1_000", "1,5", "0x10", "abc", "1e", "e3"):
             with self.subTest(text=text):
                 with self.assertRaises(CanonicalValueError):
                     parse_decimal_text(text, "bid")
+
+
+class Sha256Tests(unittest.TestCase):
+    def test_streaming_hash_matches_one_shot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "payload.bin"
+            payload = bytes(range(256)) * 4096
+            path.write_bytes(payload)
+            self.assertEqual(sha256_file(path), sha256_hex(payload))
+            self.assertEqual(sha256_file(path, chunk_size=7), sha256_hex(payload))
 
 
 class CanonicalDecimalTests(unittest.TestCase):
@@ -70,6 +88,24 @@ class CanonicalDecimalTests(unittest.TestCase):
         self.assertFalse(lean_decimal_representable(Decimal("9223372036854775808")))
         self.assertFalse(lean_decimal_representable(Decimal("18446744073709551616")))
         self.assertFalse(lean_decimal_representable(Decimal("0.00000000000000000000000000001")))
+
+    def test_round_prices_ending_in_zero_are_representable(self):
+        for text in ("10", "100", "1000", "1900", "1900.00", "2000", "2010.0", "1200.50"):
+            with self.subTest(text=text):
+                self.assertTrue(lean_decimal_representable(Decimal(text)))
+
+    def test_integer_values_beyond_the_signed_reader_are_rejected(self):
+        self.assertTrue(lean_decimal_representable(Decimal("9223372036854775807")))
+        self.assertFalse(lean_decimal_representable(Decimal("9223372036854775808")))
+        self.assertFalse(lean_decimal_representable(Decimal("10000000000000000000")))
+
+    def test_scale_29_is_rejected(self):
+        self.assertFalse(
+            lean_decimal_representable(Decimal("0.00000000000000000000000000001"))
+        )
+        self.assertTrue(
+            lean_decimal_representable(Decimal("0.0000000000000000000000000001"))
+        )
 
 
 class CanonicalTimestampTests(unittest.TestCase):

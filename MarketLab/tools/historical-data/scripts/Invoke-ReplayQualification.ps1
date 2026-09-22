@@ -62,7 +62,9 @@ IANA timezone of timezone-naive timestamps. Required when the timestamps carry
 no embedded UTC offset, and refused when they do.
 
 .PARAMETER Symbol,Market,SecurityType
-Subscription identity. Defaults: XAUUSD, oanda, Cfd.
+Subscription identity. This PR is qualified for XAUUSD/oanda/Cfd only; the
+driver refuses any other identity instead of launching a probe for an
+unqualified subscription (the Python tools remain parameterised).
 
 .PARAMETER LeanRoot
 Root of the LEAN checkout. Default: four levels above this script.
@@ -81,12 +83,15 @@ fixtures (default: <LeanRoot>\Data).
 Do not link auxiliary data; expect missing-data warnings from the helper.
 
 .PARAMETER Force
-Replace existing native partitions, manifest, expectation and record.
+Replace existing native partitions, manifest, expectation and record; native
+partitions inside cfd\oanda\tick\xauusd that the new qualification does not
+describe are removed with the same transactional rollback.
 
 Exit codes:
   0  qualification record PASS
   1  qualification record FAIL (or the source failed before conversion)
-  2  configuration error (missing path, unusable data folder, Python failure)
+  2  configuration error (missing path, unusable data folder, Python failure,
+     or the LEAN helper's own pre-flight refusal: LEAN was not launched)
   3  the LEAN helper reported engine errors (the run was not clean)
 
 .REQUIRES Windows PowerShell 5.1 or PowerShell 7+, and the built LEAN Launcher
@@ -163,6 +168,11 @@ if (-not (Test-Path -LiteralPath $OutputRoot)) {
     New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 }
 
+if ($Symbol -ne 'XAUUSD' -or $Market -ne 'oanda' -or $SecurityType -ne 'Cfd') {
+    Write-ErrorMessage "only the qualified XAUUSD/oanda/Cfd subscription is supported by this driver (got $Symbol/$Market/$SecurityType); run the Python tools directly for any other identity (not qualified)"
+    exit 2
+}
+
 if (-not $NoAuxiliaryLinks) {
     $auxiliaryLinks = @(
         'market-hours',
@@ -206,9 +216,7 @@ try {
     if ($Delimiter) { $qualifyArguments += @('--delimiter', $Delimiter) }
     if ($TimestampFormat) { $qualifyArguments += @('--timestamp-format', $TimestampFormat) }
     if ($SourceTimezone) { $qualifyArguments += @('--source-timezone', $SourceTimezone) }
-    if ($Symbol -ne 'XAUUSD') { $qualifyArguments += @('--symbol', $Symbol) }
-    if ($Market -ne 'oanda') { $qualifyArguments += @('--market', $Market) }
-    if ($SecurityType -ne 'Cfd') { $qualifyArguments += @('--security-type', $SecurityType) }
+    $qualifyArguments += @('--symbol', $Symbol, '--market', $Market, '--security-type', $SecurityType)
     if ($Force) { $qualifyArguments += '--force' }
 
     Write-Host "qualify: $PythonExe $($qualifyArguments -join ' ')"
@@ -238,6 +246,10 @@ try {
     $helperOutput = Invoke-External $helperScript $helperParameters
     $helperExit = $script:externalExitCode
     Write-Host $helperOutput
+    if ($helperExit -eq 2) {
+        Write-ErrorMessage "the LEAN helper refused the run in pre-flight (exit 2): LEAN was not launched and no qualification record was written"
+        exit 2
+    }
 
     $runDirectory = $null
     $match = [regex]::Match($helperOutput, 'run directory:\s*(.+?);\s*log:')

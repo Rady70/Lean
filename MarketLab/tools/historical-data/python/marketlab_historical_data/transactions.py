@@ -29,6 +29,7 @@ class OutputTransaction:
         self._allow_overwrite = allow_overwrite
         self._token = uuid.uuid4().hex
         self._stages: dict[Path, Path] = {}
+        self._removals: list[Path] = []
         self._created_directories: list[Path] = []
         self._committed = False
 
@@ -61,6 +62,21 @@ class OutputTransaction:
     def stage_text(self, final_path: Path, text: str, encoding: str = "utf-8") -> Path:
         return self.stage_bytes(final_path, text.encode(encoding))
 
+    def register_removal(self, final_path: Path) -> None:
+        """Registers an existing file to be removed when the transaction commits.
+
+        The file is moved to a hidden backup during commit and restored if the
+        commit fails, so a failed transaction never removes an old output.
+        """
+        final_path = Path(final_path)
+        if final_path in self._stages:
+            raise OutputTransactionError(f"output is staged and removed in one transaction: {final_path}")
+        if final_path in self._removals:
+            raise OutputTransactionError(f"removal is registered twice: {final_path}")
+        if final_path.is_dir():
+            raise OutputTransactionError(f"removal path is a directory: {final_path}")
+        self._removals.append(final_path)
+
     def commit(self) -> None:
         """Installs every staged file, rolling back on the first failure."""
         if self._committed:
@@ -71,7 +87,14 @@ class OutputTransaction:
             self._ensure_parent(final_path.parent)
         installed: list[Path] = []
         backups: list[tuple[Path, Path]] = []
+        removals: list[tuple[Path, Path]] = []
         try:
+            for final_path in self._removals:
+                if not final_path.exists():
+                    continue
+                backup = final_path.with_name(f".{final_path.name}.{self._token}.removed")
+                os.replace(final_path, backup)
+                removals.append((final_path, backup))
             for final_path, stage in self._stages.items():
                 if final_path.exists():
                     backup = final_path.with_name(f".{final_path.name}.{self._token}.backup")
@@ -90,8 +113,13 @@ class OutputTransaction:
                     os.replace(backup, final_path)
                 except OSError:
                     pass
+            for final_path, backup in removals:
+                try:
+                    os.replace(backup, final_path)
+                except OSError:
+                    pass
             raise OutputTransactionError(f"output publication failed and was rolled back: {error}") from error
-        for _, backup in backups:
+        for _, backup in backups + removals:
             try:
                 backup.unlink()
             except OSError:

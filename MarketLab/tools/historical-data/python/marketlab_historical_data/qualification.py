@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .canonical import sha256_hex
+from .canonical import sha256_file
 from .csv_source import (
     CsvSourceConfig,
     QualificationFailure,
@@ -118,9 +118,13 @@ def repository_identity(start_path: Path) -> dict:
 
 def _hash_file(path: Path) -> str | None:
     try:
-        return sha256_hex(Path(path).read_bytes())
+        return sha256_file(path)
     except OSError:
         return None
+
+
+class SourceIdentityChanged(Exception):
+    """The source bytes changed between qualification and conversion."""
 
 
 def run_qualification(
@@ -140,6 +144,15 @@ def run_qualification(
         return QualificationOutcome(2, [f"SourceFileNotFound: {source_path}"], None, None)
     if not data_folder.is_dir():
         return QualificationOutcome(2, [f"DataFolderNotFound: {data_folder}"], None, None)
+
+    symbol_properties = data_folder / "symbol-properties" / "symbol-properties-database.csv"
+    if not symbol_properties.is_file():
+        return QualificationOutcome(
+            2,
+            [f"SymbolPropertiesDatabaseMissing: {symbol_properties}"],
+            None,
+            None,
+        )
 
     try:
         hours, _ = load_market_hours(data_folder, security_type, market, symbol)
@@ -163,6 +176,12 @@ def run_qualification(
         layout = resolve_csv_layout(source_path, config)
     except QualificationFailure as error:
         return QualificationOutcome(2, [f"SourceLayoutUnusable: {error}"], None, None)
+
+    try:
+        source_sha256 = sha256_file(source_path)
+        source_size = source_path.stat().st_size
+    except OSError as error:
+        return QualificationOutcome(2, [f"SourceFileUnreadable: {error}"], None, None)
 
     qualification = qualify_source(
         source_path, layout, config, data_zone, source_zone, session_evaluator
@@ -197,11 +216,22 @@ def run_qualification(
                     qualification.counters.accepted_row_count,
                 )
                 partitions = writer.finish()
+                if sha256_file(source_path) != source_sha256:
+                    raise SourceIdentityChanged(
+                        "the source file changed between qualification and conversion; "
+                        "nothing was published"
+                    )
+                if force:
+                    _register_stale_partition_removals(
+                        data_folder, native_layout, partitions, transaction
+                    )
                 manifest = _build_manifest(
                     qualification=qualification,
                     hours=hours,
                     native_layout=native_layout,
                     source_path=source_path,
+                    source_sha256=source_sha256,
+                    source_size=source_size,
                     data_folder=data_folder,
                     identity=identity,
                     conversion_status="PASS",
@@ -217,6 +247,10 @@ def run_qualification(
                 transaction.stage_text(expectation_path(data_folder), dump_json(expectation))
                 transaction.commit()
                 published = True
+        except SourceIdentityChanged as error:
+            conversion_status = "FAIL"
+            conversion_error = str(error)
+            failures.append("SourceChangedDuringQualification")
         except (
             QualificationFailure,
             NativeConversionError,
@@ -234,6 +268,8 @@ def run_qualification(
             hours=hours,
             native_layout=native_layout,
             source_path=source_path,
+            source_sha256=source_sha256,
+            source_size=source_size,
             data_folder=data_folder,
             identity=identity,
             conversion_status=conversion_status,
@@ -259,11 +295,34 @@ def run_qualification(
     )
 
 
+def _register_stale_partition_removals(
+    data_folder: Path,
+    native_layout: NativeLeanTickLayout,
+    partitions,
+    transaction: OutputTransaction,
+) -> None:
+    """With force: remove old native partitions the new qualification does not describe.
+
+    Scoped to ``YYYYMMDD_quote.zip`` files inside this subscription's tick
+    directory; a research data folder should still be dedicated to one dataset.
+    """
+    tick_directory = data_folder / native_layout.relative_directory
+    if not tick_directory.is_dir():
+        return
+    current_days = {artifact.partition.strftime("%Y%m%d") for artifact in partitions}
+    for candidate in sorted(tick_directory.glob("*_quote.zip")):
+        day = candidate.name[:8]
+        if day.isdigit() and len(day) == 8 and day not in current_days:
+            transaction.register_removal(candidate)
+
+
 def _build_manifest(
     qualification: SourceQualification,
     hours: ResolvedMarketHours,
     native_layout: NativeLeanTickLayout,
     source_path: Path,
+    source_sha256: str,
+    source_size: int,
     data_folder: Path,
     identity: dict,
     conversion_status: str,
@@ -296,8 +355,8 @@ def _build_manifest(
         "contract": CONTRACT,
         "source": {
             "path": str(source_path),
-            "sha256": _hash_file(source_path),
-            "size_bytes": source_path.stat().st_size,
+            "sha256": source_sha256,
+            "size_bytes": source_size,
             "encoding": qualification.config.encoding,
             "delimiter": qualification.layout.delimiter,
             "columns": {

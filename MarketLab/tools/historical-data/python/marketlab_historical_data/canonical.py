@@ -17,7 +17,10 @@ source stream and the LEAN-delivered stream can be compared exactly.
 Canonical decimal text is fixed-point, invariant, without exponent, without a
 leading ``+``, without trailing fractional zeros, and ``-0`` is rendered ``0``.
 Numerically equal values therefore serialize identically regardless of their
-source textual scale (``1.2``, ``1.20`` and ``1.200`` are one value).
+source textual scale (``1.2``, ``1.20`` and ``1.200`` are one value). The
+source may spell an exact decimal value in exponent notation (``1.9e3``); the
+value is parsed exactly and written back in the canonical fixed-point form, so
+the format LEAN reads never contains an exponent.
 
 The converter never uses binary floating point as an authority for converted
 prices or timestamps, and the manifest's spread statistics are exact decimal
@@ -41,11 +44,12 @@ __all__ = [
     "canonical_utc_timestamp_text",
     "lean_decimal_representable",
     "parse_decimal_text",
+    "sha256_file",
     "sha256_hex",
     "utc_is_millisecond_exact",
 ]
 
-DECIMAL_TEXT_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
+DECIMAL_TEXT_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
 # The native LEAN Cfd/Forex quote reader (Common/Util/StreamReaderExtensions.cs,
 # GetDecimal) accumulates the coefficient into a signed 64-bit integer and
@@ -64,10 +68,12 @@ class CanonicalValueError(ValueError):
 def parse_decimal_text(text: str, field: str) -> Decimal:
     """Parses exact decimal source text without passing through binary float.
 
-    Accepted: an optional sign and plain digits with an optional decimal point
-    (``1``, ``1.25``, ``.5``, ``1.``). Rejected explicitly: blank text,
-    ``nan``/``inf`` spellings, exponent notation, underscores, thousands
-    separators and any other non-decimal spelling.
+    Accepted: an optional sign, plain digits with an optional decimal point and
+    an optional exact exponent (``1``, ``1.25``, ``.5``, ``1.``, ``1.9e3``).
+    Rejected explicitly: blank text, ``nan``/``inf`` spellings, underscores,
+    thousands separators and any other non-decimal spelling. Exponent notation
+    is parsed exactly by ``Decimal`` and is written back in canonical
+    fixed-point form, so the format LEAN reads never contains an exponent.
     """
     if text is None:
         raise CanonicalValueError(f"{field} is missing")
@@ -75,8 +81,11 @@ def parse_decimal_text(text: str, field: str) -> Decimal:
     if not stripped:
         raise CanonicalValueError(f"{field} is blank")
     if not DECIMAL_TEXT_PATTERN.match(stripped):
-        raise CanonicalValueError(f"{field} is not a plain decimal value: {text!r}")
-    return Decimal(stripped)
+        raise CanonicalValueError(f"{field} is not a decimal value: {text!r}")
+    value = Decimal(stripped)
+    if not value.is_finite():
+        raise CanonicalValueError(f"{field} is not a finite decimal value: {text!r}")
+    return value
 
 
 def canonical_decimal_text(value: Decimal) -> str:
@@ -106,28 +115,24 @@ def canonical_decimal_text(value: Decimal) -> str:
 def lean_decimal_representable(value: Decimal) -> bool:
     """True when the exact value round-trips through the native LEAN reader.
 
-    The reader (`StreamReaderExtensions.GetDecimal`) accumulates into a signed
-    64-bit integer with a zeroed high word and a byte scale, so the canonical
-    coefficient must not exceed ``long.MaxValue`` and the scale must not exceed
-    28. Trailing fractional zeros carry no value and are not counted against
-    the scale (``1.000...`` with 30 zeros is the integer ``1``).
+    The reader (`StreamReaderExtensions.GetDecimal`) accumulates the coefficient
+    of the written line into a signed 64-bit integer with a zeroed high word and
+    a byte scale, so the check is made on the *canonical* text the converter
+    writes: coefficient at most ``long.MaxValue`` and at most 28 fractional
+    digits. Integer trailing zeros belong to the coefficient (``1000`` is
+    coefficient 1000, scale 0), while fractional trailing zeros carry no value
+    and are not part of the canonical text (``1900.00`` is ``1900``).
     """
     if value.is_nan() or value.is_infinite():
         return False
-    if value == 0:
-        return True
-    _, digits, exponent = value.as_tuple()
-    digit_list = list(digits)
-    while digit_list and digit_list[-1] == 0:
-        digit_list.pop()
-        exponent += 1
-    if not digit_list:
-        return True
-    coefficient = int("".join(str(digit) for digit in digit_list))
-    scale = -exponent
+    text = canonical_decimal_text(value)
+    if text.startswith("-"):
+        text = text[1:]
+    whole, _, fraction = text.partition(".")
+    coefficient = int(whole + fraction)
     return (
         coefficient <= LEAN_DECIMAL_MAX_COEFFICIENT
-        and 0 <= scale <= LEAN_DECIMAL_MAX_SCALE
+        and len(fraction) <= LEAN_DECIMAL_MAX_SCALE
     )
 
 
@@ -160,6 +165,22 @@ def canonical_utc_timestamp_text(value: datetime) -> str:
 def sha256_hex(payload: bytes) -> str:
     """Returns the lowercase hexadecimal SHA-256 of the payload."""
     return hashlib.sha256(payload).hexdigest()
+
+
+def sha256_file(path, chunk_size: int = 1 << 20) -> str:
+    """Streams a file through SHA-256 in fixed-size chunks.
+
+    Historical sources can be several gigabytes; the file is never loaded into
+    memory as a whole.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class SemanticStreamDigest:

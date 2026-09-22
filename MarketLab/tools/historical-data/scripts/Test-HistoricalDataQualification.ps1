@@ -119,12 +119,12 @@ try {
     Assert-True ($exitPass -eq 0) "driver exit code is 0 (was $exitPass)"
     $recordPass = Read-Json (Join-Path $dataPass 'marketlab-qualification\qualification-record.json')
     Assert-True ($recordPass.overall_qualification -eq 'PASS') 'overall qualification is PASS'
-    Assert-True ($recordPass.native_replay.accepted_row_count -eq 4) 'accepted row count is 4'
-    Assert-True ($recordPass.native_replay.converted_row_count -eq 4) 'converted row count is 4'
-    Assert-True ($recordPass.native_replay.lean_delivered_row_count -eq 4) 'LEAN-delivered row count is 4'
+    Assert-True ($recordPass.native_replay.accepted_row_count -eq 5) 'accepted row count is 5'
+    Assert-True ($recordPass.native_replay.converted_row_count -eq 5) 'converted row count is 5'
+    Assert-True ($recordPass.native_replay.lean_delivered_row_count -eq 5) 'LEAN-delivered row count is 5'
     Assert-True ($recordPass.native_replay.session_delivery_difference -eq 0) 'session/delivery difference is 0'
     Assert-True ($recordPass.native_replay.ordered_source_semantic_digest -eq $recordPass.native_replay.ordered_lean_delivered_semantic_digest) 'source and delivered semantic digests are equal'
-    Assert-True ($recordPass.native_replay.ordered_source_semantic_digest -eq 'sha256:92db8c553e1229145d107d52e8da0e40f645b3f929bbe41a864d2c0e4053d218') 'semantic digest matches the committed fixture vector'
+    Assert-True ($recordPass.native_replay.ordered_source_semantic_digest -eq 'sha256:b133c1366422e3b4e975e176c44b726edc20bee8c5a5e9054b00a816266c69d9') 'semantic digest matches the committed fixture vector (including the round price)'
     $manifestPass = $recordPass.manifest
     Assert-True ($manifestPass.qualification.source_qualification -eq 'PASS') 'source qualification is PASS'
     Assert-True ($manifestPass.qualification.native_lean_timestamp_parity -eq 'PASS') 'native timestamp parity is PASS'

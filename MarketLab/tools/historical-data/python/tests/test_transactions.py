@@ -50,6 +50,34 @@ class OutputTransactionTests(unittest.TestCase):
             transaction.commit()
         self.assertEqual(target.read_text(encoding="utf-8"), "new")
 
+    def test_registered_removal_deletes_the_old_file_on_commit(self):
+        old = self.root / "old.zip"
+        old.write_bytes(b"old")
+        new = self.root / "new.json"
+        with OutputTransaction() as transaction:
+            transaction.register_removal(old)
+            transaction.stage_text(new, "new")
+            transaction.commit()
+        self.assertFalse(old.exists())
+        self.assertEqual(new.read_text(encoding="utf-8"), "new")
+        self.assertFalse(any(self.root.rglob("*.removed")))
+
+    def test_registered_removal_of_a_missing_file_is_ignored(self):
+        old = self.root / "never-existed.zip"
+        with OutputTransaction() as transaction:
+            transaction.register_removal(old)
+            transaction.stage_text(self.root / "new.json", "new")
+            transaction.commit()
+        self.assertTrue((self.root / "new.json").is_file())
+
+    def test_duplicate_removal_registration_is_refused(self):
+        old = self.root / "old.zip"
+        old.write_bytes(b"old")
+        transaction = OutputTransaction()
+        transaction.register_removal(old)
+        with self.assertRaises(OutputTransactionError):
+            transaction.register_removal(old)
+
     def test_uncommitted_transaction_leaves_nothing_behind(self):
         target = self.root / "nested" / "one.json"
         with OutputTransaction() as transaction:

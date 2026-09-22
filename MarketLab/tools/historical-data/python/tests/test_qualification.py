@@ -7,10 +7,13 @@ import shutil
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from marketlab_historical_data import qualification as qualification_module  # noqa: E402
 from marketlab_historical_data.csv_source import CsvSourceConfig  # noqa: E402
 from marketlab_historical_data.qualification import (  # noqa: E402
     dump_json,
@@ -39,6 +42,13 @@ class QualificationCase(unittest.TestCase):
         shutil.copyfile(
             FIXTURES / "market-hours-fixture.json",
             data / "market-hours" / "market-hours-database.json",
+        )
+        (data / "symbol-properties").mkdir()
+        (data / "symbol-properties" / "symbol-properties-database.csv").write_text(
+            "market,symbol,type,description,quote_currency,contract_multiplier,"
+            "minimum_price_variation,lot_size,market_ticker,minimum_order_size,price_magnifier,strike_multiplier\n"
+            "oanda,XAUUSD,cfd,Gold,USD,1,0.001,1\n",
+            encoding="utf-8",
         )
         self.data = data
 
@@ -117,6 +127,58 @@ class PassingQualificationTests(QualificationCase):
         second_zip = (self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140505_quote.zip").read_bytes()
         self.assertEqual(first_zip, second_zip)
 
+    def test_round_prices_convert_and_are_written_canonically(self):
+        outcome = self.qualify(
+            "timestamp,bid,ask\n2014-05-05 08:00:00.000,1900.00,1900.50\n"
+        )
+        self.assertEqual(outcome.exit_code, 0, outcome.failures)
+        self.assertEqual(outcome.manifest["qualification"]["native_price_decimal_parity"], "PASS")
+        zip_path = self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140505_quote.zip"
+        with zipfile.ZipFile(zip_path) as archive:
+            content = archive.read(archive.namelist()[0]).decode("utf-8")
+        self.assertEqual(content, "28800000,1900,1900.5")
+
+    def test_exponent_prices_convert_to_the_integer_value(self):
+        outcome = self.qualify(
+            "timestamp,bid,ask\n2014-05-05 08:00:00.000,1.9e3,1.9e3\n"
+        )
+        self.assertEqual(outcome.exit_code, 0, outcome.failures)
+        zip_path = self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140505_quote.zip"
+        with zipfile.ZipFile(zip_path) as archive:
+            content = archive.read(archive.namelist()[0]).decode("utf-8")
+        self.assertEqual(content, "28800000,1900,1900")
+
+    def test_force_removes_stale_partitions(self):
+        self.qualify(PASS_CSV)
+        stale = self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140101_quote.zip"
+        stale.write_bytes(b"stale")
+        outcome = self.qualify(PASS_CSV, force=True)
+        self.assertEqual(outcome.exit_code, 0, outcome.failures)
+        self.assertFalse(stale.exists())
+        self.assertTrue(
+            (self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140505_quote.zip").is_file()
+        )
+
+    def test_source_identity_change_fails_before_publication(self):
+        real_sha256_file = qualification_module.sha256_file
+        calls = {"count": 0}
+
+        def changing_hash(path, chunk_size=1 << 20):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                return "0" * 64
+            return real_sha256_file(path, chunk_size)
+
+        with mock.patch.object(qualification_module, "sha256_file", side_effect=changing_hash):
+            outcome = self.qualify(PASS_CSV)
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertIn("SourceChangedDuringQualification", outcome.failures)
+        self.assertEqual(outcome.manifest["qualification"]["native_conversion"], "FAIL")
+        tick_directory = self.data / "cfd" / "oanda" / "tick" / "xauusd"
+        self.assertFalse(
+            tick_directory.is_dir() and list(tick_directory.glob("*_quote.zip"))
+        )
+
 
 class FailingQualificationTests(QualificationCase):
     def test_rejected_rows_fail_qualification_before_conversion(self):
@@ -162,14 +224,31 @@ class FailingQualificationTests(QualificationCase):
         self.assertIn("ManifestNotWritten", outcome.failures[0])
 
     def test_missing_runtime_market_hours_database_is_a_configuration_error(self):
+        data = self.root / "no-market-hours"
+        (data / "symbol-properties").mkdir(parents=True)
+        shutil.copyfile(
+            self.data / "symbol-properties" / "symbol-properties-database.csv",
+            data / "symbol-properties" / "symbol-properties-database.csv",
+        )
         outcome = run_qualification(
             source_path=self.write_source(PASS_CSV, "no-db.csv"),
-            data_folder=self.root,
+            data_folder=data,
             config=CsvSourceConfig(source_timezone="UTC"),
             force=False,
         )
         self.assertEqual(outcome.exit_code, 2)
         self.assertTrue(outcome.failures[0].startswith("MarketHoursDatabaseUnusable"))
+
+    def test_missing_symbol_properties_is_a_configuration_error(self):
+        (self.data / "symbol-properties" / "symbol-properties-database.csv").unlink()
+        outcome = run_qualification(
+            source_path=self.write_source(PASS_CSV, "no-symbol-properties.csv"),
+            data_folder=self.data,
+            config=CsvSourceConfig(source_timezone="UTC"),
+            force=False,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("SymbolPropertiesDatabaseMissing"))
 
 
 if __name__ == "__main__":

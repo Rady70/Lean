@@ -10,8 +10,9 @@ machine-readable qualification record with an explicit overall PASS/FAIL.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
+
+from .canonical import sha256_file
 
 __all__ = [
     "EXPECTATION_CONTRACT",
@@ -85,7 +86,7 @@ def classify_failed_data_requests(
 
 def _file_sha256(path: Path) -> str | None:
     try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        return sha256_file(path)
     except OSError:
         return None
 
@@ -199,6 +200,9 @@ def build_record(
             failures.append("ReplayRuntimeDataTimeZoneMismatch")
         if runtime.get("exchange_time_zone") != manifest["lean"].get("exchange_time_zone"):
             failures.append("ReplayRuntimeExchangeTimeZoneMismatch")
+        manifest_mhdb_sha = manifest["lean"].get("market_hours_database", {}).get("database_sha256")
+        if runtime.get("market_hours_database_sha256") != manifest_mhdb_sha:
+            failures.append("ReplayRuntimeMarketHoursDatabaseMismatch")
 
     session_difference = None
     if probe_present and delivered.get("quote_count") is not None:

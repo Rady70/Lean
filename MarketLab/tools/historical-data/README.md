@@ -50,7 +50,10 @@ Ask >= Bid
 ```
 
 A zero spread is valid (`Ask == Bid`). The retired archive validator that
-rejects zero spread is deliberately not used.
+rejects zero spread is deliberately not used. Prices are exact decimal values:
+the source may spell them with an exact exponent (`1.9e3`), which is parsed
+exactly and written back in canonical fixed-point form, so the native file
+LEAN reads never contains an exponent.
 
 A valid source is additionally:
 
@@ -107,8 +110,11 @@ timestamp contract in the manifest; it never guesses an economically meaningful
 timezone. If timestamps are naive, `-SourceTimezone` is required; if they carry
 an embedded UTC offset, it must not be given.
 
-Re-running over an existing output set requires `-Force` (atomic replacement,
-with rollback on failure).
+Re-running over an existing output set requires `-Force`: it atomically
+replaces the converted partitions, manifest, expectation and record, and
+removes `YYYYMMDD_quote.zip` partitions inside `cfd\oanda\tick\xauusd` that the
+new qualification does not describe (with the same rollback as every other
+output). A research data folder should still be dedicated to one dataset.
 
 ### The three underlying steps
 
@@ -138,7 +144,10 @@ python -m marketlab_historical_data verify `
 `-AllowMissingData` is required for step 2 because LEAN probes the trading days
 adjacent to the qualified window for continuity; the final record classifies
 every failed request, so a missing native partition that carries accepted rows
-still fails the record.
+still fails the record. In step 3, an explicitly supplied `--probe-result` or
+`--failed-data-requests` path that is missing or malformed is a configuration
+error (exit 2); omit the option to record missing evidence as a qualification
+failure instead.
 
 ## 4. What the converter writes, and where
 
@@ -187,10 +196,11 @@ All generated research data stays **outside Git**.
 
 ```text
 accepted source rows == converted native rows == LEAN-delivered rows
+the source SHA-256 is verified unchanged across qualification and conversion
 source semantic digest == delivered semantic digest
 first/last canonical UTC agree
 every per-partition count and semantic digest agrees
-runtime DataTimeZone/ExchangeTimeZone agree with the manifest
+runtime DataTimeZone/ExchangeTimeZone and market-hours database SHA agree with the manifest
 every native partition file exists, matches its recorded hash, no stale partition
 no failed data request for a partition that carries accepted rows
 no failed data request inside the qualified window without source rows
@@ -202,6 +212,7 @@ Any failure produces `overall_qualification: FAIL` and a machine-readable
 | Reason | Meaning |
 |---|---|
 | `SourceRejectedRows` | at least one source row failed the contract; see `counts.rejected_row_reasons` |
+| `SourceChangedDuringQualification` | the source file changed between qualification and conversion; nothing was published |
 | `SourcePrecisionExceedsLeanTickFormat` | meaningful sub-millisecond source precision; native millisecond parity is impossible |
 | `SourcePriceExceedsLeanDecimalFormat` | a price cannot be represented as a C# decimal |
 | `NativeLeanConversionFailed` | conversion/publish refused or failed; nothing was published |
@@ -212,6 +223,7 @@ Any failure produces `overall_qualification: FAIL` and a machine-readable
 | `ExpectedAndDeliveredCountsDiffer` | LEAN delivered fewer/more quotes than accepted (for example market-hours/session filtering) |
 | `DeliveredSemanticDigestMismatches` | price/order/timestamp content differs after canonical UTC normalization |
 | `ReplayRuntimeDataTimeZoneMismatch` / `ReplayRuntimeExchangeTimeZoneMismatch` | the probe's runtime timezones differ from the manifest's resolved values |
+| `ReplayRuntimeMarketHoursDatabaseMismatch` | the probe's runtime market-hours database SHA-256 differs from the manifest's |
 | `FirstDeliveredQuoteMismatches` / `LastDeliveredQuoteMismatches` | boundary quote mismatch |
 | `NativePartitionFileMissing` / `NativePartitionHashMismatch` | converted output changed after conversion |
 
@@ -262,7 +274,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (95 tests)
+# Python offline tool (116 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -289,9 +301,9 @@ material only; nothing here is a runtime dependency on them.
 - The offline session preview is diagnostic. It is exact for the XAUUSD entry
   (no early closes or late opens) but simplified when an entry defines them;
   `preview_exact` says which. The actual replay is the authority.
-- The converter supports a header row and deterministic column resolution. A
-  source without a header needs explicit columns, but the first physical row is
-  always treated as the header.
+- The converter requires a header row; explicit column options name columns
+  that must exist in the header (normalized), and they do not make a headerless
+  file usable.
 - Only the XAUUSD/Oanda CFD tick subscription is exercised. The tool is
   parameterised by symbol/market/security type, but no other subscription has
   been qualified.

@@ -242,7 +242,9 @@ namespace MarketLab.HistoricalDataProbe
 
         private static string Sha256File(string path)
         {
-            return Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
+            using var stream = File.OpenRead(path);
+            using var sha = SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
         }
 
         private void WriteResult()

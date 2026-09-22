@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .csv_source import CsvSourceConfig
 from .qualification import (
+    CONTRACT,
     artifacts_directory,
     dump_json,
     load_json,
@@ -76,13 +77,8 @@ def _verify_parser(subparsers) -> None:
     parser.add_argument("--json", action="store_true", help="print the record JSON to stdout")
 
 
-def _read_failed_requests(path: Path | None) -> list[str]:
-    if path is None:
-        return []
-    try:
-        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
+def _read_failed_requests(path: Path) -> list[str]:
+    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
     return [line.strip() for line in lines if line.strip()]
 
 
@@ -192,25 +188,40 @@ def _run_verify(args) -> int:
     if not isinstance(manifest, dict):
         print(f"ERROR: manifest is not a JSON object: {manifest_file}", file=sys.stderr)
         return 2
+    if manifest.get("contract") != CONTRACT:
+        print(f"ERROR: not a MarketLab qualification manifest: {manifest_file}", file=sys.stderr)
+        return 2
     if data_folder is None:
         recorded = manifest.get("lean", {}).get("data_folder")
         data_folder = Path(recorded) if recorded else manifest_file.parent.parent
 
-    probe_file = Path(args.probe_result) if args.probe_result else None
     probe_result = None
-    if probe_file is not None and probe_file.is_file():
+    probe_file = None
+    if args.probe_result:
+        probe_file = Path(args.probe_result)
+        if not probe_file.is_file():
+            print(f"ERROR: probe result not found: {probe_file}", file=sys.stderr)
+            return 2
         try:
             probe_result = load_json(probe_file)
         except (OSError, json.JSONDecodeError) as error:
-            print(f"WARNING: probe result is not readable JSON: {probe_file}: {error}", file=sys.stderr)
-            probe_result = None
-        if probe_result is not None and not isinstance(probe_result, dict):
-            print(f"WARNING: probe result is not a JSON object: {probe_file}", file=sys.stderr)
-            probe_result = None
+            print(f"ERROR: probe result is not readable JSON: {probe_file}: {error}", file=sys.stderr)
+            return 2
+        if not isinstance(probe_result, dict):
+            print(f"ERROR: probe result is not a JSON object: {probe_file}", file=sys.stderr)
+            return 2
 
-    failed_requests = _read_failed_requests(
-        Path(args.failed_data_requests) if args.failed_data_requests else None
-    )
+    failed_requests: list[str] = []
+    if args.failed_data_requests:
+        failed_path = Path(args.failed_data_requests)
+        if not failed_path.is_file():
+            print(f"ERROR: failed-data-requests file not found: {failed_path}", file=sys.stderr)
+            return 2
+        try:
+            failed_requests = _read_failed_requests(failed_path)
+        except OSError as error:
+            print(f"ERROR: failed-data-requests file is not readable: {failed_path}: {error}", file=sys.stderr)
+            return 2
 
     record = build_record(
         manifest=manifest,

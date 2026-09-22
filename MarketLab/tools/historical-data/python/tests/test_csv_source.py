@@ -79,12 +79,19 @@ class SourceContractTests(CsvQualificationCase):
             HEADER
             + "2014-05-05 08:00:00.000,abc,1291.6\n"
             + "2014-05-05 08:00:00.001,,1291.6\n"
-            + "2014-05-05 08:00:00.002,1e3,1291.6\n"
-            + "2014-05-05 08:00:00.003,nan,1291.6\n"
+            + "2014-05-05 08:00:00.002,nan,1291.6\n"
+            + "2014-05-05 08:00:00.003,Infinity,1291.6\n"
         )
         self.assertEqual(result.counters.rejection_reasons["invalid_bid"], 3)
         self.assertEqual(result.counters.rejection_reasons["blank_bid"], 1)
         self.assertEqual(result.counters.rejection_reasons["non_positive_bid"], 0)
+
+    def test_exact_exponent_prices_are_accepted_and_canonicalized(self):
+        result, _ = self.qualify(HEADER + "2014-05-05 08:00:00.000,1.9e3,2.0e3\n")
+        self.assertTrue(result.source_qualification_passed)
+        self.assertEqual(result.counters.accepted_row_count, 1)
+        self.assertEqual(result.spread_min, "100")
+        self.assertEqual(result.spread_max, "100")
 
     def test_malformed_row_and_empty_row_are_rejected(self):
         result, _ = self.qualify(
