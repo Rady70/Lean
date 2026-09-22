@@ -148,7 +148,8 @@ python -m marketlab_historical_data verify `
     --manifest E:\research-data\lean\marketlab-qualification\qualification-manifest.json `
     --data-folder E:\research-data\lean `
     --probe-result <run dir>\storage\single-anchor-replay-probe\replay-result.json `
-    --failed-data-requests <run dir>\failed-data-requests-*.txt
+    --failed-data-requests <run dir>\failed-data-requests-*.txt `
+    --runtime-binaries <run dir>\runtime-binaries.json
 ```
 
 `-AllowMissingData` is required for step 2 because LEAN probes the trading days
@@ -158,6 +159,15 @@ still fails the record. In step 3, an explicitly supplied `--probe-result` or
 `--failed-data-requests` path that is missing or malformed is a configuration
 error (exit 2); omit the option to record missing evidence as a qualification
 failure instead.
+
+**An authoritative PASS requires the runtime-binary evidence**, i.e. the
+`runtime-binaries.json` the driver writes into the run directory. That file
+contains SHA-256 for the probe, Launcher, Engine, AlgorithmFactory, Algorithm
+and Common assemblies (plus Configuration and Logging when present). The
+converter state hash is not part of it. A manual `verify` without
+`--runtime-binaries` still produces a record, but with `RuntimeBinariesMissing`
+and therefore `overall_qualification: FAIL`; use
+`Invoke-ReplayQualification.ps1` as the authoritative route.
 
 ## 4. What the converter writes, and where
 
@@ -206,14 +216,15 @@ All generated research data stays **outside Git**.
 
 ```text
 accepted source rows == converted native rows == LEAN-delivered rows
+the manifest is internally coherent (counts, per-day, per-partition and native totals agree)
 the source SHA-256 is verified unchanged across qualification and conversion
 the probe's engine processed every delivered quote (QuoteTickFeed invariant)
-the driver recorded the SHA-256 of the runtime binaries it launched
+the probe is self-consistent and its first/last and per-partition evidence matches the manifest
 source semantic digest == delivered semantic digest
 the probe's embedded expectation matches this manifest (digest, source hash, identity, zones)
-first/last canonical UTC agree
 every per-partition count and semantic digest agrees
 runtime DataTimeZone/ExchangeTimeZone and market-hours database SHA agree with the manifest
+the complete runtime binary set is recorded and agrees with the probe's observed assemblies
 every native partition file exists, matches its recorded hash, no stale partition
 no failed data request for a partition that carries accepted rows
 no failed data request inside the qualified window without source rows
@@ -233,29 +244,36 @@ Any failure produces `overall_qualification: FAIL` and a machine-readable
 | `SourcePrecisionExceedsLeanTickFormat` | meaningful sub-millisecond source precision; native millisecond parity is impossible |
 | `SourcePriceExceedsLeanDecimalFormat` | a price does not round-trip through the native LEAN reader (`StreamReaderExtensions.GetDecimal`: unchecked 64-bit coefficient limbs, coefficient up to unsigned 64-bit max, scale ≤ 28) |
 | `NativeLeanConversionFailed` | conversion/publish refused or failed; nothing was published |
+| `AcceptedConvertedCountMismatch` | a conversion-PASS manifest says accepted ≠ converted |
+| `ConvertedRowCountMismatch` / `NativePartitionCountMismatch` | the converted totals, partition row counts or per-day totals disagree |
+| `PerDayAcceptedCountMismatch` / `PerPartitionAcceptedCountMismatch` | per-day or per-partition accepted totals disagree with the accepted count |
 | `NativePartitionMissing` | LEAN could not read a partition that carries accepted rows |
 | `SourceCoverageGap` | a market day inside the qualified window has no source rows |
 | `StaleNativePartition` | the tick directory holds a partition the current manifest does not describe |
 | `NativeReplayProbeResultMissing` / `NativeReplayProbeDidNotComplete` | the probe did not run or the engine faulted |
 | `EngineDidNotProcessEveryAcceptedQuote` | the engine processed fewer quotes than the source accepted |
 | `EngineDidNotProcessEveryDeliveredQuote` | `QuoteTickFeed` delivered fewer quotes to the engine than the probe captured |
+| `ProbeSelfInconsistent` | a probe claiming PASS with failure reasons or false comparison flags |
 | `ProbeExpectationDoesNotMatchManifest` | the probe compared against an expectation that is not this manifest's |
+| `RuntimeBinariesMissing` / `RuntimeBinariesMismatchWithProbe` | the runtime binary evidence is absent, or contradicts the probe's observed assemblies |
 | `ExpectedAndDeliveredCountsDiffer` | LEAN delivered fewer/more quotes than accepted (for example market-hours/session filtering) |
 | `DeliveredSemanticDigestMismatches` | price/order/timestamp content differs after canonical UTC normalization |
 | `ReplayRuntimeDataTimeZoneMismatch` / `ReplayRuntimeExchangeTimeZoneMismatch` | the probe's runtime timezones differ from the manifest's resolved values |
 | `ReplayRuntimeMarketHoursDatabaseMismatch` | the probe's runtime market-hours database SHA-256 differs from the manifest's |
-| `FirstDeliveredQuoteMismatches` / `LastDeliveredQuoteMismatches` | boundary quote mismatch |
+| `FirstDeliveredQuoteMismatches` / `LastDeliveredQuoteMismatches` | the delivered boundary quote disagrees with the manifest |
+| `PerPartitionCountsDiffer` / `PerPartitionDigestsDiffer` | a delivered partition disagrees with the manifest's partition evidence |
 | `NativePartitionFileMissing` / `NativePartitionHashMismatch` | converted output changed after conversion |
 
 Configuration/infrastructure errors (exit 2, no qualification verdict) include
 `DataFolderInsideRepository`, `ForeignNativePartitions` (`-Force` will not
 remove native data the current MarketLab manifest does not own),
-`OutputsExistWithoutForce`, `SymbolPropertiesDatabaseMissing`,
+`NativePartitionSetChanged` (a partition changed between the ownership check
+and publication), `OutputsExistWithoutForce`, `SymbolPropertiesDatabaseMissing`,
 `MarketHoursDatabaseUnusable`, `SourceUnreadable` / `SourceLayoutUnusable`
 (invalid encoding, delimiter or CSV parser failure),
 `SourceChangedDuringQualification` (the source changed mid-run; nothing was
 published), a report path that would replace one of its evidence inputs, and
-wrong-schema manifest/probe/runtime-binaries inputs.
+wrong-schema/incomplete manifest, probe or runtime-binaries inputs.
 
 **Session filtering must not silently pass.** LEAN drops ticks outside the
 resolved exchange sessions (for Oanda XAUUSD: the New York 16:58-18:03 break,
@@ -304,7 +322,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (150 tests)
+# Python offline tool (160 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 

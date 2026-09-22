@@ -163,10 +163,13 @@ if (-not $AuxiliaryDataSource) { $AuxiliaryDataSource = Join-Path $LeanRoot 'Dat
 
 $sourcePath = Resolve-RequiredPath $SourceCsv 'source CSV'
 $dataRoot = Resolve-RequiredPath $DataFolder 'data folder'
-if ($dataRoot.Equals($LeanRoot, [StringComparison]::OrdinalIgnoreCase) -or
-    $dataRoot.StartsWith($LeanRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-    Write-ErrorMessage "the data folder is inside the LEAN worktree ($LeanRoot): qualification outputs and native partitions must stay outside the repository"
-    exit 2
+$scriptCheckout = (Get-Item -LiteralPath (Join-Path $PSScriptRoot '..\..\..\..')).FullName
+foreach ($checkout in @($LeanRoot, $scriptCheckout) | Select-Object -Unique) {
+    if ($dataRoot.Equals($checkout, [StringComparison]::OrdinalIgnoreCase) -or
+        $dataRoot.StartsWith($checkout + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-ErrorMessage "the data folder is inside a LEAN worktree ($checkout): qualification outputs and native partitions must stay outside the repository"
+        exit 2
+    }
 }
 $pythonPackageRoot = Join-Path $PSScriptRoot '..\python'
 $pythonPackageRoot = (Resolve-Path -LiteralPath $pythonPackageRoot).Path
@@ -288,6 +291,20 @@ try {
         exit 3
     }
 
+    $runtimeBinaryHashesAfter = [ordered]@{}
+    foreach ($binaryPath in $runtimeBinaryPaths) {
+        if (Test-Path -LiteralPath $binaryPath) {
+            $runtimeBinaryHashesAfter[(Split-Path -Leaf $binaryPath)] =
+                (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+    foreach ($binaryName in $runtimeBinaryHashes.Keys) {
+        if ($runtimeBinaryHashesAfter[$binaryName] -ne $runtimeBinaryHashes[$binaryName]) {
+            Write-ErrorMessage "runtime binary changed while the run was in progress: $binaryName; the run is not clean and no qualification record was written"
+            exit 3
+        }
+    }
+
     $runDirectory = $null
     $match = [regex]::Match($helperOutput, 'run directory:\s*(.+?);\s*log:')
     if ($match.Success) {
@@ -316,6 +333,11 @@ try {
         Set-Content -LiteralPath $runtimeBinariesFile -Value $runtimePayload -Encoding UTF8
     }
 
+    if ($helperExit -eq 1 -and -not $probeResult) {
+        Write-ErrorMessage "LEAN exited 1 without a usable replay probe result: the run failed before the qualification comparison completed (infrastructure/runtime failure); no qualification record was written"
+        exit 3
+    }
+
     $verifyArguments = @(
         '-m', 'marketlab_historical_data', 'verify',
         '--manifest', (Join-Path $dataRoot 'marketlab-qualification\qualification-manifest.json'),
@@ -335,7 +357,7 @@ try {
         Write-Host "qualification driver: the record could not be written (exit 2)"
         exit 2
     }
-    if ($helperExit -ne 0 -and $helperExit -ne 3 -and $verifyExit -eq 0) {
+    if ($helperExit -ne 0 -and $helperExit -ne 1 -and $helperExit -ne 3) {
         Write-ErrorMessage "the LEAN helper exited ${helperExit}: the replay run was not clean; the record is not accepted"
         exit 3
     }

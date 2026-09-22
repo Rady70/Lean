@@ -157,51 +157,105 @@ def _register_record_invalidation(data_folder: Path, transaction: OutputTransact
         transaction.register_removal(record)
 
 
-def _classify_native_partitions(
-    data_folder: Path, native_layout: NativeLeanTickLayout
-) -> tuple[set[Path], list[Path]]:
-    """Splits existing native partitions into MarketLab-owned and foreign files.
+def _previous_recorded_hashes(data_folder: Path) -> dict[str, str] | None:
+    """Recorded partition hashes of a usable previous MarketLab manifest, or None."""
+    manifest_file = manifest_path(data_folder)
+    try:
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(manifest, dict) or manifest.get("contract") != CONTRACT:
+        return None
+    native = manifest.get("native")
+    if not isinstance(native, dict):
+        return None
+    partitions = native.get("partitions")
+    if not isinstance(partitions, list):
+        return None
+    recorded: dict[str, str] = {}
+    for artifact in partitions:
+        if not isinstance(artifact, dict):
+            return None
+        relative = artifact.get("zip_relative_path")
+        digest = artifact.get("zip_sha256")
+        if not isinstance(relative, str) or not isinstance(digest, str) or len(digest) != 64:
+            return None
+        recorded[relative.replace("\\", "/")] = digest
+    return recorded
 
-    A partition is owned only when the current manifest lists it and its
-    recorded SHA-256 matches. Without a usable MarketLab manifest every
-    existing partition is foreign, so ``--force`` can never delete or replace
-    native history this tool did not create.
+
+def _snapshot_native_partitions(
+    data_folder: Path, native_layout: NativeLeanTickLayout
+) -> tuple[dict[Path, str], list[Path]]:
+    """Splits existing native partitions into owned (path -> hash) and foreign files.
+
+    Ownership requires the current manifest to list the partition with a
+    matching SHA-256. Without a usable MarketLab manifest every existing
+    partition is foreign, so ``--force`` can never delete or replace native
+    history this tool did not create. Unreadable files are treated as foreign
+    (fail closed) instead of escaping the controlled contract.
     """
     tick_directory = data_folder / native_layout.relative_directory
     if not tick_directory.is_dir():
-        return set(), []
+        return {}, []
     existing = [
         candidate
         for candidate in sorted(tick_directory.glob("*_quote.zip"))
         if len(candidate.name) >= 8 and candidate.name[:8].isdigit()
     ]
     if not existing:
-        return set(), []
-    recorded: dict[str, str] = {}
-    manifest_file = manifest_path(data_folder)
-    try:
-        manifest = json.loads(manifest_file.read_text(encoding="utf-8-sig"))
-        if isinstance(manifest, dict) and manifest.get("contract") == CONTRACT:
-            partitions = manifest.get("native", {}).get("partitions", [])
-            if isinstance(partitions, list):
-                for artifact in partitions:
-                    if not isinstance(artifact, dict):
-                        continue
-                    relative = artifact.get("zip_relative_path")
-                    recorded_sha = artifact.get("zip_sha256")
-                    if isinstance(relative, str) and isinstance(recorded_sha, str):
-                        recorded[relative.replace("\\", "/")] = recorded_sha
-    except (OSError, json.JSONDecodeError):
-        recorded = {}
-    owned: set[Path] = set()
+        return {}, []
+    recorded = _previous_recorded_hashes(data_folder) or {}
+    owned: dict[Path, str] = {}
     foreign: list[Path] = []
     for candidate in existing:
         expected = recorded.get(f"{native_layout.relative_directory}/{candidate.name}")
-        if expected is None or sha256_file(candidate) != expected:
+        if expected is None:
+            foreign.append(candidate)
+            continue
+        try:
+            actual = sha256_file(candidate)
+        except OSError:
+            foreign.append(candidate)
+            continue
+        if actual != expected:
             foreign.append(candidate)
         else:
-            owned.add(candidate)
+            owned[candidate] = actual
     return owned, foreign
+
+
+class NativePartitionSetChanged(Exception):
+    """A native partition changed between the ownership check and publication."""
+
+
+def _revalidate_native_partitions(
+    owned: dict[Path, str], new_partition_paths: list[Path]
+) -> None:
+    """Rechecks every path a destructive commit will touch, immediately before it.
+
+    New-generation paths that already exist must be owned with an unchanged
+    hash; owned paths being removed must still exist with an unchanged hash. A
+    file that appeared or changed since the ownership snapshot fails closed.
+    """
+    destructive = [path for path in new_partition_paths if path.exists()]
+    destructive.extend(path for path in owned if path not in set(new_partition_paths))
+    for path in destructive:
+        expected = owned.get(path)
+        if expected is None:
+            raise NativePartitionSetChanged(
+                f"a foreign native partition appeared before publication: {path}"
+            )
+        try:
+            actual = sha256_file(path)
+        except OSError as error:
+            raise NativePartitionSetChanged(
+                f"a native partition became unreadable before publication: {path}: {error}"
+            ) from error
+        if actual != expected:
+            raise NativePartitionSetChanged(
+                f"a native partition changed before publication: {path}"
+            )
 
 
 def converter_source_identity(start_path: Path) -> dict:
@@ -321,7 +375,10 @@ def run_qualification(
         return QualificationOutcome(2, [f"SourceLayoutUnusable: {error}"], None, None)
 
     identity = repository_identity(Path(__file__))
-    identity["converter_source"] = converter_source_identity(Path(__file__))
+    try:
+        identity["converter_source"] = converter_source_identity(Path(__file__))
+    except OSError as error:
+        return QualificationOutcome(2, [f"ConverterSourceUnreadable: {error}"], None, None)
     native_layout = NativeLeanTickLayout(symbol=symbol, market=market, security_type=security_type)
 
     if not force:
@@ -338,9 +395,9 @@ def run_qualification(
                 None,
             )
 
-    owned_partitions: set[Path] = set()
+    owned_partitions: dict[Path, str] = {}
     if force:
-        owned_partitions, foreign_partitions = _classify_native_partitions(
+        owned_partitions, foreign_partitions = _snapshot_native_partitions(
             data_folder, native_layout
         )
         if foreign_partitions:
@@ -370,7 +427,16 @@ def run_qualification(
             None,
         )
 
-    if sha256_file(source_path) != source_sha256:
+    try:
+        source_sha_after = sha256_file(source_path)
+    except OSError as error:
+        return QualificationOutcome(
+            2,
+            [f"SourceUnreadable: the source could not be re-read after qualification: {error}"],
+            None,
+            None,
+        )
+    if source_sha_after != source_sha256:
         return QualificationOutcome(
             2,
             [
@@ -414,7 +480,7 @@ def run_qualification(
                     )
                 if force:
                     _register_stale_partition_removals(
-                        partitions, transaction, owned_partitions
+                        partitions, transaction, set(owned_partitions)
                     )
                     _register_record_invalidation(data_folder, transaction)
                 manifest = _build_manifest(
@@ -437,6 +503,11 @@ def run_qualification(
                 expectation = build_expectation(manifest)
                 transaction.stage_text(manifest_path(data_folder), dump_json(manifest))
                 transaction.stage_text(expectation_path(data_folder), dump_json(expectation))
+                if force:
+                    _revalidate_native_partitions(
+                        owned_partitions,
+                        [native_layout.zip_path(data_folder, artifact.partition) for artifact in partitions],
+                    )
                 transaction.commit()
                 published = True
         except SourceIdentityChanged as error:
@@ -446,6 +517,8 @@ def run_qualification(
                 None,
                 None,
             )
+        except NativePartitionSetChanged as error:
+            return QualificationOutcome(2, [f"NativePartitionSetChanged: {error}"], None, None)
         except (
             QualificationFailure,
             NativeConversionError,
@@ -479,8 +552,13 @@ def run_qualification(
             with OutputTransaction(allow_overwrite=force) as transaction:
                 transaction.stage_text(manifest_path(data_folder), dump_json(manifest))
                 if force:
-                    _register_generation_cleanup(data_folder, transaction, owned_partitions)
+                    _register_generation_cleanup(
+                        data_folder, transaction, set(owned_partitions)
+                    )
+                    _revalidate_native_partitions(owned_partitions, [])
                 transaction.commit()
+        except NativePartitionSetChanged as error:
+            return QualificationOutcome(2, [f"NativePartitionSetChanged: {error}"], None, None)
         except OutputTransactionError as error:
             return QualificationOutcome(2, [f"ManifestNotWritten: {error}"], None, None)
 

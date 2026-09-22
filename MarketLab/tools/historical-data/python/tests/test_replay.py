@@ -22,11 +22,20 @@ from marketlab_historical_data.replay import (  # noqa: E402
 
 DIGEST = "sha256:" + "a" * 64
 MARKET_HOURS_SHA = "b" * 64
+RUNTIME_FILES = {
+    "MarketLab.HistoricalDataProbe.dll": "1" * 64,
+    "QuantConnect.Lean.Launcher.dll": "2" * 64,
+    "QuantConnect.Lean.Engine.dll": "3" * 64,
+    "QuantConnect.AlgorithmFactory.dll": "4" * 64,
+    "QuantConnect.Algorithm.dll": "5" * 64,
+    "QuantConnect.Common.dll": "6" * 64,
+}
 
 
 def base_manifest(zip_sha256, digest=DIGEST, counts=(4, 4), days=("2014-05-05",)):
     accepted, converted = counts
     partition_days = list(days)
+    rows_per_day = accepted // len(partition_days)
     return {
         "contract": "marketlab-historical-data-qualification-v1",
         "source": {"path": "source.csv", "sha256": "b" * 64, "size_bytes": 100},
@@ -56,22 +65,28 @@ def base_manifest(zip_sha256, digest=DIGEST, counts=(4, 4), days=("2014-05-05",)
             "first_canonical_utc": "2014-05-05T08:00:00.000Z",
             "last_canonical_utc": "2014-05-05T08:00:00.250Z",
         },
-        "per_day": {"accepted": {day: 4 for day in partition_days}, "converted": {}},
+        "per_day": {
+            "accepted": {day: rows_per_day for day in partition_days},
+            "converted": {day: rows_per_day for day in partition_days}
+            if converted == accepted
+            else {},
+        },
         "semantic": {
             "ordered_source_semantic_digest": digest,
             "per_partition": {
-                day: {"accepted_row_count": 4, "semantic_digest": digest}
+                day: {"accepted_row_count": rows_per_day, "semantic_digest": digest}
                 for day in partition_days
             },
         },
         "native": {
             "layout": {"zip_directory": "cfd/oanda/tick/xauusd"},
+            "converted_row_count": converted,
             "partitions": [
                 {
                     "partition": day,
                     "zip_relative_path": f"cfd/oanda/tick/xauusd/{day.replace('-', '')}_quote.zip",
                     "zip_sha256": zip_sha256,
-                    "row_count": 4,
+                    "row_count": rows_per_day if converted == accepted else 0,
                 }
                 for day in partition_days
             ],
@@ -116,12 +131,19 @@ def base_probe(digest=DIGEST, count=4):
         "comparison": {
             "session_delivery_difference": 0,
             "engine_quotes_match_delivered": True,
+            "count_matches": True,
+            "digest_matches": True,
+            "first_matches": True,
+            "last_matches": True,
+            "per_partition_counts_match": True,
+            "per_partition_digests_match": True,
         },
         "runtime": {
             "engine_quotes_processed": count,
             "data_time_zone": "UTC",
             "exchange_time_zone": "America/New_York",
             "market_hours_database_sha256": MARKET_HOURS_SHA,
+            "assemblies": dict(RUNTIME_FILES),
         },
     }
 
@@ -168,10 +190,13 @@ class EvidenceValidatorTests(unittest.TestCase):
                     require_probe_structure(broken)
 
     def test_runtime_binaries_validation(self):
-        require_runtime_binaries_structure({"files": {"a.dll": "a" * 64}})
+        require_runtime_binaries_structure({"files": dict(RUNTIME_FILES)})
+        incomplete = dict(RUNTIME_FILES)
+        del incomplete["QuantConnect.Lean.Engine.dll"]
         for payload in (
             {"files": {"a.dll": "short"}},
             {"files": {}},
+            {"files": incomplete},
             [],
         ):
             with self.subTest(payload=payload):
@@ -221,7 +246,9 @@ class RecordTests(unittest.TestCase):
     def tearDown(self):
         self._directory.cleanup()
 
-    def build(self, probe, failed_requests=(), runtime_binaries=None):
+    def build(self, probe, failed_requests=(), runtime_binaries="default"):
+        if runtime_binaries == "default":
+            runtime_binaries = {"files": dict(RUNTIME_FILES)}
         return build_record(
             manifest=self.manifest,
             manifest_path=self.manifest_path,
@@ -244,12 +271,61 @@ class RecordTests(unittest.TestCase):
         )
 
     def test_runtime_binaries_are_embedded_in_the_record(self):
-        payload = {
-            "source": "MarketLab driver hashes taken before the run",
-            "files": {"MarketLab.HistoricalDataProbe.dll": "a" * 64},
-        }
+        payload = {"source": "driver", "files": dict(RUNTIME_FILES)}
         record = self.build(base_probe(), runtime_binaries=payload)
         self.assertEqual(record["runtime_binaries"], payload)
+
+    def test_missing_runtime_binaries_fails(self):
+        record = self.build(base_probe(), runtime_binaries=None)
+        self.assertEqual(record["overall_qualification"], "FAIL")
+        self.assertIn("RuntimeBinariesMissing", record["failure_reasons"])
+
+    def test_runtime_binaries_that_contradict_the_probe_fail(self):
+        payload = {"files": dict(RUNTIME_FILES)}
+        payload["files"]["QuantConnect.Common.dll"] = "9" * 64
+        record = self.build(base_probe(), runtime_binaries=payload)
+        self.assertIn("RuntimeBinariesMismatchWithProbe", record["failure_reasons"])
+
+    def test_accepted_converted_count_mismatch_fails(self):
+        self.manifest["counts"]["converted_row_count"] = 3
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        record = self.build(base_probe())
+        self.assertEqual(record["overall_qualification"], "FAIL")
+        self.assertIn("AcceptedConvertedCountMismatch", record["failure_reasons"])
+        self.assertIn("ConvertedRowCountMismatch", record["failure_reasons"])
+        self.assertIn("NativePartitionCountMismatch", record["failure_reasons"])
+
+    def test_partition_row_sum_mismatch_fails(self):
+        self.manifest["native"]["partitions"][0]["row_count"] = 3
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        record = self.build(base_probe())
+        self.assertIn("NativePartitionCountMismatch", record["failure_reasons"])
+
+    def test_probe_self_inconsistency_fails(self):
+        probe = base_probe()
+        probe["comparison"]["count_matches"] = False
+        record = self.build(probe)
+        self.assertIn("ProbeSelfInconsistent", record["failure_reasons"])
+
+    def test_probe_pass_with_failure_reasons_fails(self):
+        probe = base_probe()
+        probe["failure_reasons"] = ["something"]
+        record = self.build(probe)
+        self.assertIn("ProbeSelfInconsistent", record["failure_reasons"])
+
+    def test_delivered_first_quote_is_verified_against_the_manifest(self):
+        probe = base_probe()
+        probe["delivered"]["first_canonical_utc"] = "2014-05-05T08:00:00.001Z"
+        probe["comparison"]["first_matches"] = False
+        record = self.build(probe)
+        self.assertIn("FirstDeliveredQuoteMismatches", record["failure_reasons"])
+
+    def test_delivered_partition_digest_is_verified_against_the_manifest(self):
+        probe = base_probe()
+        probe["delivered"]["per_partition"]["2014-05-05"]["semantic_digest"] = "sha256:" + "f" * 64
+        probe["comparison"]["per_partition_digests_match"] = False
+        record = self.build(probe)
+        self.assertIn("PerPartitionDigestsDiffer", record["failure_reasons"])
 
     def test_delivery_count_difference_fails(self):
         record = self.build(base_probe(count=3))

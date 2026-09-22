@@ -60,10 +60,15 @@ function Read-Json([string]$Path) {
 }
 
 function Invoke-Driver([string]$Driver, [hashtable]$Parameters) {
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Driver)
+    foreach ($key in $Parameters.Keys) {
+        $arguments += "-$key"
+        $arguments += [string]$Parameters[$key]
+    }
     $previousErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $output = (& $Driver @Parameters 2>&1 | Out-String)
+        $output = (& powershell.exe @arguments 2>&1 | Out-String)
     }
     finally {
         $ErrorActionPreference = $previousErrorAction
@@ -212,6 +217,25 @@ try {
     Assert-True ($manifestCrossed.counts.rejected_row_reasons.ask_less_than_bid -eq 1) 'rejection reason is ask_less_than_bid'
     Assert-True ($manifestCrossed.counts.converted_row_count -eq 0) 'nothing was converted'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $dataCrossed 'cfd\oanda\tick\xauusd')) -or @(Get-ChildItem -LiteralPath (Join-Path $dataCrossed 'cfd\oanda\tick\xauusd') -Filter '*_quote.zip' -ErrorAction SilentlyContinue).Count -eq 0) 'no native partition was written'
+
+    Write-Host 'case 5: data folder inside the LEAN worktree (expected exit 2 before any junction)'
+    $worktreeFolder = Join-Path $LeanRoot 'MarketLab'
+    $worktreeLog = Invoke-Driver $driver @{
+        SourceCsv = Join-Path $fixtures 'replay-pass.csv'
+        DataFolder = $worktreeFolder
+        TimestampColumn = 'timestamp'
+        BidColumn = 'bid'
+        AskColumn = 'ask'
+        SourceTimezone = 'UTC'
+        LeanRoot = $LeanRoot
+        PythonExe = $PythonExe
+        OutputRoot = Join-Path $scratch 'output'
+    }
+    Set-Content -LiteralPath (Join-Path $scratch 'case-worktree.log') -Value $worktreeLog -Encoding UTF8
+    $exitWorktree = $script:driverExit
+    Assert-True ($exitWorktree -eq 2) "driver exit code is 2 for an in-worktree data folder (was $exitWorktree)"
+    Assert-True ($worktreeLog -match 'inside a LEAN worktree') 'driver names the worktree refusal'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $worktreeFolder 'market-hours'))) 'no auxiliary junction was created inside the worktree'
 }
 finally {
     if ($KeepScratch) {

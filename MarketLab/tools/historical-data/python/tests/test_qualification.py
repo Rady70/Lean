@@ -197,6 +197,52 @@ class PassingQualificationTests(QualificationCase):
         self.assertTrue(outcome.failures[0].startswith("ForeignNativePartitions"))
         self.assertEqual(foreign.read_bytes(), b"unrelated history")
 
+    def test_malformed_previous_manifest_fails_closed_as_foreign(self):
+        new_root = self.root / "malformed-manifest"
+        shutil.copytree(self.data, new_root)
+        artifacts = new_root / "marketlab-qualification"
+        artifacts.mkdir()
+        (artifacts / "qualification-manifest.json").write_text(
+            json.dumps(
+                {
+                    "contract": "marketlab-historical-data-qualification-v1",
+                    "native": "corrupt",
+                }
+            ),
+            encoding="utf-8",
+        )
+        foreign = new_root / "cfd" / "oanda" / "tick" / "xauusd" / "20140101_quote.zip"
+        foreign.parent.mkdir(parents=True)
+        foreign.write_bytes(b"unrelated history")
+        outcome = run_qualification(
+            source_path=self.write_source(PASS_CSV, "malformed-manifest.csv"),
+            data_folder=new_root,
+            config=CsvSourceConfig(source_timezone="UTC"),
+            force=True,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("ForeignNativePartitions"))
+        self.assertEqual(foreign.read_bytes(), b"unrelated history")
+
+    def test_partition_change_before_publication_is_refused(self):
+        from marketlab_historical_data.canonical import sha256_file
+        from marketlab_historical_data.qualification import (
+            NativePartitionSetChanged,
+            _revalidate_native_partitions,
+        )
+
+        owned_path = self.root / "owned.zip"
+        owned_path.write_bytes(b"original")
+        owned = {owned_path: sha256_file(owned_path)}
+        _revalidate_native_partitions(owned, [owned_path])
+        owned_path.write_bytes(b"changed")
+        with self.assertRaises(NativePartitionSetChanged):
+            _revalidate_native_partitions(owned, [owned_path])
+        appeared = self.root / "appeared.zip"
+        appeared.write_bytes(b"foreign")
+        with self.assertRaises(NativePartitionSetChanged):
+            _revalidate_native_partitions(owned, [appeared])
+
     def test_converter_source_identity_is_recorded(self):
         outcome = self.qualify(PASS_CSV)
         converter_source = outcome.manifest["lean"]["converter_source"]

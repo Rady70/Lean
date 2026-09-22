@@ -33,6 +33,25 @@ REPLAY_PROBE_CONTRACT = "marketlab-single-anchor-replay-probe-v1"
 MANIFEST_CONTRACT = "marketlab-historical-data-qualification-v1"
 RECORD_CONTRACT = "marketlab-historical-data-qualification-record-v1"
 
+REQUIRED_RUNTIME_BINARIES = (
+    "MarketLab.HistoricalDataProbe.dll",
+    "QuantConnect.Lean.Launcher.dll",
+    "QuantConnect.Lean.Engine.dll",
+    "QuantConnect.AlgorithmFactory.dll",
+    "QuantConnect.Algorithm.dll",
+    "QuantConnect.Common.dll",
+)
+
+_COMPARISON_FLAGS = (
+    "count_matches",
+    "digest_matches",
+    "first_matches",
+    "last_matches",
+    "per_partition_counts_match",
+    "per_partition_digests_match",
+    "engine_quotes_match_delivered",
+)
+
 _DIGEST_LINE_FORMAT = "{ordinal}|{yyyy-MM-ddTHH:mm:ss.fffZ}|{canonical bid}|{canonical ask}\\n"
 
 _MANIFEST_REQUIRED = {
@@ -125,7 +144,9 @@ def require_manifest_structure(manifest) -> None:
     if digest is not None and not isinstance(digest, str):
         raise ValueError("manifest semantic.ordered_source_semantic_digest is not a string")
     native = manifest["native"]
-    _require_object(native.get("layout"), "manifest native.layout")
+    layout = _require_object(native.get("layout"), "manifest native.layout")
+    _require_string(layout.get("zip_directory"), "manifest native.layout.zip_directory")
+    _require_int(native.get("converted_row_count"), "manifest native.converted_row_count")
     partitions = native.get("partitions")
     if not isinstance(partitions, list):
         raise ValueError("manifest native.partitions is missing or not an array")
@@ -137,6 +158,23 @@ def require_manifest_structure(manifest) -> None:
         )
         _require_string(artifact.get("zip_sha256"), f"manifest native.partitions[{index}].zip_sha256")
         _require_int(artifact.get("row_count"), f"manifest native.partitions[{index}].row_count")
+    _require_int(
+        manifest["qualification"].get("converted_row_count"),
+        "manifest qualification.converted_row_count",
+    )
+    per_partition = _require_object(
+        semantic.get("per_partition"), "manifest semantic.per_partition"
+    )
+    for day, entry in per_partition.items():
+        if not isinstance(day, str):
+            raise ValueError("manifest semantic.per_partition keys must be strings")
+        entry = _require_object(entry, f"manifest semantic.per_partition[{day}]")
+        _require_int(
+            entry.get("accepted_row_count"), f"manifest semantic.per_partition[{day}].accepted_row_count"
+        )
+        _require_string(
+            entry.get("semantic_digest"), f"manifest semantic.per_partition[{day}].semantic_digest"
+        )
 
 
 def require_probe_structure(probe, label: str = "probe result") -> None:
@@ -178,7 +216,7 @@ def require_probe_structure(probe, label: str = "probe result") -> None:
 
 
 def require_runtime_binaries_structure(payload, label: str = "runtime binaries") -> None:
-    """Raises ``ValueError`` when orchestration binary evidence is malformed."""
+    """Raises ``ValueError`` when orchestration binary evidence is malformed or incomplete."""
     if not isinstance(payload, dict):
         raise ValueError(f"{label} is not a JSON object")
     files = payload.get("files")
@@ -187,6 +225,9 @@ def require_runtime_binaries_structure(payload, label: str = "runtime binaries")
     for name, digest in files.items():
         if not isinstance(name, str) or not isinstance(digest, str) or len(digest) != 64:
             raise ValueError(f"{label} has a malformed entry for {name!r}")
+    missing = [name for name in REQUIRED_RUNTIME_BINARIES if name not in files]
+    if missing:
+        raise ValueError(f"{label} is missing required binaries: {', '.join(missing)}")
 
 
 def semantic_digest_line_format() -> str:
@@ -334,6 +375,44 @@ def build_record(
     if hash_mismatches:
         failures.append("NativePartitionHashMismatch")
 
+    counts = manifest["counts"]
+    accepted_count = counts["accepted_row_count"]
+    converted_count = counts["converted_row_count"]
+    conversion_passed = qualification.get("native_conversion") == "PASS"
+    native = manifest["native"]
+    semantic = manifest["semantic"]
+    if conversion_passed:
+        if accepted_count != converted_count:
+            failures.append("AcceptedConvertedCountMismatch")
+        if (
+            qualification.get("converted_row_count") != converted_count
+            or native.get("converted_row_count") != converted_count
+        ):
+            failures.append("ConvertedRowCountMismatch")
+        partition_rows = sum(artifact.get("row_count", 0) for artifact in native["partitions"])
+        per_day_converted = sum((manifest["per_day"].get("converted") or {}).values())
+        if partition_rows != converted_count or per_day_converted != converted_count:
+            failures.append("NativePartitionCountMismatch")
+        per_day_accepted = sum((manifest["per_day"].get("accepted") or {}).values())
+        if per_day_accepted != accepted_count:
+            failures.append("PerDayAcceptedCountMismatch")
+        per_partition = semantic.get("per_partition") or {}
+        per_partition_accepted = sum(
+            entry.get("accepted_row_count", 0) for entry in per_partition.values()
+        )
+        if per_partition_accepted != accepted_count:
+            failures.append("PerPartitionAcceptedCountMismatch")
+
+    if runtime_binaries is None:
+        failures.append("RuntimeBinariesMissing")
+    else:
+        probe_assemblies = ((probe_result or {}).get("runtime") or {}).get("assemblies") or {}
+        for name, digest in (runtime_binaries.get("files") or {}).items():
+            observed = probe_assemblies.get(name)
+            if observed is not None and observed != digest:
+                failures.append("RuntimeBinariesMismatchWithProbe")
+                break
+
     probe_present = probe_result is not None
     probe_completed = bool(probe_result and probe_result.get("completed") is True)
     delivered = probe_result.get("delivered", {}) if probe_present else {}
@@ -348,7 +427,12 @@ def build_record(
         if probe_result.get("qualification") != "PASS":
             for reason in probe_result.get("failure_reasons") or ["NativeReplayProbeFailed"]:
                 failures.append(reason)
-        accepted_count = manifest["counts"]["accepted_row_count"]
+        elif (
+            not probe_completed
+            or probe_result.get("failure_reasons")
+            or any(comparison.get(flag) is not True for flag in _COMPARISON_FLAGS)
+        ):
+            failures.append("ProbeSelfInconsistent")
         if delivered.get("quote_count") != accepted_count:
             failures.append("LeanDeliveredCountDiffersFromAcceptedCount")
         delivered_digest = delivered.get("semantic_digest")
@@ -357,6 +441,23 @@ def build_record(
             or delivered_digest != manifest["semantic"]["ordered_source_semantic_digest"]
         ):
             failures.append("DeliveredSemanticDigestDiffers")
+        if delivered.get("first_canonical_utc") != counts.get("first_canonical_utc"):
+            failures.append("FirstDeliveredQuoteMismatches")
+        if delivered.get("last_canonical_utc") != counts.get("last_canonical_utc"):
+            failures.append("LastDeliveredQuoteMismatches")
+        manifest_per_partition = manifest["semantic"].get("per_partition") or {}
+        delivered_per_partition = delivered.get("per_partition") or {}
+        if set(manifest_per_partition) != set(delivered_per_partition):
+            failures.append("PerPartitionCountsDiffer")
+        else:
+            for day, entry in manifest_per_partition.items():
+                actual = delivered_per_partition.get(day) or {}
+                if actual.get("quote_count") != entry.get("accepted_row_count"):
+                    failures.append("PerPartitionCountsDiffer")
+                    break
+                if actual.get("semantic_digest") != entry.get("semantic_digest"):
+                    failures.append("PerPartitionDigestsDiffer")
+                    break
         if runtime.get("data_time_zone") != manifest["lean"].get("data_time_zone"):
             failures.append("ReplayRuntimeDataTimeZoneMismatch")
         if runtime.get("exchange_time_zone") != manifest["lean"].get("exchange_time_zone"):

@@ -31,14 +31,24 @@ def usable_manifest():
             "data_folder": ".",
         },
         "counts": {"accepted_row_count": 1, "converted_row_count": 1},
-        "per_day": {"accepted": {"2014-05-05": 1}},
-        "semantic": {"ordered_source_semantic_digest": "sha256:" + "c" * 64},
-        "native": {"layout": {"zip_directory": "cfd/oanda/tick/xauusd"}, "partitions": []},
+        "per_day": {"accepted": {"2014-05-05": 1}, "converted": {"2014-05-05": 1}},
+        "semantic": {
+            "ordered_source_semantic_digest": "sha256:" + "c" * 64,
+            "per_partition": {
+                "2014-05-05": {"accepted_row_count": 1, "semantic_digest": "sha256:" + "c" * 64}
+            },
+        },
+        "native": {
+            "layout": {"zip_directory": "cfd/oanda/tick/xauusd"},
+            "converted_row_count": 1,
+            "partitions": [],
+        },
         "qualification": {
             "source_qualification": "PASS",
             "native_lean_timestamp_parity": "PASS",
             "native_price_decimal_parity": "PASS",
             "native_conversion": "PASS",
+            "converted_row_count": 1,
         },
     }
 
