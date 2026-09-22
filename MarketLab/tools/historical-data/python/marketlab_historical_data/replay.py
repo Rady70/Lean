@@ -292,6 +292,19 @@ def _file_sha256(path: Path) -> str | None:
         return None
 
 
+def _probe_deliberate_failure(probe_result: dict | None) -> bool:
+    """True when the probe ran to completion and deliberately reported a replay mismatch.
+
+    That is the only nonzero-helper-exit condition that may still produce a
+    qualification verdict (a FAIL); engine faults and crashes set completed=false.
+    """
+    return bool(
+        probe_result
+        and probe_result.get("completed") is True
+        and probe_result.get("qualification") == "FAIL"
+    )
+
+
 def build_record(
     manifest: dict,
     manifest_path: Path,
@@ -300,6 +313,7 @@ def build_record(
     failed_request_paths,
     data_folder: Path | None,
     runtime_binaries: dict | None = None,
+    helper_exit_code: int | None = None,
 ) -> dict:
     """Builds the final qualification record; overall PASS only when every check passes."""
     failures: list[str] = []
@@ -413,6 +427,11 @@ def build_record(
                 failures.append("RuntimeBinariesMismatchWithProbe")
                 break
 
+    if helper_exit_code is None:
+        failures.append("HelperExitCodeMissing")
+    elif helper_exit_code != 0 and not _probe_deliberate_failure(probe_result):
+        failures.append("HelperExitNotClean")
+
     probe_present = probe_result is not None
     probe_completed = bool(probe_result and probe_result.get("completed") is True)
     delivered = probe_result.get("delivered", {}) if probe_present else {}
@@ -498,6 +517,7 @@ def build_record(
         "manifest_sha256": _file_sha256(manifest_path),
         "manifest": manifest,
         "runtime_binaries": runtime_binaries,
+        "helper_exit_code": helper_exit_code,
         "probe": {
             "path": str(probe_path) if probe_path is not None else None,
             "sha256": _file_sha256(probe_path) if probe_path is not None else None,

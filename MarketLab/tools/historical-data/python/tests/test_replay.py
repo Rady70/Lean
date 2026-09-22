@@ -246,7 +246,7 @@ class RecordTests(unittest.TestCase):
     def tearDown(self):
         self._directory.cleanup()
 
-    def build(self, probe, failed_requests=(), runtime_binaries="default"):
+    def build(self, probe, failed_requests=(), runtime_binaries="default", helper_exit_code=0):
         if runtime_binaries == "default":
             runtime_binaries = {"files": dict(RUNTIME_FILES)}
         return build_record(
@@ -257,6 +257,7 @@ class RecordTests(unittest.TestCase):
             failed_request_paths=list(failed_requests),
             data_folder=self.data,
             runtime_binaries=runtime_binaries,
+            helper_exit_code=helper_exit_code,
         )
 
     def test_exact_delivery_passes(self):
@@ -279,6 +280,35 @@ class RecordTests(unittest.TestCase):
         record = self.build(base_probe(), runtime_binaries=None)
         self.assertEqual(record["overall_qualification"], "FAIL")
         self.assertIn("RuntimeBinariesMissing", record["failure_reasons"])
+
+    def test_missing_helper_exit_code_fails(self):
+        record = self.build(base_probe(), helper_exit_code=None)
+        self.assertEqual(record["overall_qualification"], "FAIL")
+        self.assertIn("HelperExitCodeMissing", record["failure_reasons"])
+        self.assertIsNone(record["helper_exit_code"])
+
+    def test_nonzero_helper_exit_with_a_pass_probe_fails(self):
+        record = self.build(base_probe(), helper_exit_code=1)
+        self.assertEqual(record["overall_qualification"], "FAIL")
+        self.assertIn("HelperExitNotClean", record["failure_reasons"])
+
+    def test_nonzero_helper_exit_with_a_deliberate_probe_failure_is_a_verdict(self):
+        probe = base_probe()
+        probe["qualification"] = "FAIL"
+        probe["failure_reasons"] = ["DeliveredSemanticDigestMismatches"]
+        record = self.build(probe, helper_exit_code=1)
+        self.assertEqual(record["helper_exit_code"], 1)
+        self.assertNotIn("HelperExitNotClean", record["failure_reasons"])
+        self.assertIn("DeliveredSemanticDigestMismatches", record["failure_reasons"])
+        self.assertEqual(record["overall_qualification"], "FAIL")
+
+    def test_engine_fault_helper_exit_is_not_a_deliberate_failure(self):
+        probe = base_probe()
+        probe["completed"] = False
+        probe["qualification"] = "FAIL"
+        probe["failure_reasons"] = ["EngineFaulted"]
+        record = self.build(probe, helper_exit_code=1)
+        self.assertIn("HelperExitNotClean", record["failure_reasons"])
 
     def test_runtime_binaries_that_contradict_the_probe_fail(self):
         payload = {"files": dict(RUNTIME_FILES)}

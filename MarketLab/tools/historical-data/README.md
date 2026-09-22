@@ -149,7 +149,8 @@ python -m marketlab_historical_data verify `
     --data-folder E:\research-data\lean `
     --probe-result <run dir>\storage\single-anchor-replay-probe\replay-result.json `
     --failed-data-requests <run dir>\failed-data-requests-*.txt `
-    --runtime-binaries <run dir>\runtime-binaries.json
+    --runtime-binaries <run dir>\runtime-binaries.json `
+    --helper-exit-code 0
 ```
 
 `-AllowMissingData` is required for step 2 because LEAN probes the trading days
@@ -160,13 +161,15 @@ still fails the record. In step 3, an explicitly supplied `--probe-result` or
 error (exit 2); omit the option to record missing evidence as a qualification
 failure instead.
 
-**An authoritative PASS requires the runtime-binary evidence**, i.e. the
-`runtime-binaries.json` the driver writes into the run directory. That file
-contains SHA-256 for the probe, Launcher, Engine, AlgorithmFactory, Algorithm
-and Common assemblies (plus Configuration and Logging when present). The
-converter state hash is not part of it. A manual `verify` without
-`--runtime-binaries` still produces a record, but with `RuntimeBinariesMissing`
-and therefore `overall_qualification: FAIL`; use
+**An authoritative PASS requires the helper exit code and the runtime-binary
+evidence.** `--helper-exit-code 0` states that the LEAN helper completed
+cleanly; a nonzero value is accepted only when the probe deliberately reported
+a replay mismatch (the record is then a FAIL). Omitting the option yields
+`HelperExitCodeMissing` and therefore `overall_qualification: FAIL`. The
+`runtime-binaries.json` written by the driver contains SHA-256 for the probe,
+Launcher, Engine, AlgorithmFactory, Algorithm and Common assemblies (plus
+Configuration and Logging when present); a manual `verify` without
+`--runtime-binaries` fails with `RuntimeBinariesMissing`. Use
 `Invoke-ReplayQualification.ps1` as the authoritative route.
 
 ## 4. What the converter writes, and where
@@ -178,7 +181,7 @@ All generated research data stays **outside Git**.
 | `<data folder>\cfd\oanda\tick\xauusd\YYYYMMDD_quote.zip` | native LEAN quote-tick partition; one entry `YYYYMMDD_xauusd_tick_quote.csv`, lines `time,bid,ask` |
 | `<data folder>\marketlab-qualification\qualification-manifest.json` | machine-readable source/conversion/provenance record |
 | `<data folder>\marketlab-qualification\replay-expectation.json` | what the probe must observe (counts, digests, window, partitions) |
-| `<data folder>\marketlab-qualification\qualification-record.json` | final record: manifest + probe result + runtime-binary hashes + every comparison + explicit overall PASS/FAIL (written by `verify`) |
+| `<data folder>\marketlab-qualification\qualification-record.json` | final record: manifest + probe result + runtime-binary hashes + helper exit code + every comparison + explicit overall PASS/FAIL (written by `verify`) |
 | `<run dir>\storage\single-anchor-replay-probe\replay-result.json` | the probe's delivered stream summary and comparison |
 
 ### Native file semantics (derived from the current LEAN implementation)
@@ -216,6 +219,8 @@ All generated research data stays **outside Git**.
 
 ```text
 accepted source rows == converted native rows == LEAN-delivered rows
+the LEAN helper completed cleanly (exit code 0 for a PASS; a nonzero code is only
+  accepted for a deliberate probe-reported replay mismatch, which can only be a FAIL)
 the manifest is internally coherent (counts, per-day, per-partition and native totals agree)
 the source SHA-256 is verified unchanged across qualification and conversion
 the probe's engine processed every delivered quote (QuoteTickFeed invariant)
@@ -256,6 +261,8 @@ Any failure produces `overall_qualification: FAIL` and a machine-readable
 | `ProbeSelfInconsistent` | a probe claiming PASS with failure reasons or false comparison flags |
 | `ProbeExpectationDoesNotMatchManifest` | the probe compared against an expectation that is not this manifest's |
 | `RuntimeBinariesMissing` / `RuntimeBinariesMismatchWithProbe` | the runtime binary evidence is absent, or contradicts the probe's observed assemblies |
+| `HelperExitCodeMissing` | the LEAN helper exit code was not supplied (a PASS record requires 0) |
+| `HelperExitNotClean` | the helper exited nonzero and the probe did not deliberately report a replay mismatch |
 | `ExpectedAndDeliveredCountsDiffer` | LEAN delivered fewer/more quotes than accepted (for example market-hours/session filtering) |
 | `DeliveredSemanticDigestMismatches` | price/order/timestamp content differs after canonical UTC normalization |
 | `ReplayRuntimeDataTimeZoneMismatch` / `ReplayRuntimeExchangeTimeZoneMismatch` | the probe's runtime timezones differ from the manifest's resolved values |
@@ -322,7 +329,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (160 tests)
+# Python offline tool (165 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 

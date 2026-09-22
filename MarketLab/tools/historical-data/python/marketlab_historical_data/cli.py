@@ -80,6 +80,12 @@ def _verify_parser(subparsers) -> None:
         help="JSON of the runtime binary hashes recorded by the driver "
         "({\"files\": {\"name.dll\": \"<sha256>\"}})",
     )
+    parser.add_argument(
+        "--helper-exit-code",
+        type=int,
+        help="exit code of the LEAN helper run; a PASS record requires 0 (a nonzero code is "
+        "accepted only for a deliberate probe replay mismatch)",
+    )
     parser.add_argument("--report", help="output record path (default: data folder)")
     parser.add_argument(
         "--force", action="store_true", help="replace an existing qualification record"
@@ -137,6 +143,7 @@ def _print_record_summary(record: dict) -> None:
     runtime_binaries = record.get("runtime_binaries") or {}
     if runtime_binaries.get("files"):
         print(f"runtime binaries recorded: {len(runtime_binaries['files'])}")
+    print(f"LEAN helper exit code: {record.get('helper_exit_code')}")
     print(f"overall qualification: {record['overall_qualification']}")
     if record["failure_reasons"]:
         print(f"failure reasons: {record['failure_reasons']}")
@@ -270,6 +277,7 @@ def _run_verify(args) -> int:
         failed_request_paths=failed_requests,
         data_folder=data_folder,
         runtime_binaries=runtime_binaries,
+        helper_exit_code=args.helper_exit_code,
     )
     report_file = Path(args.report) if args.report else record_path(data_folder)
     for evidence in evidence_paths:

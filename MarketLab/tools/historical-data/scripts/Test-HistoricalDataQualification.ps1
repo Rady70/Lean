@@ -143,6 +143,7 @@ try {
     Assert-True ($runtimeBinaryNames -contains 'MarketLab.HistoricalDataProbe.dll') 'runtime binaries include the probe assembly'
     Assert-True ($runtimeBinaryNames -contains 'QuantConnect.Lean.Engine.dll') 'runtime binaries include the LEAN Engine assembly'
     Assert-True ($runtimeBinaryNames -contains 'QuantConnect.Lean.Launcher.dll') 'runtime binaries include the Launcher assembly'
+    Assert-True ($recordPass.helper_exit_code -eq 0) 'the record carries the clean helper exit code 0'
 
     Write-Host 'case 2: session-filter-gap (expected FAIL with a delivery difference)'
     $dataGap = Join-Path $scratch 'case-gap'
@@ -166,6 +167,7 @@ try {
     Assert-True ($recordGap.native_replay.accepted_row_count -eq 5) 'accepted row count is 5'
     Assert-True ($recordGap.native_replay.lean_delivered_row_count -eq 4) 'LEAN delivered 4 of 5 accepted rows'
     Assert-True ($recordGap.native_replay.session_delivery_difference -eq 1) 'session/delivery difference is 1'
+    Assert-True ($recordGap.helper_exit_code -eq 1) 'the record carries the deliberate probe-mismatch helper exit code 1'
     Assert-True ($recordGap.manifest.session_preview.session_excluded_rows -eq 1) 'offline session preview identifies the excluded row'
     Assert-True ($recordGap.failure_reasons -contains 'LeanDeliveredCountDiffersFromAcceptedCount') 'failure reasons name the delivered-count difference'
     Assert-True (@($recordGap.failure_reasons) -join ',' -match 'ExpectedAndDeliveredCountsDiffer|DeliveredSemanticDigestMismatches') 'failure reasons name the probe mismatch'

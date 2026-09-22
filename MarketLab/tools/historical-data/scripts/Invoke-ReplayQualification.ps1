@@ -94,12 +94,13 @@ removed; any other native ZIP causes exit 2. Without `-Force`, an existing
 generation is refused (exit 2) instead of mixed.
 
 Exit codes:
-  0  qualification record PASS
+  0  qualification record PASS (the LEAN helper completed cleanly)
   1  qualification record FAIL (or the source failed before conversion)
   2  configuration error (missing path, unusable data folder, Python failure,
      or the LEAN helper's own pre-flight refusal: LEAN was not launched)
-  3  the LEAN helper reported engine errors (the run was not clean; no
-     qualification record is written)
+  3  the LEAN helper reported errors or an unclean run; no qualification
+     record is written. A nonzero helper exit is accepted for a record only
+     when the probe deliberately reported a replay mismatch (a FAIL).
 
 .REQUIRES Windows PowerShell 5.1 or PowerShell 7+, and the built LEAN Launcher
 and replay probe (Build-Configuration note in the tools README).
@@ -333,15 +334,32 @@ try {
         Set-Content -LiteralPath $runtimeBinariesFile -Value $runtimePayload -Encoding UTF8
     }
 
-    if ($helperExit -eq 1 -and -not $probeResult) {
-        Write-ErrorMessage "LEAN exited 1 without a usable replay probe result: the run failed before the qualification comparison completed (infrastructure/runtime failure); no qualification record was written"
+    $probeDeliberateFailure = $false
+    if ($probeResult) {
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $probeJson = Get-Content -LiteralPath $probeResult -Raw -Encoding UTF8 | ConvertFrom-Json
+            $probeDeliberateFailure = ($probeJson.completed -eq $true -and $probeJson.qualification -eq 'FAIL')
+        }
+        catch {
+            $probeDeliberateFailure = $false
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
+    }
+
+    if ($helperExit -ne 0 -and -not ($helperExit -eq 1 -and $probeDeliberateFailure)) {
+        Write-ErrorMessage "the LEAN helper exited ${helperExit} without a deliberate probe replay mismatch: the run is not clean and no qualification record was written"
         exit 3
     }
 
     $verifyArguments = @(
         '-m', 'marketlab_historical_data', 'verify',
         '--manifest', (Join-Path $dataRoot 'marketlab-qualification\qualification-manifest.json'),
-        '--data-folder', $dataRoot
+        '--data-folder', $dataRoot,
+        '--helper-exit-code', [string]$helperExit
     )
     if ($probeResult) { $verifyArguments += @('--probe-result', $probeResult) }
     if ($failedRequests) { $verifyArguments += @('--failed-data-requests', $failedRequests) }
@@ -357,8 +375,8 @@ try {
         Write-Host "qualification driver: the record could not be written (exit 2)"
         exit 2
     }
-    if ($helperExit -ne 0 -and $helperExit -ne 1 -and $helperExit -ne 3) {
-        Write-ErrorMessage "the LEAN helper exited ${helperExit}: the replay run was not clean; the record is not accepted"
+    if ($helperExit -ne 0 -and $verifyExit -eq 0) {
+        Write-ErrorMessage "the LEAN helper exited ${helperExit}: a PASS record cannot be accepted from an unclean run"
         exit 3
     }
 

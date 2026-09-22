@@ -167,6 +167,15 @@ class VerifyCliTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("probe result not found", result.stderr)
 
+    def test_non_integer_helper_exit_code_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = self.write_manifest(directory, usable_manifest())
+            result = self.run_cli(
+                ["verify", "--manifest", str(manifest), "--helper-exit-code", "not-a-number"]
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("invalid int value", result.stderr)
+
     def test_report_must_not_alias_an_evidence_input(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest = self.write_manifest(directory, usable_manifest())
