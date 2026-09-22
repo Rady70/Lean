@@ -29,6 +29,7 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md` | approved roadmap for historical-data qualification, C# research analytics, account survival and the first baseline research run |
 | `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
+| `tools\historical-data\` | offline source qualification, exact-decimal native LEAN tick conversion and the actual LEAN replay probe (PR 1); see its [README](tools/historical-data/README.md) and [provenance](tools/historical-data/PROVENANCE.md) |
 | `.gitignore` | ignores `output\` (generated runs) |
 
 All scripts run on Windows PowerShell 5.1 and PowerShell 7 and use `exit`
@@ -484,6 +485,13 @@ record. Its default dates lie inside upstream's shipped Oanda XAUUSD tick
 sample (`Data\cfd\oanda\tick\xauusd`, May 2014, an engine fixture like the
 SPY sample, not research data); any other data folder needs the dates set to
 its coverage, or the run ends with exit code 3 (section 10).
+
+A historical CSV source is qualified and converted offline before it reaches
+that run: `MarketLab\tools\historical-data\` strictly validates the source
+against the strategy's quote contract, writes native
+`cfd\oanda\tick\xauusd` partitions into a research data folder outside Git, and
+verifies the quotes the unchanged LEAN engine actually delivers with a separate
+replay probe. See [its README](tools/historical-data/README.md).
 
 ## 10. When required data is missing
 

@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Tests for the MarketLab historical-data replay probe's canonical value forms, semantic
+    digest and comparison contract. No LEAN engine run and no market data: the digest and
+    comparison are driven directly. Package versions match the upstream Tests project so no new
+    package is introduced. Run: dotnet test
+    MarketLab\tools\historical-data\probe-tests\MarketLab.HistoricalDataProbe.Tests.csproj -c Release
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MarketLab.HistoricalDataProbe.Tests</RootNamespace>
+    <AssemblyName>MarketLab.HistoricalDataProbe.Tests</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.9.4" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\probe\MarketLab.HistoricalDataProbe.csproj" />
+  </ItemGroup>
+</Project>

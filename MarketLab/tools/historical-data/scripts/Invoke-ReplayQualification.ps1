@@ -1,0 +1,296 @@
+<#
+.SYNOPSIS
+Runs the complete PR 1 historical-data qualification path: strict CSV
+qualification and native LEAN conversion (offline Python), an actual LEAN
+replay through the MarketLab probe, and the final PASS/FAIL record.
+
+.DESCRIPTION
+This driver orchestrates the three existing pieces; it implements no
+validation of its own:
+
+  1. python -m marketlab_historical_data qualify
+     Strictly validates the historical bid/ask CSV against the SingleAnchor
+     quote contract, converts it to native LEAN XAUUSD/Oanda CFD quote-tick
+     partitions only after PASS, and writes the qualification manifest and the
+     replay expectation into
+     <DataFolder>\marketlab-qualification\.
+  2. MarketLab\scripts\run-backtest.ps1 with the MarketLab replay probe
+     (MarketLab.HistoricalDataProbe.dll, SingleAnchorReplayProbeAlgorithm).
+     The probe runs inside the unchanged LEAN engine, captures the quotes LEAN
+     actually delivers, and writes
+     <run dir>\storage\single-anchor-replay-probe\replay-result.json.
+     The helper is invoked with -AllowMissingData because LEAN probes the
+     trading days adjacent to the qualified window (and only those) for
+     continuity; the final record classifies every failed request. A missing
+     native partition that carries accepted source rows fails the record.
+  3. python -m marketlab_historical_data verify
+     Combines the manifest, the probe result and the helper's failed-data
+     request list into <DataFolder>\marketlab-qualification\qualification-
+     record.json with an explicit overall PASS/FAIL. The driver's exit code is
+     that record's verdict.
+
+Before the LEAN run, missing auxiliary runtime data is linked (directory
+junctions, never copies) from -AuxiliaryDataSource into the data folder:
+market-hours, symbol-properties, alternative, equity and cfd\oanda\hour.
+These are the unchanged engine fixtures the subscription setup reads
+(interest rates, map files, the hour sample). Junctions keep the assets in
+place; nothing is copied or redistributed, and an existing path is never
+replaced. Use -NoAuxiliaryLinks to skip this and accept the helper's
+missing-data warnings.
+
+Historical data and all generated qualification outputs stay outside Git.
+
+.PARAMETER SourceCsv
+The historical bid/ask CSV to qualify.
+
+.PARAMETER DataFolder
+The runtime LEAN data folder. Converted native partitions and the
+marketlab-qualification artifacts are written here; it must be outside Git.
+
+.PARAMETER TimestampColumn,DateColumn,TimeColumn,BidColumn,AskColumn
+Explicit source columns; otherwise the deterministic header detection of the
+qualifier is used.
+
+.PARAMETER Delimiter
+Source delimiter; '\t' means tab. Default: sniffed from the first 4096 bytes.
+
+.PARAMETER TimestampFormat
+Explicit strptime format for the timestamp text.
+
+.PARAMETER SourceTimezone
+IANA timezone of timezone-naive timestamps. Required when the timestamps carry
+no embedded UTC offset, and refused when they do.
+
+.PARAMETER Symbol,Market,SecurityType
+Subscription identity. Defaults: XAUUSD, oanda, Cfd.
+
+.PARAMETER LeanRoot
+Root of the LEAN checkout. Default: four levels above this script.
+
+.PARAMETER PythonExe
+Python executable for the offline tool (default: python on PATH).
+
+.PARAMETER OutputRoot
+Root for the LEAN run directories (default: <LeanRoot>\MarketLab\output).
+
+.PARAMETER AuxiliaryDataSource
+Runtime data folder that already contains the auxiliary databases and engine
+fixtures (default: <LeanRoot>\Data).
+
+.PARAMETER NoAuxiliaryLinks
+Do not link auxiliary data; expect missing-data warnings from the helper.
+
+.PARAMETER Force
+Replace existing native partitions, manifest, expectation and record.
+
+Exit codes:
+  0  qualification record PASS
+  1  qualification record FAIL (or the source failed before conversion)
+  2  configuration error (missing path, unusable data folder, Python failure)
+  3  the LEAN helper reported engine errors (the run was not clean)
+
+.REQUIRES Windows PowerShell 5.1 or PowerShell 7+, and the built LEAN Launcher
+and replay probe (Build-Configuration note in the tools README).
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][string]$SourceCsv,
+    [Parameter(Mandatory = $true)][string]$DataFolder,
+    [string]$TimestampColumn,
+    [string]$DateColumn,
+    [string]$TimeColumn,
+    [string]$BidColumn,
+    [string]$AskColumn,
+    [string]$Delimiter,
+    [string]$TimestampFormat,
+    [string]$SourceTimezone,
+    [string]$Symbol = 'XAUUSD',
+    [string]$Market = 'oanda',
+    [string]$SecurityType = 'Cfd',
+    [string]$LeanRoot,
+    [string]$PythonExe = 'python',
+    [string]$OutputRoot,
+    [string]$AuxiliaryDataSource,
+    [switch]$NoAuxiliaryLinks,
+    [switch]$Force
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Write-ErrorMessage([string]$Message) {
+    [Console]::Error.WriteLine("ERROR: $Message")
+}
+
+function Resolve-RequiredPath([string]$Path, [string]$Label) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        Write-ErrorMessage "$Label not found: $Path"
+        exit 2
+    }
+    return (Resolve-Path -LiteralPath $Path).Path
+}
+
+function Invoke-External([string]$Executable, $Arguments) {
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = (& $Executable @Arguments 2>&1 | Out-String)
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    $script:externalExitCode = $LASTEXITCODE
+    return $output
+}
+
+if (-not $LeanRoot) {
+    $LeanRoot = (Get-Item -LiteralPath $PSScriptRoot).Parent.Parent.Parent.Parent.FullName
+}
+$LeanRoot = (Resolve-Path -LiteralPath $LeanRoot).Path
+if (-not $OutputRoot) { $OutputRoot = Join-Path $LeanRoot 'MarketLab\output' }
+if (-not $AuxiliaryDataSource) { $AuxiliaryDataSource = Join-Path $LeanRoot 'Data' }
+
+$sourcePath = Resolve-RequiredPath $SourceCsv 'source CSV'
+$dataRoot = Resolve-RequiredPath $DataFolder 'data folder'
+$pythonPackageRoot = Join-Path $PSScriptRoot '..\python'
+$pythonPackageRoot = (Resolve-Path -LiteralPath $pythonPackageRoot).Path
+$helperScript = Resolve-RequiredPath (Join-Path $LeanRoot 'MarketLab\scripts\run-backtest.ps1') 'run-backtest helper'
+$probeDll = Join-Path $LeanRoot 'MarketLab\tools\historical-data\probe\bin\Release\MarketLab.HistoricalDataProbe.dll'
+if (-not (Test-Path -LiteralPath $probeDll)) {
+    Write-ErrorMessage "replay probe not built: $probeDll (build MarketLab\tools\historical-data\probe\MarketLab.HistoricalDataProbe.csproj -c Release)"
+    exit 2
+}
+if (-not (Test-Path -LiteralPath $OutputRoot)) {
+    New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+}
+
+if (-not $NoAuxiliaryLinks) {
+    $auxiliaryLinks = @(
+        'market-hours',
+        'symbol-properties',
+        'alternative',
+        'equity',
+        'cfd\oanda\hour'
+    )
+    foreach ($relative in $auxiliaryLinks) {
+        $target = Join-Path $dataRoot $relative
+        if (Test-Path -LiteralPath $target) { continue }
+        $source = Join-Path $AuxiliaryDataSource $relative
+        if (-not (Test-Path -LiteralPath $source)) {
+            Write-ErrorMessage "auxiliary data not found for linking: $source (pass -NoAuxiliaryLinks to skip)"
+            exit 2
+        }
+        $parent = Split-Path -Parent $target
+        if (-not (Test-Path -LiteralPath $parent)) {
+            New-Item -ItemType Directory -Force -Path $parent | Out-Null
+        }
+        try {
+            New-Item -ItemType Junction -Path $target -Target $source | Out-Null
+            Write-Host "linked auxiliary data: $target -> $source"
+        }
+        catch {
+            Write-ErrorMessage "could not create the auxiliary junction $target -> $source : $($_.Exception.Message)"
+            exit 2
+        }
+    }
+}
+
+$previousPythonPath = $env:PYTHONPATH
+$env:PYTHONPATH = $pythonPackageRoot
+try {
+    $qualifyArguments = @('-m', 'marketlab_historical_data', 'qualify', '--source', $sourcePath, '--data-folder', $dataRoot)
+    if ($TimestampColumn) { $qualifyArguments += @('--timestamp-column', $TimestampColumn) }
+    if ($DateColumn) { $qualifyArguments += @('--date-column', $DateColumn) }
+    if ($TimeColumn) { $qualifyArguments += @('--time-column', $TimeColumn) }
+    if ($BidColumn) { $qualifyArguments += @('--bid-column', $BidColumn) }
+    if ($AskColumn) { $qualifyArguments += @('--ask-column', $AskColumn) }
+    if ($Delimiter) { $qualifyArguments += @('--delimiter', $Delimiter) }
+    if ($TimestampFormat) { $qualifyArguments += @('--timestamp-format', $TimestampFormat) }
+    if ($SourceTimezone) { $qualifyArguments += @('--source-timezone', $SourceTimezone) }
+    if ($Symbol -ne 'XAUUSD') { $qualifyArguments += @('--symbol', $Symbol) }
+    if ($Market -ne 'oanda') { $qualifyArguments += @('--market', $Market) }
+    if ($SecurityType -ne 'Cfd') { $qualifyArguments += @('--security-type', $SecurityType) }
+    if ($Force) { $qualifyArguments += '--force' }
+
+    Write-Host "qualify: $PythonExe $($qualifyArguments -join ' ')"
+    $qualifyOutput = Invoke-External $PythonExe $qualifyArguments
+    $qualifyExit = $script:externalExitCode
+    Write-Host $qualifyOutput
+    if ($qualifyExit -ne 0) {
+        Write-Host "qualification driver: source qualification did not pass (exit $qualifyExit); the LEAN replay was not run"
+        exit $qualifyExit
+    }
+
+    $runDirectoriesBefore = @()
+    if (Test-Path -LiteralPath $OutputRoot) {
+        $runDirectoriesBefore = @(Get-ChildItem -LiteralPath $OutputRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    }
+
+    $helperParameters = @{
+        LeanRoot          = $LeanRoot
+        AlgorithmTypeName = 'SingleAnchorReplayProbeAlgorithm'
+        AlgorithmLocation = $probeDll
+        DataFolder        = $dataRoot
+        OutputRoot        = $OutputRoot
+        Configuration     = 'Release'
+        AllowMissingData  = $true
+    }
+    Write-Host "replay: run-backtest.ps1 $((($helperParameters.GetEnumerator() | ForEach-Object { "-$($_.Key) $($_.Value)" }) -join ' '))"
+    $helperOutput = Invoke-External $helperScript $helperParameters
+    $helperExit = $script:externalExitCode
+    Write-Host $helperOutput
+
+    $runDirectory = $null
+    $match = [regex]::Match($helperOutput, 'run directory:\s*(.+?);\s*log:')
+    if ($match.Success) {
+        $runDirectory = $match.Groups[1].Value.Trim()
+    }
+    if (-not $runDirectory -or -not (Test-Path -LiteralPath $runDirectory)) {
+        $newDirectories = @(Get-ChildItem -LiteralPath $OutputRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $runDirectoriesBefore -notcontains $_.FullName } |
+            Sort-Object LastWriteTime -Descending)
+        if ($newDirectories.Count -gt 0) { $runDirectory = $newDirectories[0].FullName }
+    }
+
+    $probeResult = $null
+    $failedRequests = $null
+    if ($runDirectory -and (Test-Path -LiteralPath $runDirectory)) {
+        $probeResult = Join-Path $runDirectory 'storage\single-anchor-replay-probe\replay-result.json'
+        if (-not (Test-Path -LiteralPath $probeResult)) { $probeResult = $null }
+        $failedFile = Get-ChildItem -LiteralPath $runDirectory -Filter 'failed-data-requests-*.txt' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($failedFile) { $failedRequests = $failedFile.FullName }
+    }
+
+    $verifyArguments = @(
+        '-m', 'marketlab_historical_data', 'verify',
+        '--manifest', (Join-Path $dataRoot 'marketlab-qualification\qualification-manifest.json'),
+        '--data-folder', $dataRoot
+    )
+    if ($probeResult) { $verifyArguments += @('--probe-result', $probeResult) }
+    if ($failedRequests) { $verifyArguments += @('--failed-data-requests', $failedRequests) }
+    if ($Force) { $verifyArguments += '--force' }
+
+    Write-Host "verify: $PythonExe $($verifyArguments -join ' ')"
+    $verifyOutput = Invoke-External $PythonExe $verifyArguments
+    $verifyExit = $script:externalExitCode
+    Write-Host $verifyOutput
+
+    if ($verifyExit -eq 2) {
+        Write-Host "qualification driver: the record could not be written (exit 2)"
+        exit 2
+    }
+    if ($helperExit -ne 0 -and $helperExit -ne 3 -and $verifyExit -eq 0) {
+        Write-ErrorMessage "the LEAN helper exited ${helperExit}: the replay run was not clean; the record is not accepted"
+        exit 3
+    }
+
+    if ($verifyExit -eq 0) {
+        Write-Host "qualification driver: PASS"
+    }
+    else {
+        Write-Host "qualification driver: FAIL"
+    }
+    exit $verifyExit
+}
+finally {
+    $env:PYTHONPATH = $previousPythonPath
+}

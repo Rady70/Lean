@@ -1,0 +1,77 @@
+{
+  "entries": {
+    "Cfd-oanda-XAUUSD": {
+      "dataTimeZone": "UTC",
+      "exchangeTimeZone": "America/New_York",
+      "sunday": [
+        { "start": "18:03:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "monday": [
+        { "start": "00:00:00", "end": "16:58:00", "state": "market" },
+        { "start": "18:03:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "tuesday": [
+        { "start": "00:00:00", "end": "16:58:00", "state": "market" },
+        { "start": "18:03:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "wednesday": [
+        { "start": "00:00:00", "end": "16:58:00", "state": "market" },
+        { "start": "18:03:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "thursday": [
+        { "start": "00:00:00", "end": "16:58:00", "state": "market" },
+        { "start": "18:03:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "friday": [
+        { "start": "00:00:00", "end": "16:58:00", "state": "market" }
+      ],
+      "saturday": [],
+      "holidays": ["4/14/2017"]
+    },
+    "Cfd-oanda-[*]": {
+      "dataTimeZone": "UTC",
+      "exchangeTimeZone": "America/New_York",
+      "monday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "tuesday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "wednesday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "thursday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "friday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "saturday": [],
+      "sunday": [],
+      "holidays": []
+    },
+    "Cfd-oanda-EARLYCLOSE": {
+      "dataTimeZone": "UTC",
+      "exchangeTimeZone": "America/New_York",
+      "monday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "tuesday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "wednesday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "thursday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "friday": [
+        { "start": "00:00:00", "end": "1.00:00:00", "state": "market" }
+      ],
+      "saturday": [],
+      "sunday": [],
+      "holidays": [],
+      "earlyCloses": { "5/26/2014": "12:00:00" }
+    }
+  }
+}
