@@ -1,0 +1,41 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    MarketLab-owned LEAN replay probe for PR 1 historical-data qualification. It is a separate
+    assembly so normal SingleAnchor runs keep the lightweight per-tick path; it is selected only
+    with -AlgorithmLocation MarketLab\tools\historical-data\probe\bin\Release\MarketLab.HistoricalDataProbe.dll
+    -AlgorithmTypeName SingleAnchorReplayProbeAlgorithm. Built outside QuantConnect.Lean.sln; it
+    references only the unchanged upstream Algorithm and Common projects and modifies no upstream
+    file.
+
+    The strategy engine sources under MarketLab\src\SingleAnchor are compiled into this assembly
+    (the host algorithm class is excluded) so the probe's QuoteTickFeed/SingleAnchorEngine are the
+    same sources the strategy runs. A project reference is deliberately not used: LEAN loads an
+    external algorithm assembly with Assembly.Load(bytes) when a .pdb sits next to it, and that
+    load context cannot resolve a sibling project assembly outside the Launcher base directory.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MarketLab.HistoricalDataProbe</RootNamespace>
+    <AssemblyName>MarketLab.HistoricalDataProbe</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Description>MarketLab historical-data replay probe: verifies the quotes LEAN delivers against the qualified source stream</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MarketLab.HistoricalDataProbe.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\..\src\SingleAnchor\*.cs" Exclude="..\..\..\src\SingleAnchor\SingleAnchorVNextAlgorithm.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\Algorithm\QuantConnect.Algorithm.csproj" />
+    <ProjectReference Include="..\..\..\..\Common\QuantConnect.csproj" />
+  </ItemGroup>
+</Project>
+
