@@ -15,6 +15,9 @@ from marketlab_historical_data.replay import (  # noqa: E402
     build_expectation,
     build_record,
     classify_failed_data_requests,
+    require_manifest_structure,
+    require_probe_structure,
+    require_runtime_binaries_structure,
 )
 
 DIGEST = "sha256:" + "a" * 64
@@ -123,6 +126,59 @@ def base_probe(digest=DIGEST, count=4):
     }
 
 
+class EvidenceValidatorTests(unittest.TestCase):
+    def test_valid_fixtures_pass_their_validators(self):
+        require_manifest_structure(base_manifest("c" * 64))
+        require_probe_structure(base_probe())
+
+    def test_manifest_nested_type_errors_are_rejected(self):
+        manifest = base_manifest("c" * 64)
+        corruptions = [
+            ("lean", "market_hours_database", "corrupt"),
+            ("native", "layout", "corrupt"),
+            ("native", "partitions", [{}]),
+            ("per_day", "accepted", []),
+            ("counts", "accepted_row_count", "4"),
+            ("source", "sha256", 5),
+            ("semantic", "ordered_source_semantic_digest", 7),
+        ]
+        for section, key, value in corruptions:
+            with self.subTest(section=section, key=key):
+                broken = json.loads(json.dumps(manifest))
+                broken[section][key] = value
+                with self.assertRaises(ValueError):
+                    require_manifest_structure(broken)
+
+    def test_probe_type_errors_are_rejected(self):
+        probe = base_probe()
+        corruptions = [
+            ("completed", "yes"),
+            ("delivered", {"quote_count": "4"}),
+            ("runtime", {"engine_quotes_processed": None}),
+            ("comparison", {"engine_quotes_match_delivered": "true"}),
+        ]
+        for key, value in corruptions:
+            with self.subTest(key=key):
+                broken = json.loads(json.dumps(probe))
+                if isinstance(value, dict):
+                    broken[key].update(value)
+                else:
+                    broken[key] = value
+                with self.assertRaises(ValueError):
+                    require_probe_structure(broken)
+
+    def test_runtime_binaries_validation(self):
+        require_runtime_binaries_structure({"files": {"a.dll": "a" * 64}})
+        for payload in (
+            {"files": {"a.dll": "short"}},
+            {"files": {}},
+            [],
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValueError):
+                    require_runtime_binaries_structure(payload)
+
+
 class ClassifyFailedRequestsTests(unittest.TestCase):
     def test_tick_and_unrelated_requests_are_separated(self):
         partitions, unrelated = classify_failed_data_requests(
@@ -165,7 +221,7 @@ class RecordTests(unittest.TestCase):
     def tearDown(self):
         self._directory.cleanup()
 
-    def build(self, probe, failed_requests=()):
+    def build(self, probe, failed_requests=(), runtime_binaries=None):
         return build_record(
             manifest=self.manifest,
             manifest_path=self.manifest_path,
@@ -173,6 +229,7 @@ class RecordTests(unittest.TestCase):
             probe_path=None,
             failed_request_paths=list(failed_requests),
             data_folder=self.data,
+            runtime_binaries=runtime_binaries,
         )
 
     def test_exact_delivery_passes(self):
@@ -185,6 +242,14 @@ class RecordTests(unittest.TestCase):
             record["native_replay"]["out_of_window_failed_data_requests"],
             ["cfd/oanda/tick/xauusd/20140504_quote.zip"],
         )
+
+    def test_runtime_binaries_are_embedded_in_the_record(self):
+        payload = {
+            "source": "MarketLab driver hashes taken before the run",
+            "files": {"MarketLab.HistoricalDataProbe.dll": "a" * 64},
+        }
+        record = self.build(base_probe(), runtime_binaries=payload)
+        self.assertEqual(record["runtime_binaries"], payload)
 
     def test_delivery_count_difference_fails(self):
         record = self.build(base_probe(count=3))

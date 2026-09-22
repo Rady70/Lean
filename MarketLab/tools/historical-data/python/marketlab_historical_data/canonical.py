@@ -52,11 +52,14 @@ __all__ = [
 DECIMAL_TEXT_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 
 # The native LEAN Cfd/Forex quote reader (Common/Util/StreamReaderExtensions.cs,
-# GetDecimal) accumulates the coefficient into a signed 64-bit integer and
-# constructs the decimal with a zeroed high word and a byte scale. A price that
-# does not fit that accumulator and scale cannot round-trip through the reader.
-LEAN_DECIMAL_MAX_COEFFICIENT = (1 << 63) - 1
+# GetDecimal) accumulates the coefficient into an unchecked signed 64-bit
+# integer and constructs the decimal from the low/high 32-bit words of that
+# value plus a zeroed high word. A wrapped two's-complement long therefore
+# still carries the exact bit pattern of any coefficient up to unsigned
+# 64-bit max (2^64-1); above that the accumulation wraps and the value is lost.
+LEAN_DECIMAL_MAX_COEFFICIENT = (1 << 64) - 1
 LEAN_DECIMAL_MAX_SCALE = 28
+LEAN_DECIMAL_MAX_INTEGER_DIGITS = 20
 
 _DIGEST_LINE_FORMAT = "{0}|{1}|{2}|{3}\n"
 
@@ -123,12 +126,13 @@ def lean_decimal_representable(value: Decimal) -> bool:
     """True when the exact value round-trips through the native LEAN reader.
 
     The reader (`StreamReaderExtensions.GetDecimal`) accumulates the coefficient
-    of the written line into a signed 64-bit integer with a zeroed high word and
-    a byte scale, so the check is made on the *canonical* form the converter
-    writes: coefficient at most ``long.MaxValue`` and at most 28 fractional
-    digits. Integer trailing zeros belong to the coefficient (``1000`` is
-    coefficient 1000, scale 0), while fractional trailing zeros carry no value
-    and are not part of the canonical form (``1900.00`` is ``1900``).
+    into an unchecked signed 64-bit integer and builds the decimal from the
+    low/high words of that value with a zeroed high word and a byte scale. The
+    wrapped two's-complement bit pattern preserves every coefficient up to
+    unsigned 64-bit max (2^64-1); above that the accumulation wraps. Fractional
+    digits are limited to 28 and integer trailing zeros belong to the
+    coefficient (``1000`` is coefficient 1000, scale 0), while fractional
+    trailing zeros carry no value and are not part of the canonical form.
 
     The check works from the decimal tuple and never expands a fixed-point
     string, so extreme exponents produce ``False`` instead of an exception or a
@@ -149,7 +153,7 @@ def lean_decimal_representable(value: Decimal) -> bool:
         integer_digits = len(digit_list) + exponent
     else:
         integer_digits = max(len(digit_list) + exponent, 0)
-    if integer_digits > 19:
+    if integer_digits > LEAN_DECIMAL_MAX_INTEGER_DIGITS:
         return False
     if exponent < 0 and -exponent > LEAN_DECIMAL_MAX_SCALE:
         return False

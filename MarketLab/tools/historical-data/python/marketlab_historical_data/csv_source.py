@@ -246,7 +246,12 @@ def _resolve_delimiter(path: Path, encoding: str, explicit: str | None) -> str:
     if explicit is not None:
         if explicit == "":
             raise QualificationFailure("delimiter must not be empty")
-        return "\t" if explicit == "\\t" else explicit
+        delimiter = "\t" if explicit == "\\t" else explicit
+        if len(delimiter) != 1:
+            raise QualificationFailure(
+                f"delimiter must be a single character (got {explicit!r})"
+            )
+        return delimiter
     with path.open("r", encoding=encoding, newline="") as handle:
         sample = handle.read(4096)
     try:
@@ -289,9 +294,18 @@ def resolve_csv_layout(path: Path, config: CsvSourceConfig) -> ResolvedCsvLayout
 
     Explicit configuration always wins; otherwise the fixed candidate lists and
     the date+time pair rule decide. The result is part of the manifest.
+    Decoding/CSV/IO problems become explicit ``QualificationFailure`` errors so
+    the caller reports a configuration failure instead of a traceback.
     """
-    delimiter = _resolve_delimiter(Path(path), config.encoding, config.delimiter)
-    fieldnames = _read_header(Path(path), config.encoding, delimiter)
+    try:
+        delimiter = _resolve_delimiter(Path(path), config.encoding, config.delimiter)
+        fieldnames = _read_header(Path(path), config.encoding, delimiter)
+    except QualificationFailure:
+        raise
+    except (UnicodeDecodeError, LookupError, csv.Error, OSError) as error:
+        raise QualificationFailure(
+            f"source cannot be read as a CSV with encoding {config.encoding!r}: {error}"
+        ) from error
     lookup = _build_header_lookup(fieldnames)
 
     timestamp_index: int | None = None

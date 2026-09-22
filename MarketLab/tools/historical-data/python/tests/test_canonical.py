@@ -84,9 +84,6 @@ class CanonicalDecimalTests(unittest.TestCase):
         self.assertTrue(lean_decimal_representable(Decimal("1291.677")))
         self.assertTrue(lean_decimal_representable(Decimal("0")))
         self.assertTrue(lean_decimal_representable(Decimal("1.000000000000000000000000000000")))
-        self.assertTrue(lean_decimal_representable(Decimal("9223372036854775807")))
-        self.assertFalse(lean_decimal_representable(Decimal("9223372036854775808")))
-        self.assertFalse(lean_decimal_representable(Decimal("18446744073709551616")))
         self.assertFalse(lean_decimal_representable(Decimal("0.00000000000000000000000000001")))
 
     def test_round_prices_ending_in_zero_are_representable(self):
@@ -94,10 +91,13 @@ class CanonicalDecimalTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertTrue(lean_decimal_representable(Decimal(text)))
 
-    def test_integer_values_beyond_the_signed_reader_are_rejected(self):
+    def test_unsigned_64_bit_reader_boundary(self):
         self.assertTrue(lean_decimal_representable(Decimal("9223372036854775807")))
-        self.assertFalse(lean_decimal_representable(Decimal("9223372036854775808")))
-        self.assertFalse(lean_decimal_representable(Decimal("10000000000000000000")))
+        self.assertTrue(lean_decimal_representable(Decimal("9223372036854775808")))
+        self.assertTrue(lean_decimal_representable(Decimal("18446744073709551615")))
+        self.assertTrue(lean_decimal_representable(Decimal("10000000000000000000")))
+        self.assertFalse(lean_decimal_representable(Decimal("18446744073709551616")))
+        self.assertFalse(lean_decimal_representable(Decimal("99999999999999999999")))
 
     def test_scale_29_is_rejected(self):
         self.assertFalse(

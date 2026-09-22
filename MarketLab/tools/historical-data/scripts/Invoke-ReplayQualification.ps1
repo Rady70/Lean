@@ -88,15 +88,18 @@ Do not link auxiliary data; expect missing-data warnings from the helper.
 Replace an existing qualification generation. A forced success invalidates the
 previous `qualification-record.json` in the same transaction; a forced
 requalification that fails clears the superseded expectation, record and native
-partitions while publishing the new failure manifest. Without `-Force`, an
-existing generation is refused (exit 2) instead of mixed.
+partitions while publishing the new failure manifest. Only partitions listed in
+the previous MarketLab manifest with a matching SHA-256 are replaced or
+removed; any other native ZIP causes exit 2. Without `-Force`, an existing
+generation is refused (exit 2) instead of mixed.
 
 Exit codes:
   0  qualification record PASS
   1  qualification record FAIL (or the source failed before conversion)
   2  configuration error (missing path, unusable data folder, Python failure,
      or the LEAN helper's own pre-flight refusal: LEAN was not launched)
-  3  the LEAN helper reported engine errors (the run was not clean)
+  3  the LEAN helper reported engine errors (the run was not clean; no
+     qualification record is written)
 
 .REQUIRES Windows PowerShell 5.1 or PowerShell 7+, and the built LEAN Launcher
 and replay probe (Build-Configuration note in the tools README).
@@ -160,12 +163,38 @@ if (-not $AuxiliaryDataSource) { $AuxiliaryDataSource = Join-Path $LeanRoot 'Dat
 
 $sourcePath = Resolve-RequiredPath $SourceCsv 'source CSV'
 $dataRoot = Resolve-RequiredPath $DataFolder 'data folder'
+if ($dataRoot.Equals($LeanRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    $dataRoot.StartsWith($LeanRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    Write-ErrorMessage "the data folder is inside the LEAN worktree ($LeanRoot): qualification outputs and native partitions must stay outside the repository"
+    exit 2
+}
 $pythonPackageRoot = Join-Path $PSScriptRoot '..\python'
 $pythonPackageRoot = (Resolve-Path -LiteralPath $pythonPackageRoot).Path
 $helperScript = Resolve-RequiredPath (Join-Path $LeanRoot 'MarketLab\scripts\run-backtest.ps1') 'run-backtest helper'
 $probeDll = Join-Path $LeanRoot 'MarketLab\tools\historical-data\probe\bin\Release\MarketLab.HistoricalDataProbe.dll'
 if (-not (Test-Path -LiteralPath $probeDll)) {
     Write-ErrorMessage "replay probe not built: $probeDll (build MarketLab\tools\historical-data\probe\MarketLab.HistoricalDataProbe.csproj -c Release)"
+    exit 2
+}
+$runtimeBinaryPaths = @(
+    $probeDll,
+    (Join-Path $LeanRoot 'Launcher\bin\Release\QuantConnect.Lean.Launcher.dll'),
+    (Join-Path $LeanRoot 'Launcher\bin\Release\QuantConnect.Lean.Engine.dll'),
+    (Join-Path $LeanRoot 'Launcher\bin\Release\QuantConnect.AlgorithmFactory.dll'),
+    (Join-Path $LeanRoot 'Launcher\bin\Release\QuantConnect.Algorithm.dll'),
+    (Join-Path $LeanRoot 'Launcher\bin\Release\QuantConnect.Common.dll'),
+    (Join-Path $LeanRoot 'Launcher\bin\Release\QuantConnect.Configuration.dll'),
+    (Join-Path $LeanRoot 'Launcher\bin\Release\QuantConnect.Logging.dll')
+)
+$runtimeBinaryHashes = [ordered]@{}
+foreach ($binaryPath in $runtimeBinaryPaths) {
+    if (Test-Path -LiteralPath $binaryPath) {
+        $runtimeBinaryHashes[(Split-Path -Leaf $binaryPath)] =
+            (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+if ($runtimeBinaryHashes.Count -eq 0) {
+    Write-ErrorMessage "no runtime binaries could be hashed; check the Launcher build output"
     exit 2
 }
 if (-not (Test-Path -LiteralPath $OutputRoot)) {
@@ -254,6 +283,10 @@ try {
         Write-ErrorMessage "the LEAN helper refused the run in pre-flight (exit 2): LEAN was not launched and no qualification record was written"
         exit 2
     }
+    if ($helperExit -eq 4) {
+        Write-ErrorMessage "the LEAN helper exited 4: the engine reported errors during the run; the run is not clean and no qualification record was written"
+        exit 3
+    }
 
     $runDirectory = $null
     $match = [regex]::Match($helperOutput, 'run directory:\s*(.+?);\s*log:')
@@ -269,11 +302,18 @@ try {
 
     $probeResult = $null
     $failedRequests = $null
+    $runtimeBinariesFile = $null
     if ($runDirectory -and (Test-Path -LiteralPath $runDirectory)) {
         $probeResult = Join-Path $runDirectory 'storage\single-anchor-replay-probe\replay-result.json'
         if (-not (Test-Path -LiteralPath $probeResult)) { $probeResult = $null }
         $failedFile = Get-ChildItem -LiteralPath $runDirectory -Filter 'failed-data-requests-*.txt' -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($failedFile) { $failedRequests = $failedFile.FullName }
+        $runtimeBinariesFile = Join-Path $runDirectory 'runtime-binaries.json'
+        $runtimePayload = [ordered]@{
+            source = 'MarketLab driver hashes taken before the run'
+            files  = $runtimeBinaryHashes
+        } | ConvertTo-Json -Depth 3
+        Set-Content -LiteralPath $runtimeBinariesFile -Value $runtimePayload -Encoding UTF8
     }
 
     $verifyArguments = @(
@@ -283,6 +323,7 @@ try {
     )
     if ($probeResult) { $verifyArguments += @('--probe-result', $probeResult) }
     if ($failedRequests) { $verifyArguments += @('--failed-data-requests', $failedRequests) }
+    if ($runtimeBinariesFile) { $verifyArguments += @('--runtime-binaries', $runtimeBinariesFile) }
     if ($Force) { $verifyArguments += '--force' }
 
     Write-Host "verify: $PythonExe $($verifyArguments -join ' ')"
@@ -293,10 +334,6 @@ try {
     if ($verifyExit -eq 2) {
         Write-Host "qualification driver: the record could not be written (exit 2)"
         exit 2
-    }
-    if ($helperExit -eq 4) {
-        Write-ErrorMessage "the LEAN helper exited 4: the engine reported errors during the run; the run is not clean (see the helper output and the run's log.txt)"
-        exit 3
     }
     if ($helperExit -ne 0 -and $helperExit -ne 3 -and $verifyExit -eq 0) {
         Write-ErrorMessage "the LEAN helper exited ${helperExit}: the replay run was not clean; the record is not accepted"

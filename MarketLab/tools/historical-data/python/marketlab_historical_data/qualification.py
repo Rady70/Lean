@@ -8,6 +8,8 @@ partial output.
 
 from __future__ import annotations
 
+import csv
+import hashlib
 import json
 import subprocess
 from dataclasses import dataclass
@@ -69,7 +71,7 @@ def dump_json(payload: dict) -> str:
 
 
 def load_json(path: Path) -> dict:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
 def repository_identity(start_path: Path) -> dict:
@@ -155,19 +157,83 @@ def _register_record_invalidation(data_folder: Path, transaction: OutputTransact
         transaction.register_removal(record)
 
 
+def _classify_native_partitions(
+    data_folder: Path, native_layout: NativeLeanTickLayout
+) -> tuple[set[Path], list[Path]]:
+    """Splits existing native partitions into MarketLab-owned and foreign files.
+
+    A partition is owned only when the current manifest lists it and its
+    recorded SHA-256 matches. Without a usable MarketLab manifest every
+    existing partition is foreign, so ``--force`` can never delete or replace
+    native history this tool did not create.
+    """
+    tick_directory = data_folder / native_layout.relative_directory
+    if not tick_directory.is_dir():
+        return set(), []
+    existing = [
+        candidate
+        for candidate in sorted(tick_directory.glob("*_quote.zip"))
+        if len(candidate.name) >= 8 and candidate.name[:8].isdigit()
+    ]
+    if not existing:
+        return set(), []
+    recorded: dict[str, str] = {}
+    manifest_file = manifest_path(data_folder)
+    try:
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8-sig"))
+        if isinstance(manifest, dict) and manifest.get("contract") == CONTRACT:
+            partitions = manifest.get("native", {}).get("partitions", [])
+            if isinstance(partitions, list):
+                for artifact in partitions:
+                    if not isinstance(artifact, dict):
+                        continue
+                    relative = artifact.get("zip_relative_path")
+                    recorded_sha = artifact.get("zip_sha256")
+                    if isinstance(relative, str) and isinstance(recorded_sha, str):
+                        recorded[relative.replace("\\", "/")] = recorded_sha
+    except (OSError, json.JSONDecodeError):
+        recorded = {}
+    owned: set[Path] = set()
+    foreign: list[Path] = []
+    for candidate in existing:
+        expected = recorded.get(f"{native_layout.relative_directory}/{candidate.name}")
+        if expected is None or sha256_file(candidate) != expected:
+            foreign.append(candidate)
+        else:
+            owned.add(candidate)
+    return owned, foreign
+
+
+def converter_source_identity(start_path: Path) -> dict:
+    """Hashes the actual converter Python sources, dirty checkout included.
+
+    ``head_sha`` alone does not identify a modified working tree; this aggregate
+    (and the per-file hashes) bind the exact converter source that produced a
+    qualification manifest.
+    """
+    package = Path(start_path).resolve().parent
+    files = {path.name: sha256_file(path) for path in sorted(package.glob("*.py"))}
+    digest = hashlib.sha256()
+    for name in sorted(files):
+        digest.update(f"{name}:{files[name]}\n".encode("utf-8"))
+    return {
+        "file_count": len(files),
+        "files": files,
+        "aggregate_sha256": digest.hexdigest(),
+    }
+
+
 def _register_generation_cleanup(
-    data_folder: Path, native_layout: NativeLeanTickLayout, transaction: OutputTransaction
+    data_folder: Path,
+    transaction: OutputTransaction,
+    owned_partitions: set[Path],
 ) -> None:
-    """A forced failed replacement clears the superseded expectation, record and partitions."""
+    """A forced failed replacement clears the superseded artifacts it owns."""
     for candidate in (expectation_path(data_folder), record_path(data_folder)):
         if candidate.is_file():
             transaction.register_removal(candidate)
-    tick_directory = data_folder / native_layout.relative_directory
-    if tick_directory.is_dir():
-        for candidate in sorted(tick_directory.glob("*_quote.zip")):
-            day = candidate.name[:8]
-            if day.isdigit() and len(day) == 8:
-                transaction.register_removal(candidate)
+    for candidate in sorted(owned_partitions):
+        transaction.register_removal(candidate)
 
 
 class SourceIdentityChanged(Exception):
@@ -255,6 +321,7 @@ def run_qualification(
         return QualificationOutcome(2, [f"SourceLayoutUnusable: {error}"], None, None)
 
     identity = repository_identity(Path(__file__))
+    identity["converter_source"] = converter_source_identity(Path(__file__))
     native_layout = NativeLeanTickLayout(symbol=symbol, market=market, security_type=security_type)
 
     if not force:
@@ -271,9 +338,37 @@ def run_qualification(
                 None,
             )
 
-    qualification = qualify_source(
-        source_path, layout, config, data_zone, source_zone, session_evaluator
-    )
+    owned_partitions: set[Path] = set()
+    if force:
+        owned_partitions, foreign_partitions = _classify_native_partitions(
+            data_folder, native_layout
+        )
+        if foreign_partitions:
+            names = ", ".join(candidate.name for candidate in foreign_partitions[:5])
+            if len(foreign_partitions) > 5:
+                names += ", ..."
+            return QualificationOutcome(
+                2,
+                [
+                    "ForeignNativePartitions: the tick directory contains native partitions the "
+                    f"current MarketLab manifest does not own ({names}); --force will not delete "
+                    "data it did not create. Use a clean/dedicated research data folder"
+                ],
+                None,
+                None,
+            )
+
+    try:
+        qualification = qualify_source(
+            source_path, layout, config, data_zone, source_zone, session_evaluator
+        )
+    except (UnicodeDecodeError, LookupError, csv.Error, OSError) as error:
+        return QualificationOutcome(
+            2,
+            [f"SourceUnreadable: the source could not be read during qualification: {error}"],
+            None,
+            None,
+        )
 
     if sha256_file(source_path) != source_sha256:
         return QualificationOutcome(
@@ -319,7 +414,7 @@ def run_qualification(
                     )
                 if force:
                     _register_stale_partition_removals(
-                        data_folder, native_layout, partitions, transaction
+                        partitions, transaction, owned_partitions
                     )
                     _register_record_invalidation(data_folder, transaction)
                 manifest = _build_manifest(
@@ -384,7 +479,7 @@ def run_qualification(
             with OutputTransaction(allow_overwrite=force) as transaction:
                 transaction.stage_text(manifest_path(data_folder), dump_json(manifest))
                 if force:
-                    _register_generation_cleanup(data_folder, native_layout, transaction)
+                    _register_generation_cleanup(data_folder, transaction, owned_partitions)
                 transaction.commit()
         except OutputTransactionError as error:
             return QualificationOutcome(2, [f"ManifestNotWritten: {error}"], None, None)
@@ -398,23 +493,15 @@ def run_qualification(
 
 
 def _register_stale_partition_removals(
-    data_folder: Path,
-    native_layout: NativeLeanTickLayout,
     partitions,
     transaction: OutputTransaction,
+    owned_partitions: set[Path],
 ) -> None:
-    """With force: remove old native partitions the new qualification does not describe.
-
-    Scoped to ``YYYYMMDD_quote.zip`` files inside this subscription's tick
-    directory; a research data folder should still be dedicated to one dataset.
-    """
-    tick_directory = data_folder / native_layout.relative_directory
-    if not tick_directory.is_dir():
-        return
+    """With force: remove owned partitions the new qualification does not describe."""
     current_days = {artifact.partition.strftime("%Y%m%d") for artifact in partitions}
-    for candidate in sorted(tick_directory.glob("*_quote.zip")):
+    for candidate in sorted(owned_partitions):
         day = candidate.name[:8]
-        if day.isdigit() and len(day) == 8 and day not in current_days:
+        if day not in current_days:
             transaction.register_removal(candidate)
 
 
@@ -482,8 +569,10 @@ def _build_manifest(
             "converter_checkout": identity,
             "runtime_identity_note": (
                 "lean_checkout_git_sha is source provenance; the replay probe records the "
-                "SHA-256 of the assemblies it actually executes under probe.runtime.assemblies"
+                "SHA-256 of the assemblies it actually executes under probe.runtime.assemblies, "
+                "and the driver records the runtime binaries it launches under runtime_binaries"
             ),
+            "converter_source": identity.get("converter_source"),
             "data_time_zone": hours.data_time_zone,
             "exchange_time_zone": hours.exchange_time_zone,
             "market_hours_database": hours.describe(),

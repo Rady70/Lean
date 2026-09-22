@@ -134,6 +134,10 @@ try {
     Assert-True ($recordPass.probe.completed -eq $true) 'probe completed'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataPass 'cfd\oanda\tick\xauusd\20140505_quote.zip')) 'native partition 20140505 exists'
     Assert-True ($recordPass.probe.runtime.market_hours_database_sha256.Length -eq 64) 'probe recorded the runtime market-hours database SHA-256'
+    $runtimeBinaryNames = @($recordPass.runtime_binaries.files.PSObject.Properties.Name)
+    Assert-True ($runtimeBinaryNames -contains 'MarketLab.HistoricalDataProbe.dll') 'runtime binaries include the probe assembly'
+    Assert-True ($runtimeBinaryNames -contains 'QuantConnect.Lean.Engine.dll') 'runtime binaries include the LEAN Engine assembly'
+    Assert-True ($runtimeBinaryNames -contains 'QuantConnect.Lean.Launcher.dll') 'runtime binaries include the Launcher assembly'
 
     Write-Host 'case 2: session-filter-gap (expected FAIL with a delivery difference)'
     $dataGap = Join-Path $scratch 'case-gap'

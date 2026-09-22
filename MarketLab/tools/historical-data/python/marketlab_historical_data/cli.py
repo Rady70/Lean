@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -16,7 +17,12 @@ from .qualification import (
     record_path,
     run_qualification,
 )
-from .replay import build_record, require_manifest_structure, require_probe_structure
+from .replay import (
+    build_record,
+    require_manifest_structure,
+    require_probe_structure,
+    require_runtime_binaries_structure,
+)
 from .transactions import OutputTransaction, OutputTransactionError
 
 __all__ = ["main"]
@@ -69,6 +75,11 @@ def _verify_parser(subparsers) -> None:
         "--failed-data-requests",
         help="LEAN helper failed-data-requests-*.txt for the probe run",
     )
+    parser.add_argument(
+        "--runtime-binaries",
+        help="JSON of the runtime binary hashes recorded by the driver "
+        "({\"files\": {\"name.dll\": \"<sha256>\"}})",
+    )
     parser.add_argument("--report", help="output record path (default: data folder)")
     parser.add_argument(
         "--force", action="store_true", help="replace an existing qualification record"
@@ -77,7 +88,7 @@ def _verify_parser(subparsers) -> None:
 
 
 def _read_failed_requests(path: Path) -> list[str]:
-    lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    lines = Path(path).read_text(encoding="utf-8-sig", errors="replace").splitlines()
     return [line.strip() for line in lines if line.strip()]
 
 
@@ -123,6 +134,9 @@ def _print_record_summary(record: dict) -> None:
     if replay["unrelated_failed_data_requests"]:
         print(f"unrelated failed data requests (not tick partitions): "
               f"{len(replay['unrelated_failed_data_requests'])}")
+    runtime_binaries = record.get("runtime_binaries") or {}
+    if runtime_binaries.get("files"):
+        print(f"runtime binaries recorded: {len(runtime_binaries['files'])}")
     print(f"overall qualification: {record['overall_qualification']}")
     if record["failure_reasons"]:
         print(f"failure reasons: {record['failure_reasons']}")
@@ -215,6 +229,7 @@ def _run_verify(args) -> int:
             return 2
 
     failed_requests: list[str] = []
+    evidence_paths = [manifest_file]
     if args.failed_data_requests:
         failed_path = Path(args.failed_data_requests)
         if not failed_path.is_file():
@@ -225,6 +240,27 @@ def _run_verify(args) -> int:
         except OSError as error:
             print(f"ERROR: failed-data-requests file is not readable: {failed_path}: {error}", file=sys.stderr)
             return 2
+        evidence_paths.append(failed_path)
+    if probe_file is not None:
+        evidence_paths.append(probe_file)
+
+    runtime_binaries = None
+    if args.runtime_binaries:
+        runtime_file = Path(args.runtime_binaries)
+        if not runtime_file.is_file():
+            print(f"ERROR: runtime-binaries file not found: {runtime_file}", file=sys.stderr)
+            return 2
+        try:
+            runtime_binaries = load_json(runtime_file)
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"ERROR: runtime-binaries file is not readable JSON: {runtime_file}: {error}", file=sys.stderr)
+            return 2
+        try:
+            require_runtime_binaries_structure(runtime_binaries)
+        except ValueError as error:
+            print(f"ERROR: malformed runtime-binaries evidence: {runtime_file}: {error}", file=sys.stderr)
+            return 2
+        evidence_paths.append(runtime_file)
 
     record = build_record(
         manifest=manifest,
@@ -233,8 +269,16 @@ def _run_verify(args) -> int:
         probe_path=probe_file,
         failed_request_paths=failed_requests,
         data_folder=data_folder,
+        runtime_binaries=runtime_binaries,
     )
     report_file = Path(args.report) if args.report else record_path(data_folder)
+    for evidence in evidence_paths:
+        if os.path.normcase(str(report_file.resolve())) == os.path.normcase(str(Path(evidence).resolve())):
+            print(
+                f"ERROR: the report path must not replace an evidence input: {report_file}",
+                file=sys.stderr,
+            )
+            return 2
     try:
         with OutputTransaction(allow_overwrite=args.force) as transaction:
             transaction.stage_text(report_file, dump_json(record))

@@ -24,6 +24,7 @@ __all__ = [
     "classify_failed_data_requests",
     "require_manifest_structure",
     "require_probe_structure",
+    "require_runtime_binaries_structure",
     "semantic_digest_line_format",
 ]
 
@@ -67,8 +68,30 @@ _PROBE_REQUIRED = (
 )
 
 
+def _require_object(value, label: str) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} is missing or not an object")
+    return value
+
+
+def _require_string(value, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} is missing or not a non-empty string")
+    return value
+
+
+def _require_int(value, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{label} is missing or not a non-negative integer")
+    return value
+
+
 def require_manifest_structure(manifest) -> None:
-    """Raises ``ValueError`` when a manifest is not a complete MarketLab manifest."""
+    """Raises ``ValueError`` when a manifest is not a complete MarketLab manifest.
+
+    Every field ``build_record()`` dereferences is type-checked, so malformed
+    audit evidence fails as a configuration error instead of a traceback.
+    """
     if not isinstance(manifest, dict):
         raise ValueError("manifest is not a JSON object")
     if manifest.get("contract") != MANIFEST_CONTRACT:
@@ -80,6 +103,40 @@ def require_manifest_structure(manifest) -> None:
         for key in keys:
             if key not in value:
                 raise ValueError(f"manifest section {section!r} is missing {key!r}")
+    source = manifest["source"]
+    _require_string(source.get("path"), "manifest source.path")
+    _require_string(source.get("sha256"), "manifest source.sha256")
+    lean = manifest["lean"]
+    for key in ("symbol", "market", "security_type", "data_time_zone", "exchange_time_zone"):
+        _require_string(lean.get(key), f"manifest lean.{key}")
+    market_hours = _require_object(lean.get("market_hours_database"), "manifest lean.market_hours_database")
+    _require_string(
+        market_hours.get("database_sha256"), "manifest lean.market_hours_database.database_sha256"
+    )
+    counts = manifest["counts"]
+    _require_int(counts.get("accepted_row_count"), "manifest counts.accepted_row_count")
+    _require_int(counts.get("converted_row_count"), "manifest counts.converted_row_count")
+    accepted = _require_object(manifest["per_day"].get("accepted"), "manifest per_day.accepted")
+    for key in accepted:
+        if not isinstance(key, str):
+            raise ValueError("manifest per_day.accepted keys must be strings")
+    semantic = manifest["semantic"]
+    digest = semantic.get("ordered_source_semantic_digest")
+    if digest is not None and not isinstance(digest, str):
+        raise ValueError("manifest semantic.ordered_source_semantic_digest is not a string")
+    native = manifest["native"]
+    _require_object(native.get("layout"), "manifest native.layout")
+    partitions = native.get("partitions")
+    if not isinstance(partitions, list):
+        raise ValueError("manifest native.partitions is missing or not an array")
+    for index, artifact in enumerate(partitions):
+        artifact = _require_object(artifact, f"manifest native.partitions[{index}]")
+        _require_string(artifact.get("partition"), f"manifest native.partitions[{index}].partition")
+        _require_string(
+            artifact.get("zip_relative_path"), f"manifest native.partitions[{index}].zip_relative_path"
+        )
+        _require_string(artifact.get("zip_sha256"), f"manifest native.partitions[{index}].zip_sha256")
+        _require_int(artifact.get("row_count"), f"manifest native.partitions[{index}].row_count")
 
 
 def require_probe_structure(probe, label: str = "probe result") -> None:
@@ -91,20 +148,45 @@ def require_probe_structure(probe, label: str = "probe result") -> None:
     for key in _PROBE_REQUIRED:
         if key not in probe:
             raise ValueError(f"{label} is missing {key!r}")
+    if not isinstance(probe.get("completed"), bool):
+        raise ValueError(f"{label} completed is not a boolean")
+    _require_string(probe.get("qualification"), f"{label} qualification")
+    reasons = probe.get("failure_reasons")
+    if not isinstance(reasons, list) or any(not isinstance(reason, str) for reason in reasons):
+        raise ValueError(f"{label} failure_reasons is not an array of strings")
     for section in ("expected", "delivered", "comparison", "runtime"):
-        if not isinstance(probe[section], dict):
-            raise ValueError(f"{label} section {section!r} is not an object")
-    delivered = probe["delivered"]
-    if delivered.get("quote_count") is None or not delivered.get("semantic_digest"):
-        raise ValueError(f"{label} delivered quote_count/semantic_digest is missing")
-    runtime = probe["runtime"]
-    for key in ("engine_quotes_processed", "data_time_zone", "exchange_time_zone", "market_hours_database_sha256"):
-        if runtime.get(key) is None:
-            raise ValueError(f"{label} runtime is missing {key!r}")
-    if probe["comparison"].get("engine_quotes_match_delivered") is None:
-        raise ValueError(f"{label} comparison is missing 'engine_quotes_match_delivered'")
-    if probe["expected"].get("contract") != EXPECTATION_CONTRACT:
+        _require_object(probe[section], f"{label} section {section!r}")
+    expected = probe["expected"]
+    if expected.get("contract") != EXPECTATION_CONTRACT:
         raise ValueError(f"{label} embedded expectation contract is missing or unknown")
+    _require_int(expected.get("accepted_row_count"), f"{label} expected.accepted_row_count")
+    _require_string(
+        expected.get("ordered_source_semantic_digest"), f"{label} expected.ordered_source_semantic_digest"
+    )
+    _require_string(expected.get("source_file_sha256"), f"{label} expected.source_file_sha256")
+    delivered = probe["delivered"]
+    _require_int(delivered.get("quote_count"), f"{label} delivered.quote_count")
+    _require_string(delivered.get("semantic_digest"), f"{label} delivered.semantic_digest")
+    _require_object(delivered.get("per_partition"), f"{label} delivered.per_partition")
+    comparison = probe["comparison"]
+    if not isinstance(comparison.get("engine_quotes_match_delivered"), bool):
+        raise ValueError(f"{label} comparison.engine_quotes_match_delivered is not a boolean")
+    runtime = probe["runtime"]
+    _require_int(runtime.get("engine_quotes_processed"), f"{label} runtime.engine_quotes_processed")
+    for key in ("data_time_zone", "exchange_time_zone", "market_hours_database_sha256"):
+        _require_string(runtime.get(key), f"{label} runtime.{key}")
+
+
+def require_runtime_binaries_structure(payload, label: str = "runtime binaries") -> None:
+    """Raises ``ValueError`` when orchestration binary evidence is malformed."""
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} is not a JSON object")
+    files = payload.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError(f"{label} has no files object")
+    for name, digest in files.items():
+        if not isinstance(name, str) or not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError(f"{label} has a malformed entry for {name!r}")
 
 
 def semantic_digest_line_format() -> str:
@@ -176,6 +258,7 @@ def build_record(
     probe_path: Path | None,
     failed_request_paths,
     data_folder: Path | None,
+    runtime_binaries: dict | None = None,
 ) -> dict:
     """Builds the final qualification record; overall PASS only when every check passes."""
     failures: list[str] = []
@@ -313,6 +396,7 @@ def build_record(
         "manifest_path": str(manifest_path),
         "manifest_sha256": _file_sha256(manifest_path),
         "manifest": manifest,
+        "runtime_binaries": runtime_binaries,
         "probe": {
             "path": str(probe_path) if probe_path is not None else None,
             "sha256": _file_sha256(probe_path) if probe_path is not None else None,

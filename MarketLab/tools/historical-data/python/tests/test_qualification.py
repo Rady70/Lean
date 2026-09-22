@@ -148,13 +148,64 @@ class PassingQualificationTests(QualificationCase):
             content = archive.read(archive.namelist()[0]).decode("utf-8")
         self.assertEqual(content, "28800000,1900,1900")
 
-    def test_force_removes_stale_partitions(self):
-        self.qualify(PASS_CSV)
-        stale = self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140101_quote.zip"
-        stale.write_bytes(b"stale")
-        outcome = self.qualify(PASS_CSV, force=True)
+    def test_force_removes_owned_stale_partitions(self):
+        two_days = (
+            "timestamp,bid,ask\n"
+            "2014-05-05 08:00:00.000,1291.6770,1292.0330\n"
+            "2014-05-06 08:00:00.000,1291.70,1291.80\n"
+        )
+        self.qualify(two_days, name="two-days.csv")
+        second_day = self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140506_quote.zip"
+        self.assertTrue(second_day.is_file())
+        outcome = self.qualify(PASS_CSV, force=True, name="one-day.csv")
         self.assertEqual(outcome.exit_code, 0, outcome.failures)
-        self.assertFalse(stale.exists())
+        self.assertFalse(second_day.exists())
+        self.assertTrue(
+            (self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140505_quote.zip").is_file()
+        )
+
+    def test_force_refuses_foreign_partitions(self):
+        self.qualify(PASS_CSV)
+        foreign = self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140101_quote.zip"
+        foreign.write_bytes(b"unrelated history")
+        outcome = self.qualify(PASS_CSV, force=True)
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("ForeignNativePartitions"))
+        self.assertEqual(foreign.read_bytes(), b"unrelated history")
+
+    def test_force_refuses_a_tampered_owned_partition(self):
+        self.qualify(PASS_CSV)
+        partition = self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140505_quote.zip"
+        partition.write_bytes(b"tampered")
+        outcome = self.qualify(PASS_CSV, force=True)
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("ForeignNativePartitions"))
+
+    def test_force_refuses_partitions_without_a_previous_manifest(self):
+        new_root = self.root / "no-manifest"
+        shutil.copytree(self.data, new_root)
+        foreign = new_root / "cfd" / "oanda" / "tick" / "xauusd" / "20140101_quote.zip"
+        foreign.parent.mkdir(parents=True)
+        foreign.write_bytes(b"unrelated history")
+        outcome = run_qualification(
+            source_path=self.write_source(PASS_CSV, "no-manifest.csv"),
+            data_folder=new_root,
+            config=CsvSourceConfig(source_timezone="UTC"),
+            force=True,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("ForeignNativePartitions"))
+        self.assertEqual(foreign.read_bytes(), b"unrelated history")
+
+    def test_converter_source_identity_is_recorded(self):
+        outcome = self.qualify(PASS_CSV)
+        converter_source = outcome.manifest["lean"]["converter_source"]
+        self.assertEqual(len(converter_source["aggregate_sha256"]), 64)
+        self.assertGreaterEqual(converter_source["file_count"], 10)
+        recomputed = qualification_module.converter_source_identity(
+            Path(qualification_module.__file__)
+        )
+        self.assertEqual(converter_source["aggregate_sha256"], recomputed["aggregate_sha256"])
         self.assertTrue(
             (self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140505_quote.zip").is_file()
         )
@@ -164,9 +215,10 @@ class PassingQualificationTests(QualificationCase):
         calls = {"count": 0}
 
         def changing_hash(path, chunk_size=1 << 20):
-            calls["count"] += 1
-            if calls["count"] == 2:
-                return "0" * 64
+            if Path(path).suffix == ".csv":
+                calls["count"] += 1
+                if calls["count"] == 2:
+                    return "0" * 64
             return real_sha256_file(path, chunk_size)
 
         with mock.patch.object(qualification_module, "sha256_file", side_effect=changing_hash):
@@ -185,9 +237,10 @@ class PassingQualificationTests(QualificationCase):
         calls = {"count": 0}
 
         def changing_hash(path, chunk_size=1 << 20):
-            calls["count"] += 1
-            if calls["count"] == 2:
-                return "0" * 64
+            if Path(path).suffix == ".csv":
+                calls["count"] += 1
+                if calls["count"] == 2:
+                    return "0" * 64
             return real_sha256_file(path, chunk_size)
 
         source = "timestamp,bid,ask\n2014-05-05 08:00:00.000,1291.7,1291.6\n"
@@ -319,6 +372,55 @@ class FailingQualificationTests(QualificationCase):
         )
         self.assertEqual(outcome.exit_code, 2)
         self.assertTrue(outcome.failures[0].startswith("SymbolPropertiesDatabaseMissing"))
+
+    def test_invalid_source_encoding_is_a_configuration_error(self):
+        path = self.root / "bad-encoding.csv"
+        path.write_bytes(b"timestamp,bid,ask\n\xff\xfe,1.0,1.1\n")
+        outcome = run_qualification(
+            source_path=path,
+            data_folder=self.data,
+            config=CsvSourceConfig(source_timezone="UTC"),
+            force=False,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("SourceLayoutUnusable"))
+
+    def test_csv_parser_error_during_qualification_is_controlled(self):
+        path = self.root / "oversized-field.csv"
+        path.write_text(
+            "timestamp,bid,ask\n2014-05-05 08:00:00.000," + "1" * 200000 + ",1.1\n",
+            encoding="utf-8",
+        )
+        outcome = run_qualification(
+            source_path=path,
+            data_folder=self.data,
+            config=CsvSourceConfig(source_timezone="UTC"),
+            force=False,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("SourceUnreadable"))
+
+    def test_nul_byte_source_row_is_rejected_without_a_traceback(self):
+        path = self.root / "nul.csv"
+        path.write_bytes(b"timestamp,bid,ask\n2014-05-05 08:00:00.000,1.0,1.1\n\x00\n")
+        outcome = run_qualification(
+            source_path=path,
+            data_folder=self.data,
+            config=CsvSourceConfig(source_timezone="UTC"),
+            force=False,
+        )
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertEqual(outcome.manifest["counts"]["rejected_row_count"], 1)
+
+    def test_multi_character_delimiter_is_a_configuration_error(self):
+        outcome = run_qualification(
+            source_path=self.write_source(PASS_CSV, "multi-delimiter.csv"),
+            data_folder=self.data,
+            config=CsvSourceConfig(delimiter=";;", source_timezone="UTC"),
+            force=False,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("SourceLayoutUnusable"))
 
 
 if __name__ == "__main__":

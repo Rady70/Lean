@@ -157,6 +157,77 @@ class VerifyCliTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("probe result not found", result.stderr)
 
+    def test_report_must_not_alias_an_evidence_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = self.write_manifest(directory, usable_manifest())
+            result = self.run_cli(
+                [
+                    "verify",
+                    "--manifest",
+                    str(manifest),
+                    "--report",
+                    str(manifest),
+                    "--force",
+                ]
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("must not replace an evidence input", result.stderr)
+
+    def test_corrupt_nested_manifest_is_a_configuration_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest_payload = usable_manifest()
+            manifest_payload["lean"]["market_hours_database"] = "corrupt"
+            manifest = self.write_manifest(directory, manifest_payload)
+            result = self.run_cli(["verify", "--manifest", str(manifest)])
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("not a usable MarketLab qualification manifest", result.stderr)
+
+    def test_malformed_runtime_binaries_is_a_configuration_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = self.write_manifest(directory, usable_manifest())
+            runtime = Path(directory) / "runtime-binaries.json"
+            runtime.write_text(json.dumps({"files": {"x.dll": "short"}}), encoding="utf-8")
+            result = self.run_cli(
+                ["verify", "--manifest", str(manifest), "--runtime-binaries", str(runtime)]
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("malformed runtime-binaries evidence", result.stderr)
+
+    def test_probe_with_wrong_field_types_is_a_configuration_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = self.write_manifest(directory, usable_manifest())
+            probe = Path(directory) / "probe.json"
+            probe.write_text(
+                json.dumps(
+                    {
+                        "contract": "marketlab-single-anchor-replay-probe-v1",
+                        "completed": True,
+                        "qualification": "PASS",
+                        "failure_reasons": [],
+                        "expected": {
+                            "contract": "marketlab-single-anchor-replay-expectation-v1",
+                            "accepted_row_count": 1,
+                            "ordered_source_semantic_digest": "sha256:" + "c" * 64,
+                            "source_file_sha256": "a" * 64,
+                        },
+                        "delivered": {"quote_count": "one", "semantic_digest": "sha256:x"},
+                        "comparison": {"engine_quotes_match_delivered": True},
+                        "runtime": {
+                            "engine_quotes_processed": 1,
+                            "data_time_zone": "UTC",
+                            "exchange_time_zone": "UTC",
+                            "market_hours_database_sha256": "b" * 64,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_cli(
+                ["verify", "--manifest", str(manifest), "--probe-result", str(probe)]
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("not a usable replay probe result", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

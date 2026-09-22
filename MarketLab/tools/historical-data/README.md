@@ -117,10 +117,14 @@ generations are coherent: a first run publishes the partitions, manifest and
 expectation; a forced replacement invalidates the previous
 `qualification-record.json` in the same transaction; and a forced requalification
 that fails clears the superseded expectation, record and native partitions
-while publishing the new failure manifest. Without `-Force`, any existing
-generation is refused (exit 2) rather than mixed. Output folders inside the
-LEAN Git worktree are refused, because replacing a generation removes native
-partitions.
+while publishing the new failure manifest. **Foreign partitions are never
+touched:** `-Force` may replace or remove a `YYYYMMDD_quote.zip` only when the
+previous MarketLab manifest lists it and its recorded SHA-256 matches. Any
+native ZIP without a usable MarketLab manifest, or with a mismatched hash, is
+refused with exit 2 (`ForeignNativePartitions`); use a clean/dedicated research
+data folder. Without `-Force`, any existing generation is refused (exit 2)
+rather than mixed. Output folders inside the LEAN Git worktree are refused,
+because replacing a generation removes native partitions.
 
 ### The three underlying steps
 
@@ -164,7 +168,7 @@ All generated research data stays **outside Git**.
 | `<data folder>\cfd\oanda\tick\xauusd\YYYYMMDD_quote.zip` | native LEAN quote-tick partition; one entry `YYYYMMDD_xauusd_tick_quote.csv`, lines `time,bid,ask` |
 | `<data folder>\marketlab-qualification\qualification-manifest.json` | machine-readable source/conversion/provenance record |
 | `<data folder>\marketlab-qualification\replay-expectation.json` | what the probe must observe (counts, digests, window, partitions) |
-| `<data folder>\marketlab-qualification\qualification-record.json` | final record: manifest + probe result + every comparison + explicit overall PASS/FAIL (written by `verify`) |
+| `<data folder>\marketlab-qualification\qualification-record.json` | final record: manifest + probe result + runtime-binary hashes + every comparison + explicit overall PASS/FAIL (written by `verify`) |
 | `<run dir>\storage\single-anchor-replay-probe\replay-result.json` | the probe's delivered stream summary and comparison |
 
 ### Native file semantics (derived from the current LEAN implementation)
@@ -195,7 +199,7 @@ All generated research data stays **outside Git**.
 |---|---|
 | source qualification | every row satisfies the quote/timestamp/order contract; no rejected, out-of-order or mixed-representation row |
 | native timestamp parity | no accepted row has sub-millisecond precision |
-| price decimal parity | every accepted price round-trips through the native LEAN decimal reader (signed 64-bit coefficient, scale at most 28) |
+| price decimal parity | every accepted price round-trips through the native LEAN decimal reader (coefficient up to unsigned 64-bit max, scale at most 28) |
 | conversion | native partitions, manifest and expectation were published atomically |
 
 `verify` (the final authority) requires all of the following:
@@ -204,6 +208,7 @@ All generated research data stays **outside Git**.
 accepted source rows == converted native rows == LEAN-delivered rows
 the source SHA-256 is verified unchanged across qualification and conversion
 the probe's engine processed every delivered quote (QuoteTickFeed invariant)
+the driver recorded the SHA-256 of the runtime binaries it launched
 source semantic digest == delivered semantic digest
 the probe's embedded expectation matches this manifest (digest, source hash, identity, zones)
 first/last canonical UTC agree
@@ -226,7 +231,7 @@ Any failure produces `overall_qualification: FAIL` and a machine-readable
 |---|---|
 | `SourceRejectedRows` | at least one source row failed the contract; see `counts.rejected_row_reasons` |
 | `SourcePrecisionExceedsLeanTickFormat` | meaningful sub-millisecond source precision; native millisecond parity is impossible |
-| `SourcePriceExceedsLeanDecimalFormat` | a price does not round-trip through the native LEAN reader (`StreamReaderExtensions.GetDecimal`: signed 64-bit coefficient, scale ≤ 28) |
+| `SourcePriceExceedsLeanDecimalFormat` | a price does not round-trip through the native LEAN reader (`StreamReaderExtensions.GetDecimal`: unchecked 64-bit coefficient limbs, coefficient up to unsigned 64-bit max, scale ≤ 28) |
 | `NativeLeanConversionFailed` | conversion/publish refused or failed; nothing was published |
 | `NativePartitionMissing` | LEAN could not read a partition that carries accepted rows |
 | `SourceCoverageGap` | a market day inside the qualified window has no source rows |
@@ -243,10 +248,14 @@ Any failure produces `overall_qualification: FAIL` and a machine-readable
 | `NativePartitionFileMissing` / `NativePartitionHashMismatch` | converted output changed after conversion |
 
 Configuration/infrastructure errors (exit 2, no qualification verdict) include
-`DataFolderInsideRepository`, `OutputsExistWithoutForce`,
-`SymbolPropertiesDatabaseMissing`, `MarketHoursDatabaseUnusable`,
+`DataFolderInsideRepository`, `ForeignNativePartitions` (`-Force` will not
+remove native data the current MarketLab manifest does not own),
+`OutputsExistWithoutForce`, `SymbolPropertiesDatabaseMissing`,
+`MarketHoursDatabaseUnusable`, `SourceUnreadable` / `SourceLayoutUnusable`
+(invalid encoding, delimiter or CSV parser failure),
 `SourceChangedDuringQualification` (the source changed mid-run; nothing was
-published) and wrong-schema manifest/probe inputs.
+published), a report path that would replace one of its evidence inputs, and
+wrong-schema manifest/probe/runtime-binaries inputs.
 
 **Session filtering must not silently pass.** LEAN drops ticks outside the
 resolved exchange sessions (for Oanda XAUUSD: the New York 16:58-18:03 break,
@@ -295,11 +304,11 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (133 tests)
+# Python offline tool (150 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
-# C# probe canonical values/digest/comparison (26 tests)
+# C# probe canonical values/digest/comparison/boundaries (32 tests)
 dotnet test MarketLab\tools\historical-data\probe-tests\MarketLab.HistoricalDataProbe.Tests.csproj --configuration Release
 
 # end-to-end Windows test: CSV -> native files -> actual LEAN replay -> record
@@ -334,12 +343,17 @@ material only; nothing here is a runtime dependency on them.
 - LEAN probes the trading days adjacent to the window for continuity and logs
   them as failed data requests when the source does not extend there; the
   record classifies those as `out_of_window_failed_data_requests` warnings.
-- Source values are bounded by what the native LEAN decimal reader can parse;
-  extreme exponents are rejected with a controlled
-  `SourcePriceExceedsLeanDecimalFormat` failure instead of an exception, and
-  spread diagnostics are marked `complete: false` when such a row is present.
+- Source values are bounded by the native LEAN reader: the coefficient is
+  accumulated in an unchecked 64-bit integer, so exact round-trips hold up to
+  unsigned 64-bit max with at most 28 fractional digits. Extreme exponents are
+  rejected with a controlled `SourcePriceExceedsLeanDecimalFormat` failure
+  instead of an exception, and spread diagnostics are marked `complete: false`
+  when such a row is present.
 - The subscription identity is the driver-enforced XAUUSD/oanda/Cfd scope; a
   non-default identity is refused rather than loosely supported.
-- `lean_checkout_git_sha` is source provenance. The runtime binary identity is
-  recorded by the probe as SHA-256 of the assemblies it actually executes
-  (`runtime.assemblies`); the driver does not rebuild them.
+- Provenance: `lean_checkout_git_sha` and `converter_source` (per-file and
+  aggregate hashes) identify the source that produced the manifest, even from a
+  dirty checkout. The runtime identity is recorded twice: the driver hashes the
+  probe and LEAN assemblies it launches (`runtime_binaries` in the record), and
+  the probe adds an in-process `runtime.assemblies` list as supplemental
+  evidence (byte-loaded assemblies may not expose a file `Location`).
