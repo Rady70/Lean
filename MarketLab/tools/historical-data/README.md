@@ -1,5 +1,10 @@
 # Historical dataset qualification and native-LEAN replay (PR 1)
 
+Status: **PR 1 is implemented and complete** (`Rady70/Lean` PR #6). The
+qualification/conversion tooling is offline Python only; the normal per-tick
+SingleAnchor runtime remains C#, LEAN is unchanged, and every custom file stays
+under `MarketLab/`.
+
 This directory is the MarketLab-owned offline tooling that takes a historical
 bid/ask CSV source and establishes whether it can be represented and replayed
 through LEAN's native XAUUSD/Oanda CFD tick path without silently changing the
@@ -15,10 +20,10 @@ strict qualification          MarketLab/tools/historical-data (Python, offline)
 native LEAN quote-tick files  <research data folder>/cfd/oanda/tick/xauusd
       |
       v
-actual LEAN data path         unchanged LEAN engine + MarketLab replay probe
+actual LEAN data path         unchanged LEAN engine
       |
       v
-quotes delivered to MarketLab  replay-result.json
+QuoteTickFeed                 MarketLab replay probe (strategy feed path)
       |
       v
 qualification record          explicit PASS/FAIL
@@ -382,3 +387,10 @@ material only; nothing here is a runtime dependency on them.
   probe and LEAN assemblies it launches (`runtime_binaries` in the record), and
   the probe adds an in-process `runtime.assemblies` list as supplemental
   evidence (byte-loaded assemblies may not expose a file `Location`).
+- The user's real historical CSV has **not been qualified yet**. The next
+  non-blocking measurement is qualification speed and memory on a
+  representative large slice of that dataset (the per-day conversion buffer and
+  the exact spread histogram are the two candidates); only after the data path
+  is exercised on real data does the plan continue with **PR 2** (C# research
+  account view and bounded analytics), which remains the next implementation
+  phase.

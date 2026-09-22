@@ -491,7 +491,11 @@ that run: `MarketLab\tools\historical-data\` strictly validates the source
 against the strategy's quote contract, writes native
 `cfd\oanda\tick\xauusd` partitions into a research data folder outside Git, and
 verifies the quotes the unchanged LEAN engine actually delivers with a separate
-replay probe. See [its README](tools/historical-data/README.md).
+replay probe. See [its README](tools/historical-data/README.md). **PR 1 of the
+[research implementation plan](SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md) is
+complete**; the user's real historical dataset has not been qualified yet, and
+the next implementation phase (**PR 2**, C# research account and bounded
+analytics) starts after the data path has been exercised on real data.
 
 ## 10. When required data is missing
 

@@ -2,6 +2,13 @@
 
 Status: approved implementation plan for the next research-qualification phase.
 
+Implementation note (finalization record, not a plan change): PR 1
+(historical dataset qualification and exact native-LEAN replay) is implemented
+and merged. The user's real historical dataset has not been qualified yet; the
+next non-blocking measurement is qualification speed/memory on a representative
+large slice, and PR 2 remains the next implementation phase after the data path
+has been exercised on real data.
+
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
 behaviour. The behavioural authority remains
@@ -365,7 +372,7 @@ PR 1 is complete when:
 10. tests pass on Windows/local;
 11. no hosted CI or upstream LEAN modification is introduced.
 
-PR 1 is the immediate next implementation task.
+PR 1 is implemented and merged (see the implementation note at the top); PR 2 is the next implementation phase.
 
 ### PR 2 -- C# research account view and bounded analytics
 

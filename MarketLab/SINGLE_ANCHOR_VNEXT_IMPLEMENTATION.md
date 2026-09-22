@@ -316,12 +316,15 @@ culture; `true`/`false` for booleans.
   repository and no new or synthetic data is committed. The shipped 2014
   sample remains an engine fixture used for software-use evidence only
   (section 7). The MarketLab-owned offline qualification and conversion path
-  now exists (PR 1, `MarketLab\tools\historical-data\README.md`): it strictly
-  qualifies a historical bid/ask CSV against this strategy's quote contract,
-  writes native `cfd\oanda\tick\xauusd` partitions into a research data folder
-  outside Git, and verifies the delivered stream through the unchanged LEAN
-  engine; a research history still needs its own provenance, licensing and
-  integrity record, and only a qualification PASS may precede a strategy run.
+  now exists and **PR 1 is implemented, merged and locally validated**
+  (`MarketLab\tools\historical-data\README.md`): it strictly qualifies a
+  historical bid/ask CSV against this strategy's quote contract, writes native
+  `cfd\oanda\tick\xauusd` partitions into a research data folder outside Git,
+  and verifies the delivered stream through the unchanged LEAN engine; a
+  research history still needs its own provenance, licensing and integrity
+  record, and only a qualification PASS may precede a strategy run. The user's
+  real dataset has not been qualified yet; PR 2 remains the next implementation
+  phase after that data-path exercise.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants
   (a partial tail fill must not be able to break the hard-BE requirement; a
