@@ -43,11 +43,11 @@ namespace MarketLab.SingleAnchor.Tests
     {
         public static readonly DateTime T0 = new DateTime(2024, 1, 2, 10, 0, 0);
 
-        public Harness(SingleAnchorParameters? parameters = null)
+        public Harness(SingleAnchorParameters? parameters = null, HistoricalTradingAvailability? tradingAvailability = null)
         {
             Parameters = parameters ?? Defaults();
             Executor = new SyntheticExecutor(Parameters);
-            Engine = new SingleAnchorEngine(Parameters, Executor);
+            Engine = new SingleAnchorEngine(Parameters, Executor, tradingAvailability);
             Engine.AnchorCreated += e => AnchorsCreated.Add(e);
             Engine.FirstEntrySkipped += e => SkippedFirstEntries.Add(e);
             Engine.EntryOpened += e => EntriesOpened.Add(e);

@@ -478,7 +478,12 @@ parameters. LEAN is the data and time host only: the strategy engine keeps its
 own hedged basket ledger and fills deterministically from the quotes, places no
 LEAN order, and writes its own results (`storage\single-anchor\results.json`
 in the run directory and the algorithm log); LEAN's statistics for such a run
-show an empty portfolio and are not strategy results.
+show an empty portfolio and are not strategy results. The optional
+`single-anchor-session-map` parameter names a source-derived session map and
+makes the first and last five minutes of each historical session quote-only:
+LEAN still delivers every quote, and the results report delivered, quote-only
+and strategy-eligible counts separately (section 8 of the implementation note,
+and `tools\session-map\`). Without it the run is unrestricted.
 [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md)
 has the commands, the parameter names, the deferred items and a validation
 record. Its default dates lie inside upstream's shipped Oanda XAUUSD tick
