@@ -56,7 +56,7 @@ namespace MarketLab.SessionMapTool
             }
         }
 
-        private static int Run(string[] args)
+        internal static int Run(string[] args)
         {
             string? sourceDirectory = null;
             string? outPath = null;
@@ -96,7 +96,8 @@ namespace MarketLab.SessionMapTool
             }
 
             var files = FindSourceFiles(sourceDirectory);
-            Console.WriteLine($"source: {files.Count} monthly files in {sourceDirectory}");
+            var symbol = files[0].Symbol;
+            Console.WriteLine($"source: {files.Count} monthly files for {symbol} in {sourceDirectory}");
 
             var scans = ScanFiles(files, jobs);
             ValidateContiguity(scans);
@@ -106,8 +107,10 @@ namespace MarketLab.SessionMapTool
             var aggregate = AggregateHash(scans);
             var sourceIdentity = new HistoricalSessionMapSource(
                 scans.Length, totalRows, aggregate, firstQuote, lastQuote);
+            // The map symbol is the source's own symbol, never a constant: a map must not label
+            // another instrument's sessions as XAUUSD.
             var map = HistoricalSessionMap.Derive(
-                scans.SelectMany(scan => scan.Segments), "XAUUSD", SessionJunctionRule.TimeZoneId, sourceIdentity);
+                scans.SelectMany(scan => scan.Segments), symbol, SessionJunctionRule.TimeZoneId, sourceIdentity);
             map.Save(outPath!);
 
             var counts = CountAvailability(files, map, jobs);

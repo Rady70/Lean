@@ -170,6 +170,15 @@ namespace MarketLab.SingleAnchor
                     {
                         throw new ArgumentException($"session {i} overlaps or precedes session {i - 1}", nameof(sessions));
                     }
+                    // The sessions claim to come from the declared junction rule: a map that splits
+                    // a run at an arbitrary intraday gap would invent closing/opening buffers and
+                    // is not a session map under this contract.
+                    if (!SessionJunctionRule.IsJunction(previous.End.Value, session.Start))
+                    {
+                        throw new ArgumentException(
+                            $"sessions {i - 1} and {i} are not separated by the settlement-window junction; " +
+                            "the map does not follow the declared junction rule", nameof(sessions));
+                    }
                 }
             }
 
@@ -312,9 +321,12 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// Loads and validates a production map file. The contract, the junction rule, the session
-        /// ordering and the source provenance are all required: a map is a research-critical input
-        /// and a hand-edited one must not silently change trading eligibility.
+        /// Loads and validates a production map file: the contract, the v1 junction rule, the
+        /// junction time zone, ordered sessions that are actually separated by the junction rule,
+        /// and the complete source provenance are all required, so a structurally malformed or
+        /// self-contradictory map is refused. The loader validates structure, not derivation: a
+        /// coherent hand edit cannot be cryptographically ruled out, which is why the map's
+        /// SHA-256 and the source lineage are recorded with every run's results.
         /// </summary>
         public static HistoricalSessionMap Load(string path)
         {
@@ -436,8 +448,16 @@ namespace MarketLab.SingleAnchor
                     "the first session must start at the source's first observed quote", nameof(source));
             }
             var last = sessions[sessions.Count - 1]!;
-            var lastEnd = last.End ?? last.Start;
-            if (source.LastQuoteUtc < lastEnd)
+            if (last.End.HasValue)
+            {
+                if (source.LastQuoteUtc != last.End.Value)
+                {
+                    throw new ArgumentException(
+                        "when the final session has an observed end, the source coverage end must equal it; " +
+                        "a later source quote belongs to no session", nameof(source));
+                }
+            }
+            else if (source.LastQuoteUtc < last.Start)
             {
                 throw new ArgumentException(
                     "the source coverage end must not precede the final session's last observed quote", nameof(source));

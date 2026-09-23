@@ -516,9 +516,13 @@ source is deliberately not part of the map, so identical data at another path pr
 bytes. `HistoricalSessionMap.Derive` builds the map from ordered segments (rejecting unordered or
 overlapping ones); `Load`/`Save` implement the file contract. `Load` is strict because the map is
 a research-critical input: the contract, the v1 junction-rule text, the junction time zone,
-ordered sessions, and a complete, coherent source provenance block (positive counts, a 64-hex
-aggregate, first quote equal to the first session's start, coverage end not before the final
-session's last observed quote) are all required.
+ordered sessions whose adjacent pairs are actually separated by the settlement-window junction
+(so an edited map cannot split a run at an arbitrary intraday gap and invent buffers), and a
+complete, coherent source provenance block (positive counts, a 64-hex aggregate, first quote
+equal to the first session's start, and, when the final session has an observed end, a coverage
+end equal to it) are all required. The loader validates structure, not derivation: a coherent
+hand edit cannot be cryptographically ruled out, so the map's SHA-256 and its source lineage are
+recorded with every run's results.
 
 ### 8.2 The five-minute rule
 
@@ -581,9 +585,11 @@ MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
 The source is read-only and the output is deterministic (same source, same map and stats). Only a
 legitimate quote may define a session boundary: pass 1 parses the timestamp and the Bid/Ask
 columns and requires the engine's own contract (positive Bid and Ask, `Ask >= Bid`), so a
-timestamp-valid but price-invalid row cannot move a five-minute boundary. The stats file keeps the
-overall and complete-session populations separate with their own percentages, because the final,
-dataset-end session contributes opening-buffer rows but no closing buffer.
+timestamp-valid but price-invalid row cannot move a five-minute boundary. The map's symbol is the
+source's own symbol read from the file names, never a hardcoded instrument label, so a directory
+of another instrument's files can never produce a map that claims to be XAUUSD. The stats file
+keeps the overall and complete-session populations separate with their own percentages, because
+the final, dataset-end session contributes opening-buffer rows but no closing buffer.
 
 The map is placed outside Git (or copied under a research data folder) and named in the run with
 `single-anchor-session-map`; the value cannot contain `:` on the helper's `-Parameters` route, so
@@ -641,8 +647,9 @@ fixture and proves the host path (map loading, quote-clock conversion, feed wiri
 as a unit: `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1` (12 checks,
 exit 0). On its five-quote fixture the identical delivered count (5) yields one BUY without the
 map and no position with it (4 quote-only, 1 eligible), and the results carry the configured map
-value and the source row count. The strategy unit tests are 164 (see section 7 plus the new
-availability, coverage-end, provenance, stats and out-of-coverage failure tests).
+value and the source row count. The strategy unit tests are 167 (see section 7 plus the new
+availability, coverage-end, provenance, junction-consistency, grid/reversal-buffer and
+out-of-coverage failure tests, and the generator symbol/quote-contract tests).
 
 ### 8.7 Quote delivery on the current research data folder (separate blocker, not fixed here)
 

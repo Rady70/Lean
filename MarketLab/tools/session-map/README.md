@@ -1,9 +1,9 @@
 # Session-map generator (MarketLab-owned)
 
 `MarketLab.SessionMapTool` derives the source-session map the SingleAnchor historical replay uses
-to apply the five-minute quote-only buffers. It reads the immutable Dukascopy/JForex XAUUSD monthly
-CSV history, uses the strategy assembly's own session-junction rule and availability classifier
-(`MarketLab.SingleAnchor`), and writes two research artifacts outside Git:
+to apply the five-minute quote-only buffers. It reads the immutable Dukascopy/JForex monthly CSV
+history (XAUUSD in this dataset), uses the strategy assembly's own session-junction rule and
+availability classifier (`MarketLab.SingleAnchor`), and writes two research artifacts outside Git:
 
 - the session map (`marketlab-single-anchor-session-map-v1`): every source session as its exact
   first and last observed quote timestamp in UTC, with source provenance (file count, row count,
@@ -39,6 +39,11 @@ contiguous months, read-only), `--out <map.json>` (required), `--stats <stats.js
    (`ToAvailability`), and a quote after it is refused.
 3. Classifies every source row again with the runtime availability classifier and counts the
    opening-buffer, tradable and closing-buffer rows per session.
+
+The map's `symbol` is the source's own symbol from the file names (all files must agree); the
+generator never labels another instrument's sessions as XAUUSD. The loader independently checks
+that adjacent sessions are separated by the declared junction rule and that the source provenance
+is coherent (including `lastQuoteUtc` equal to the final session's observed end when it has one).
 
 The source is never modified. The map is deterministic: the same immutable source produces the same
 map and stats byte for byte (`--jobs` only changes speed).

@@ -24,4 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SingleAnchor\MarketLab.SingleAnchor.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MarketLab.SingleAnchor.Tests" />
+  </ItemGroup>
 </Project>

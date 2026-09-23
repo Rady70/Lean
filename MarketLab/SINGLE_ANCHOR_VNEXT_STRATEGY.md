@@ -17,6 +17,10 @@ For each basket:
 
 The intent is simple: ordinary baskets keep the original early-trade behavior, while long-lived baskets switch to lot sizes calculated specifically to keep recovery breakeven within a fixed distance from the original anchor.
 
+### 1.1 Delivered quotes and strategy-eligible quotes
+
+The state machine below runs on **strategy-eligible** quotes. A *delivered* quote is a quote the data path handed to the engine; a *strategy-eligible* quote is a delivered quote the strategy is allowed to act on. For the historical Dukascopy replay the first and last five minutes of every source-derived session are **quote-only**: such a quote is observed, validated and counted, but it creates no anchor, opens no entry, evaluates no exit or trailing update, records no rejection and changes no ledger. That five-minute session rule is historical-replay trading availability (a fixed research assumption over source-derived sessions); it changes no entry, sizing, exit or trailing formula and no level. Wherever this specification says "every tick", read "every strategy-eligible tick".
+
 ---
 
 ## 2. Anchor and fixed grid levels
@@ -613,7 +617,7 @@ After the basket earns enough profit, trailing begins protecting that profit. It
 
 ## 14. Exit priority
 
-On every tick with an active basket, evaluate in this order:
+On every strategy-eligible tick with an active basket, evaluate in this order:
 
 ```text
 1. Escape
@@ -685,7 +689,7 @@ Strictly alternate sides
                NO BE DRIFT
         |
         v
-On every tick
+On every strategy-eligible tick
         |
         +-- Escape?
         +-- Fixed TP?

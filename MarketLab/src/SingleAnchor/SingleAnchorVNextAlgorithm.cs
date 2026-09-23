@@ -34,9 +34,10 @@ namespace MarketLab.SingleAnchor
     /// next to the delivered <c>quoteTicksProcessed</c> and the <c>strategyEligibleQuotes</c>.
     /// This gate removes no delivered quote; quotes LEAN itself filtered out before the strategy
     /// (session identity/hours) are a separate data-path concern. Without the parameter, every
-    /// delivered quote is strategy-eligible, the pre-existing behaviour. A strategy invariant failure
-    /// (<see cref="StrategyInvariantException"/>) or a data-quality failure
-    /// (<see cref="DataQualityException"/>) writes the results with the failure recorded and then
+    /// delivered quote is strategy-eligible, the pre-existing behaviour. A strategy invariant
+    /// failure (<see cref="StrategyInvariantException"/>), a data-quality failure
+    /// (<see cref="DataQualityException"/>) or a session-map coverage mismatch
+    /// (<see cref="SessionMapException"/>) writes the results with the failure recorded and then
     /// stops the run as a LEAN runtime error. The results also carry the hard-BE verification
     /// metadata (strategy definition resolved, requirement verified at each tail entry under the
     /// configured execution model).
@@ -183,9 +184,10 @@ namespace MarketLab.SingleAnchor
         /// <summary>
         /// Loads the optional source-derived session map and turns it into the engine's
         /// trading-availability classifier. Without the parameter the run keeps the unrestricted
-        /// behaviour: every delivered quote is strategy-eligible. With it, the map must exist, be
-        /// for this symbol, and name this subscription's exchange time zone; the sessions are
-        /// converted from UTC instants into that zone, which is the clock of LEAN's tick times.
+        /// behaviour: every delivered quote is strategy-eligible. With it, the map must exist and
+        /// be for this symbol; its UTC sessions are converted into this subscription's exchange
+        /// time zone, which is the clock of LEAN's tick times, while the junction-rule zone stays
+        /// the map's own.
         /// </summary>
         private HistoricalTradingAvailability? ResolveTradingAvailability(Security security)
         {
@@ -273,8 +275,9 @@ namespace MarketLab.SingleAnchor
             catch (SingleAnchorRunException failure)
             {
                 // LEAN ends the run on the rethrow without calling OnEndOfAlgorithm, so the
-                // results are written here, with the failure recorded. Both kinds (a strategy
-                // invariant, a data-quality condition) end the run the same way.
+                // results are written here, with the failure recorded. Every engine fault kind
+                // (strategy invariant, data quality, session-map coverage) ends the run the same
+                // way.
                 Error($"SingleAnchor {failure.Kind} failure ({failure.Condition}): {failure.Message}");
                 Log($"SingleAnchor run stopped by the {failure.Condition} condition at {failure.Quote}.");
                 WriteResults(new RunFailure(failure.Kind, failure.Condition, failure.Quote, failure.Message));

@@ -366,6 +366,30 @@ namespace MarketLab.SingleAnchor.Tests
                     $"{{\"startUtc\":\"2024-01-03T00:00:00.000Z\",\"endUtc\":null}}]}}");
                 Assert.Throws<InvalidDataException>(() => HistoricalSessionMap.Load(path),
                     "only the final session may have no observable end");
+
+                File.WriteAllText(path, $"{{" +
+                    $"\"contract\":\"{HistoricalSessionMap.Contract}\"," +
+                    $"\"symbol\":\"XAUUSD\"," +
+                    $"\"junctionTimeZone\":\"America/New_York\"," +
+                    $"\"junctionRule\":\"{HistoricalSessionMap.JunctionRuleText}\"," +
+                    $"\"source\":{{\"fileCount\":1,\"rowCount\":2,\"sha256Aggregate\":\"{new string('a', 64)}\"," +
+                    $"\"firstQuoteUtc\":\"2024-01-02T00:00:00.000Z\",\"lastQuoteUtc\":\"2024-01-02T02:00:00.000Z\"}}," +
+                    $"\"sessions\":[" +
+                    $"{{\"startUtc\":\"2024-01-02T00:00:00.000Z\",\"endUtc\":\"2024-01-02T01:00:00.000Z\"}}," +
+                    $"{{\"startUtc\":\"2024-01-02T01:30:00.000Z\",\"endUtc\":\"2024-01-02T02:00:00.000Z\"}}]}}");
+                Assert.Throws<InvalidDataException>(() => HistoricalSessionMap.Load(path),
+                    "adjacent sessions must be separated by the declared junction rule, not an arbitrary intraday gap");
+
+                File.WriteAllText(path, $"{{" +
+                    $"\"contract\":\"{HistoricalSessionMap.Contract}\"," +
+                    $"\"symbol\":\"XAUUSD\"," +
+                    $"\"junctionTimeZone\":\"America/New_York\"," +
+                    $"\"junctionRule\":\"{HistoricalSessionMap.JunctionRuleText}\"," +
+                    $"\"source\":{{\"fileCount\":1,\"rowCount\":2,\"sha256Aggregate\":\"{new string('a', 64)}\"," +
+                    $"\"firstQuoteUtc\":\"2024-01-02T00:00:00.000Z\",\"lastQuoteUtc\":\"2024-01-02T02:00:00.000Z\"}}," +
+                    $"\"sessions\":[{{\"startUtc\":\"2024-01-02T00:00:00.000Z\",\"endUtc\":\"2024-01-02T01:00:00.000Z\"}}]}}");
+                Assert.Throws<InvalidDataException>(() => HistoricalSessionMap.Load(path),
+                    "a source quote after the final session's observed end belongs to no session");
             }
             finally
             {
@@ -384,10 +408,10 @@ namespace MarketLab.SingleAnchor.Tests
                 "XAUUSD", SessionJunctionRule.TimeZoneId,
                 new[]
                 {
-                    Sessions.Window(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 2, 0, 0)),
-                    Sessions.Window(Sessions.U(2024, 1, 2, 3, 0, 0), null)
+                    Sessions.Window(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 21, 59, 59)),
+                    Sessions.Window(Sessions.U(2024, 1, 2, 23, 0, 0), null)
                 },
-                Sessions.Source(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 6, 0, 0)));
+                Sessions.Source(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 3, 2, 0, 0)));
 
             var stats = SessionMapStats.Compute(map, new long[] { 10, 5 }, new long[] { 3, 0 }, 100);
 
@@ -547,6 +571,40 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void AReversalThresholdCrossingInsideABufferDoesNotAdvanceTheGrid()
+        {
+            var h = new Harness(Harness.NoExits(), Sessions.TwoSessions());
+            h.FeedAt(Sessions.S0.AddMinutes(5), 1999.9m, 2000.1m);          // anchor 2000, tradable
+            h.FeedAt(Sessions.S0.AddMinutes(6), 2019.8m, 2020m);            // BUY 0.01 at 2020
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.NextTradeNumber, Is.EqualTo(2));
+            Assert.That(basket.NextRequiredSide, Is.EqualTo(TradeSide.Sell));
+
+            // The opposite (lower) grid level is crossed inside the closing buffer: the strictly
+            // alternating reversal leg must not be added and the sequence must not advance.
+            h.FeedAt(Sessions.S0End.AddMinutes(-1), 1980m, 1980.2m);
+            Assert.That(basket.Legs, Has.Count.EqualTo(1), "no reversal leg on a quote-only quote");
+            Assert.That(basket.NextTradeNumber, Is.EqualTo(2), "the sequence does not advance");
+
+            // ... and again inside the next session's opening buffer.
+            h.FeedAt(Sessions.S1.AddMinutes(1), 1980m, 1980.2m);
+            Assert.That(basket.Legs, Has.Count.EqualTo(1));
+            Assert.That(basket.NextTradeNumber, Is.EqualTo(2));
+            Assert.That(h.Engine.QuoteOnlyQuotes, Is.EqualTo(2));
+
+            // First eligible quote: the crossing is gone, so the missed opportunity is not replayed.
+            h.FeedAt(Sessions.S1.AddMinutes(5), 1999.9m, 2000.1m);
+            Assert.That(basket.Legs, Has.Count.EqualTo(1));
+
+            // A later eligible quote that crosses the level fresh adds the alternating leg.
+            h.FeedAt(Sessions.S1.AddMinutes(6), 1980m, 1980.2m);
+            Assert.That(basket.Legs, Has.Count.EqualTo(2));
+            Assert.That(basket.Legs[1].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(basket.Legs[1].Lots, Is.EqualTo(0.02m));
+            Assert.That(basket.NextTradeNumber, Is.EqualTo(3));
+        }
+
+        [Test]
         public void WithoutAnAvailabilityMapEveryDeliveredQuoteIsStrategyEligible()
         {
             var h = new Harness(Harness.NoExits());
@@ -577,6 +635,64 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.Engine.QuoteOnlyQuotes, Is.EqualTo(0));
 
             Assert.Throws<SessionMapException>(() => h.FeedAt(coverageEnd.AddMinutes(30), 1999.9m, 2000.1m));
+        }
+    }
+
+    [TestFixture]
+    public class SessionMapGeneratorTests
+    {
+        [Test]
+        public void TheGeneratedMapUsesTheSourceSymbolInsteadOfXauusd()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "marketlab-session-map-gen-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var source = Path.Combine(directory, "EURUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
+            var mapPath = Path.Combine(directory, "map.json");
+            var statsPath = Path.Combine(directory, "stats.json");
+            try
+            {
+                File.WriteAllText(source,
+                    "timestamp,bid,ask,bidVolume,askVolume\n" +
+                    "2024-01-02T21:59:00.000Z,1.1000,1.1002,1,1\n" +
+                    "2024-01-02T21:59:59.000Z,1.1000,1.1002,1,1\n" +
+                    "2024-01-02T23:00:00.000Z,1.1000,1.1002,1,1\n");
+
+                var exit = MarketLab.SessionMapTool.Program.Run(
+                    new[] { "--source", directory, "--out", mapPath, "--stats", statsPath });
+
+                Assert.That(exit, Is.EqualTo(0));
+                var map = HistoricalSessionMap.Load(mapPath);
+                Assert.That(map.Symbol, Is.EqualTo("EURUSD"), "a map must never relabel another instrument as XAUUSD");
+                Assert.That(map.Sessions, Has.Count.EqualTo(2));
+                Assert.That(map.Sessions[1]!.End, Is.Null);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Test]
+        public void TheGeneratorRefusesARowThatIsNotALegitimateQuote()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "marketlab-session-map-gen-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var source = Path.Combine(directory, "XAUUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
+            var mapPath = Path.Combine(directory, "map.json");
+            try
+            {
+                File.WriteAllText(source,
+                    "timestamp,bid,ask,bidVolume,askVolume\n" +
+                    "2024-01-02T21:59:59.000Z,2000.0,1999.0,1,1\n");
+
+                Assert.Throws<InvalidDataException>(() => MarketLab.SessionMapTool.Program.Run(
+                    new[] { "--source", directory, "--out", mapPath }));
+                Assert.That(File.Exists(mapPath), Is.False, "nothing is published for an invalid source");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
         }
     }
 }

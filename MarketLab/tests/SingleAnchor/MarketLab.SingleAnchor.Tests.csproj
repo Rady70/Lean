@@ -28,5 +28,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\SingleAnchor\MarketLab.SingleAnchor.csproj" />
+    <!-- The generator's source discovery and symbol handling are exercised directly. -->
+    <ProjectReference Include="..\..\tools\session-map\MarketLab.SessionMapTool.csproj" />
   </ItemGroup>
 </Project>
