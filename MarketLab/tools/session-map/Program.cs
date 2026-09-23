@@ -96,9 +96,23 @@ namespace MarketLab.SessionMapTool
                 throw new ArgumentException(
                     "Usage: MarketLab.SessionMapTool --source <csv directory> --out <map.json> [--stats <stats.json>] [--jobs <n>]");
             }
+            sourceDirectory = Path.GetFullPath(sourceDirectory);
+            outPath = Path.GetFullPath(outPath);
+            statsPath = statsPath == null ? null : Path.GetFullPath(statsPath);
             if (!Directory.Exists(sourceDirectory))
             {
                 throw new ArgumentException($"source directory does not exist: {sourceDirectory}");
+            }
+            // The source is immutable: the outputs must never be able to replace it, and the two
+            // outputs must not alias each other. Both checks run before anything is scanned.
+            if (statsPath != null && string.Equals(statsPath, outPath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException($"--out and --stats must be different paths: {outPath}");
+            }
+            EnsureOutsideSource(sourceDirectory, outPath, "--out");
+            if (statsPath != null)
+            {
+                EnsureOutsideSource(sourceDirectory, statsPath, "--stats");
             }
 
             var files = FindSourceFiles(sourceDirectory);
@@ -150,6 +164,21 @@ namespace MarketLab.SessionMapTool
             }
             index++;
             return args[index];
+        }
+
+        /// <summary>
+        /// Refuses an output path inside the immutable source directory (the source file itself,
+        /// any other path under the directory, or the directory itself), so the tool can never
+        /// overwrite source history. Paths outside the directory, including other drives, pass.
+        /// </summary>
+        private static void EnsureOutsideSource(string sourceDirectory, string candidate, string option)
+        {
+            var relative = Path.GetRelativePath(sourceDirectory, candidate);
+            if (!relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relative))
+            {
+                throw new ArgumentException(
+                    $"{option} must not point into the immutable source directory ({sourceDirectory}); got {candidate}");
+            }
         }
 
         private static List<SourceFile> FindSourceFiles(string directory)
@@ -290,6 +319,16 @@ namespace MarketLab.SessionMapTool
                 {
                     throw new InvalidDataException(
                         $"row {rows + 2} in {path} does not carry timestamp,bid,ask columns: '{line}'");
+                }
+                // The row shape must match the five-column header exactly, as PR-1's
+                // qualification rejects a row with more cells than the header; a row PR-1 would
+                // reject must not define a session boundary here either.
+                var fourthComma = line.IndexOf(',', askComma + 1);
+                if (fourthComma < 0 || line.IndexOf(',', fourthComma + 1) >= 0)
+                {
+                    throw new InvalidDataException(
+                        $"row {rows + 2} in {path} does not have exactly the five columns " +
+                        $"timestamp,bid,ask,bidVolume,askVolume: '{line}'");
                 }
                 var bidText = line.Substring(comma + 1, bidComma - comma - 1);
                 var askText = line.Substring(bidComma + 1, askComma - bidComma - 1);

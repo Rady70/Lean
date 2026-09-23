@@ -598,8 +598,11 @@ MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
 
 The source is read-only and the output is deterministic (same source, same map and stats). Only a
 legitimate quote may define a session boundary: pass 1 parses the timestamp and the Bid/Ask
-columns and requires the engine's own contract (positive Bid and Ask, `Ask >= Bid`), so a
-timestamp-valid but price-invalid row cannot move a five-minute boundary. The generator is
+columns and requires the engine's own contract (positive Bid and Ask, `Ask >= Bid`) and the exact
+five-column row shape PR-1 requires, so neither a price-invalid nor a wrongly shaped row can move
+a five-minute boundary. The output paths are checked before the source is scanned: `--out` and
+`--stats` must be distinct and must not point into the source directory, so the tool can never
+replace immutable source history. The generator is
 deliberately **XAUUSD-specific**: source files must be the Dukascopy/JForex monthly form
 `XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv`, and any other instrument or provider is refused
 rather than relabeled, because the junction rule was established from that history and no other

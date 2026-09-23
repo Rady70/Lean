@@ -692,15 +692,100 @@ namespace MarketLab.SingleAnchor.Tests
     [TestFixture]
     public class SessionMapGeneratorTests
     {
-        [Test]
-        public void TheGeneratorRefusesANonXauusdSource()
+        private static string NewScratchDirectory()
         {
             var directory = Path.Combine(Path.GetTempPath(), "marketlab-session-map-gen-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
-            var foreignSource = Path.Combine(directory, "EURUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
-            var foreignMap = Path.Combine(directory, "foreign-map.json");
-            var otherProvider = Path.Combine(directory, "XAUUSD_2024_01_OTHER_FEED_FULL.csv");
-            var otherMap = Path.Combine(directory, "other-map.json");
+            return directory;
+        }
+
+        private static string WriteValidXauusdSource(string directory)
+        {
+            var source = Path.Combine(directory, "XAUUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
+            File.WriteAllText(source,
+                "timestamp,bid,ask,bidVolume,askVolume\n" +
+                "2024-01-02T21:49:00.000Z,2000.0,2000.5,1,1\n" +
+                "2024-01-02T21:59:59.000Z,2000.0,2000.5,1,1\n" +
+                "2024-01-02T23:00:00.000Z,2000.0,2000.5,1,1\n");
+            return source;
+        }
+
+        [Test]
+        public void TheGeneratorWritesAValidatedMapForXauusdAndLeavesTheSourceUntouched()
+        {
+            var sourceDirectory = NewScratchDirectory();
+            var outputDirectory = NewScratchDirectory();
+            try
+            {
+                var source = WriteValidXauusdSource(sourceDirectory);
+                var before = File.ReadAllBytes(source);
+                var mapPath = Path.Combine(outputDirectory, "map.json");
+                var statsPath = Path.Combine(outputDirectory, "stats.json");
+
+                var exit = MarketLab.SessionMapTool.Program.Run(
+                    new[] { "--source", sourceDirectory, "--out", mapPath, "--stats", statsPath });
+
+                Assert.That(exit, Is.EqualTo(0));
+                var map = HistoricalSessionMap.Load(mapPath);
+                Assert.That(map.Symbol, Is.EqualTo("XAUUSD"));
+                Assert.That(map.Sessions, Has.Count.EqualTo(2));
+                Assert.That(map.Sessions[1]!.End, Is.Null);
+                Assert.That(File.Exists(statsPath), Is.True, "both artifacts are published");
+                Assert.That(File.ReadAllBytes(source), Is.EqualTo(before), "the immutable source is byte-identical");
+            }
+            finally
+            {
+                Directory.Delete(sourceDirectory, true);
+                Directory.Delete(outputDirectory, true);
+            }
+        }
+
+        [Test]
+        public void TheGeneratorRefusesToWriteIntoTheSourceOrAliasTheOutputs()
+        {
+            var sourceDirectory = NewScratchDirectory();
+            var outputDirectory = NewScratchDirectory();
+            try
+            {
+                var source = WriteValidXauusdSource(sourceDirectory);
+                var before = File.ReadAllBytes(source);
+                var outside = Path.Combine(outputDirectory, "map.json");
+
+                Assert.Throws<ArgumentException>(
+                    () => MarketLab.SessionMapTool.Program.Run(new[] { "--source", sourceDirectory, "--out", source }),
+                    "the source file itself is refused");
+                Assert.Throws<ArgumentException>(
+                    () => MarketLab.SessionMapTool.Program.Run(
+                        new[] { "--source", sourceDirectory, "--out", Path.Combine(sourceDirectory, "map.json") }),
+                    "any output under the source directory is refused");
+                Assert.Throws<ArgumentException>(
+                    () => MarketLab.SessionMapTool.Program.Run(
+                        new[] { "--source", sourceDirectory, "--out", outside, "--stats", Path.Combine(sourceDirectory, "stats.json") }),
+                    "a stats path under the source directory is refused");
+                Assert.Throws<ArgumentException>(
+                    () => MarketLab.SessionMapTool.Program.Run(
+                        new[] { "--source", sourceDirectory, "--out", outside, "--stats", outside }),
+                    "aliased output paths are refused");
+
+                Assert.That(File.ReadAllBytes(source), Is.EqualTo(before), "the immutable source bytes are unchanged");
+                Assert.That(File.Exists(outside), Is.False, "the aliased output was never written");
+            }
+            finally
+            {
+                Directory.Delete(sourceDirectory, true);
+                Directory.Delete(outputDirectory, true);
+            }
+        }
+
+        [Test]
+        public void TheGeneratorRefusesANonXauusdSource()
+        {
+            var sourceDirectory = NewScratchDirectory();
+            var outputDirectory = NewScratchDirectory();
+            var foreignSource = Path.Combine(sourceDirectory, "EURUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
+            var foreignMap = Path.Combine(outputDirectory, "foreign-map.json");
+            var otherProvider = Path.Combine(sourceDirectory, "XAUUSD_2024_01_OTHER_FEED_FULL.csv");
+            var otherMap = Path.Combine(outputDirectory, "other-map.json");
             try
             {
                 File.WriteAllText(foreignSource,
@@ -710,7 +795,7 @@ namespace MarketLab.SingleAnchor.Tests
                     "2024-01-02T23:00:00.000Z,1.1000,1.1002,1,1\n");
 
                 Assert.Throws<InvalidDataException>(
-                    () => MarketLab.SessionMapTool.Program.Run(new[] { "--source", directory, "--out", foreignMap }),
+                    () => MarketLab.SessionMapTool.Program.Run(new[] { "--source", sourceDirectory, "--out", foreignMap }),
                     "the junction rule is XAUUSD-specific; another instrument must be refused, not relabeled");
                 Assert.That(File.Exists(foreignMap), Is.False);
 
@@ -722,23 +807,24 @@ namespace MarketLab.SingleAnchor.Tests
                     "2024-01-02T23:00:00.000Z,2000.0,2000.5,1,1\n");
 
                 Assert.Throws<InvalidDataException>(
-                    () => MarketLab.SessionMapTool.Program.Run(new[] { "--source", directory, "--out", otherMap }),
+                    () => MarketLab.SessionMapTool.Program.Run(new[] { "--source", sourceDirectory, "--out", otherMap }),
                     "only the expected Dukascopy/JForex XAUUSD monthly file form is accepted");
                 Assert.That(File.Exists(otherMap), Is.False);
             }
             finally
             {
-                Directory.Delete(directory, true);
+                Directory.Delete(sourceDirectory, true);
+                Directory.Delete(outputDirectory, true);
             }
         }
 
         [Test]
         public void TheGeneratorRefusesARowThatIsNotALegitimateQuote()
         {
-            var directory = Path.Combine(Path.GetTempPath(), "marketlab-session-map-gen-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(directory);
-            var source = Path.Combine(directory, "XAUUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
-            var mapPath = Path.Combine(directory, "map.json");
+            var sourceDirectory = NewScratchDirectory();
+            var outputDirectory = NewScratchDirectory();
+            var source = Path.Combine(sourceDirectory, "XAUUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
+            var mapPath = Path.Combine(outputDirectory, "map.json");
             try
             {
                 File.WriteAllText(source,
@@ -746,12 +832,44 @@ namespace MarketLab.SingleAnchor.Tests
                     "2024-01-02T21:59:59.000Z,2000.0,1999.0,1,1\n");
 
                 Assert.Throws<InvalidDataException>(() => MarketLab.SessionMapTool.Program.Run(
-                    new[] { "--source", directory, "--out", mapPath }));
+                    new[] { "--source", sourceDirectory, "--out", mapPath }));
                 Assert.That(File.Exists(mapPath), Is.False, "nothing is published for an invalid source");
             }
             finally
             {
-                Directory.Delete(directory, true);
+                Directory.Delete(sourceDirectory, true);
+                Directory.Delete(outputDirectory, true);
+            }
+        }
+
+        [Test]
+        public void TheGeneratorRefusesARowWithAnUnexpectedColumnCount()
+        {
+            var sourceDirectory = NewScratchDirectory();
+            var outputDirectory = NewScratchDirectory();
+            var source = Path.Combine(sourceDirectory, "XAUUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
+            var mapPath = Path.Combine(outputDirectory, "map.json");
+            try
+            {
+                File.WriteAllText(source,
+                    "timestamp,bid,ask,bidVolume,askVolume\n" +
+                    "2024-01-02T21:59:00.000Z,2000.0,2000.5,1,1,extra\n");
+                Assert.Throws<InvalidDataException>(() => MarketLab.SessionMapTool.Program.Run(
+                    new[] { "--source", sourceDirectory, "--out", mapPath }),
+                    "a row with more cells than the five-column header must not define a session boundary");
+
+                File.WriteAllText(source,
+                    "timestamp,bid,ask,bidVolume,askVolume\n" +
+                    "2024-01-02T21:59:00.000Z,2000.0,2000.5,1\n");
+                Assert.Throws<InvalidDataException>(() => MarketLab.SessionMapTool.Program.Run(
+                    new[] { "--source", sourceDirectory, "--out", mapPath }),
+                    "a row with fewer cells than the header is refused too");
+                Assert.That(File.Exists(mapPath), Is.False);
+            }
+            finally
+            {
+                Directory.Delete(sourceDirectory, true);
+                Directory.Delete(outputDirectory, true);
             }
         }
     }

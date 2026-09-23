@@ -31,10 +31,11 @@ Options: `--source <csv directory>` (required; Dukascopy/JForex XAUUSD monthly f
 ## What it does
 
 1. Scans every monthly file in order (parallel per file) into junction-split segments, validating
-   the header, the canonical `yyyy-MM-ddTHH:mm:ss.fffZ` timestamps, non-decreasing time and month
-   contiguity, and the quote contract the engine/PR-1 path uses (Bid > 0, Ask > 0, `Ask >= Bid`);
-   a timestamp-valid but price-invalid row fails the generation instead of moving a boundary. Each
-   file is hashed (SHA-256).
+   the header, the canonical `yyyy-MM-ddTHH:mm:ss.fffZ` timestamps, the exact five-column row
+   shape (`timestamp,bid,ask,bidVolume,askVolume`, as PR-1's qualification requires), non-decreasing
+   time and month contiguity, and the quote contract the engine/PR-1 path uses (Bid > 0, Ask > 0,
+   `Ask >= Bid`); a timestamp-valid but price-invalid or wrongly shaped row fails the generation
+   instead of moving a boundary. Each file is hashed (SHA-256).
 2. Derives the sessions: adjacent segments belong to one session unless the gap fully contains the
    New York local settlement interval `17:00:00 <= t < 18:00:00`. The final session of the dataset
    gets no end (no close is fabricated); the source coverage end still bounds it at runtime
@@ -44,7 +45,10 @@ Options: `--source <csv directory>` (required; Dukascopy/JForex XAUUSD monthly f
 
 Both passes complete before anything is published: the map and stats files are written only after
 the classification pass succeeded, so a map on disk is a validated artifact, never a partial
-result. The loader independently checks that adjacent sessions are separated by the declared
+result. `--out` and `--stats` must be different paths and must not point into the source directory
+(the source file itself, any path under it, or the directory itself), so the tool can never
+replace immutable source history; both checks run before the source is scanned. The loader
+independently checks that adjacent sessions are separated by the declared
 junction rule, that a completed session is at least ten minutes long (the two buffers may not
 overlap), and that the source provenance is coherent (including `lastQuoteUtc` equal to the final
 session's observed end when it has one).
