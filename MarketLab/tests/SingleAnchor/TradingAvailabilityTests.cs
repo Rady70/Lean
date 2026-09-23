@@ -81,6 +81,19 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void ATruncatedFinalSessionMayBeShorterThanTenMinutes()
+        {
+            // The ten-minute minimum applies to completed sessions; a dataset-end session has no
+            // fabricated close, so a short tail is all opening-buffer quote-only.
+            var coverageEnd = Sessions.S0.AddMinutes(3);
+            var a = Sessions.Coverage(coverageEnd, Sessions.Window(Sessions.S0, null));
+
+            Assert.That(a.Classify(Sessions.S0), Is.EqualTo(QuoteTradability.QuoteOnlyOpeningBuffer));
+            Assert.That(a.Classify(coverageEnd), Is.EqualTo(QuoteTradability.QuoteOnlyOpeningBuffer));
+            Assert.Throws<InvalidOperationException>(() => a.Classify(coverageEnd.AddMilliseconds(1)));
+        }
+
+        [Test]
         public void AFinalSessionWithoutObservableEndRequiresTheCoverageEnd()
         {
             var error = Assert.Throws<ArgumentException>(() =>
@@ -299,6 +312,44 @@ namespace MarketLab.SingleAnchor.Tests
             {
                 Directory.Delete(directory, true);
             }
+        }
+
+        [Test]
+        public void ACompletedSessionShorterThanTheTwoBuffersIsRefused()
+        {
+            var shortSession = Sessions.Window(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 0, 8, 0));
+
+            var mapError = Assert.Throws<ArgumentException>(() => new HistoricalSessionMap(
+                "XAUUSD", SessionJunctionRule.TimeZoneId, new[] { shortSession },
+                Sessions.Source(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 0, 8, 0))));
+            Assert.That(mapError!.Message, Does.Contain("shorter than ten minutes"));
+
+            var availabilityError = Assert.Throws<ArgumentException>(() =>
+                new HistoricalTradingAvailability(new[] { shortSession }));
+            Assert.That(availabilityError!.Message, Does.Contain("shorter than ten minutes"));
+        }
+
+        [Test]
+        public void SavingAMapWithoutSourceProvenanceIsRefused()
+        {
+            var path = Path.Combine(Path.GetTempPath(), "marketlab-session-map-" + Guid.NewGuid().ToString("N") + ".json");
+            var map = HistoricalSessionMap.Derive(new[]
+            {
+                new HistoricalSegment(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 21, 59, 59))
+            });
+
+            Assert.Throws<InvalidOperationException>(() => map.Save(path));
+            Assert.That(File.Exists(path), Is.False, "nothing is written for a map that could not be loaded again");
+        }
+
+        [Test]
+        public void AMapWithAJunctionZoneOtherThanTheV1RuleIsRefused()
+        {
+            var error = Assert.Throws<ArgumentException>(() => new HistoricalSessionMap(
+                "XAUUSD", "UTC",
+                new[] { Sessions.Window(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 2, 0, 0)) }));
+
+            Assert.That(error!.Message, Does.Contain("America/New_York"));
         }
 
         [Test]
@@ -642,29 +693,38 @@ namespace MarketLab.SingleAnchor.Tests
     public class SessionMapGeneratorTests
     {
         [Test]
-        public void TheGeneratedMapUsesTheSourceSymbolInsteadOfXauusd()
+        public void TheGeneratorRefusesANonXauusdSource()
         {
             var directory = Path.Combine(Path.GetTempPath(), "marketlab-session-map-gen-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
-            var source = Path.Combine(directory, "EURUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
-            var mapPath = Path.Combine(directory, "map.json");
-            var statsPath = Path.Combine(directory, "stats.json");
+            var foreignSource = Path.Combine(directory, "EURUSD_2024_01_DUKASCOPY_JFOREX_FULL.csv");
+            var foreignMap = Path.Combine(directory, "foreign-map.json");
+            var otherProvider = Path.Combine(directory, "XAUUSD_2024_01_OTHER_FEED_FULL.csv");
+            var otherMap = Path.Combine(directory, "other-map.json");
             try
             {
-                File.WriteAllText(source,
+                File.WriteAllText(foreignSource,
                     "timestamp,bid,ask,bidVolume,askVolume\n" +
                     "2024-01-02T21:59:00.000Z,1.1000,1.1002,1,1\n" +
                     "2024-01-02T21:59:59.000Z,1.1000,1.1002,1,1\n" +
                     "2024-01-02T23:00:00.000Z,1.1000,1.1002,1,1\n");
 
-                var exit = MarketLab.SessionMapTool.Program.Run(
-                    new[] { "--source", directory, "--out", mapPath, "--stats", statsPath });
+                Assert.Throws<InvalidDataException>(
+                    () => MarketLab.SessionMapTool.Program.Run(new[] { "--source", directory, "--out", foreignMap }),
+                    "the junction rule is XAUUSD-specific; another instrument must be refused, not relabeled");
+                Assert.That(File.Exists(foreignMap), Is.False);
 
-                Assert.That(exit, Is.EqualTo(0));
-                var map = HistoricalSessionMap.Load(mapPath);
-                Assert.That(map.Symbol, Is.EqualTo("EURUSD"), "a map must never relabel another instrument as XAUUSD");
-                Assert.That(map.Sessions, Has.Count.EqualTo(2));
-                Assert.That(map.Sessions[1]!.End, Is.Null);
+                File.Delete(foreignSource);
+                File.WriteAllText(otherProvider,
+                    "timestamp,bid,ask,bidVolume,askVolume\n" +
+                    "2024-01-02T21:59:00.000Z,2000.0,2000.5,1,1\n" +
+                    "2024-01-02T21:59:59.000Z,2000.0,2000.5,1,1\n" +
+                    "2024-01-02T23:00:00.000Z,2000.0,2000.5,1,1\n");
+
+                Assert.Throws<InvalidDataException>(
+                    () => MarketLab.SessionMapTool.Program.Run(new[] { "--source", directory, "--out", otherMap }),
+                    "only the expected Dukascopy/JForex XAUUSD monthly file form is accepted");
+                Assert.That(File.Exists(otherMap), Is.False);
             }
             finally
             {

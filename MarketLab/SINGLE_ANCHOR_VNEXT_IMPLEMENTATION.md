@@ -49,7 +49,7 @@ basket, so LEAN's orders, equity, drawdown, fees and margin stay empty and are
 | `src\SingleAnchor\Basket.cs`, `BasketLeg.cs` | the basket ledger: fixed anchor, levels and hard-BE targets, ordered legs (audit), the constant-time aggregates (BUY/SELL lots, entry notionals, smallest lot) and the compact skipped-first-entry trace |
 | `src\SingleAnchor\BasketEconomics.cs` | constant-time valuations from the aggregates: raw profit (BUY at Bid, SELL at Ask), commission buffer, step money, executable profit at given close prices, projected P/L at a hard target, and the `TargetPrices` projections (upper: Bid = T_up, Ask = T_up + W; lower: Ask = T_down, Bid = T_down - W) |
 | `src\SingleAnchor\HardBreakevenSizer.cs`, `VolumeMath.cs` | tail sizing: Q_BE, upward normalization, the broker-normalized requirement, verification, explicit infeasibility outcomes |
-| `src\SingleAnchor\SingleAnchorEngine.cs` | the per-quote state machine (sections 14-16), host-independent; skips ambiguous first-entry quotes; verifies every tail fill before publishing it; faults on a strategy invariant or a data-quality failure; raises typed events; keeps the closed-basket records with anchor, leg, rejection and skipped-entry traces |
+| `src\SingleAnchor\SingleAnchorEngine.cs` | the per-quote state machine (sections 14-16), host-independent; skips ambiguous first-entry quotes; verifies every tail fill before publishing it; faults on a strategy invariant, a data-quality failure or a session-map coverage mismatch; raises typed events; keeps the closed-basket records with anchor, leg, rejection and skipped-entry traces |
 | `src\SingleAnchor\Execution.cs` | the all-or-nothing executor contract, the `ResearchExecutor`, the run-ending conditions, the hard-BE verification metadata, the rejection parity digest, event and trace records |
 | `src\SingleAnchor\HistoricalSessions.cs` | the source-derived session junction rule, the session map contract (load/save/derive) and its provenance; section 8 |
 | `src\SingleAnchor\HistoricalTradingAvailability.cs` | the five-minute quote-only buffer rule and the per-quote classifier (section 8) |
@@ -297,22 +297,25 @@ culture; `true`/`false` for booleans.
   no host can continue a supposedly valid deterministic replay after a market
   quote was lost): a path-dependent tick replay that skipped it would no longer
   be faithful, the run stops, and its result is written as not completed. Equal
-  timestamps are in order. A faulted engine refuses every later quote.
+  timestamps are in order. A configured session map adds a third run-ending
+  condition (`SessionMapException` when a quote is outside the map's coverage,
+  section 8). A faulted engine refuses every later quote.
 - **Quote accounting has one meaning.** `QuotesProcessed` counts the quotes
   whose processing began (valid and in order), the count after a quote is that
   quote's sequence number in the traces, and `LastProcessedQuote` is the last
-  such quote. A quote refused for data quality is neither counted nor assigned:
-  `LastProcessedQuote` stays the last valid processed quote while `Fault.Quote`
-  is the refused quote. A strategy invariant happens on a quote that was
-  processed, so there `LastProcessedQuote` is the faulting quote. The end-of-data
+  such quote. A quote refused for data quality or for a session-map coverage
+  mismatch is neither counted nor assigned: `LastProcessedQuote` stays the last
+  valid processed quote while `Fault.Quote` is the refused quote. A strategy
+  invariant happens on a quote that was processed, so there
+  `LastProcessedQuote` is the faulting quote. The end-of-data
   (or fault-time) mark to market uses `LastProcessedQuote`.
 - **LEAN specifics.** LEAN delivers only ticks inside the market-hours sessions
   of its database (for Oanda XAUUSD: not the New York 16:58-18:03 break or the
   weekend); tick times are in the exchange time zone, which the results file
-  names (`quoteTimeZone`). A strategy invariant or data-quality failure is
-  logged, the results file is written with the failure recorded, and the
-  exception is rethrown so LEAN ends the run as a runtime error (exit code 1;
-  `OnEndOfAlgorithm` does not run in that case).
+  names (`quoteTimeZone`). A strategy invariant, a data-quality condition or a
+  session-map coverage mismatch is logged, the results file is written with the
+  failure recorded, and the exception is rethrown so LEAN ends the run as a
+  runtime error (exit code 1; `OnEndOfAlgorithm` does not run in that case).
 
 ## 5. Deferred on purpose
 
@@ -360,9 +363,10 @@ own results are:
   `Error` lines, and the end-of-data summary with the open basket marked to
   market (raw, exit and executable profit; never closed);
 - `<run dir>\storage\single-anchor\results.json` (written through LEAN's object
-  store at the end of the run, or at the moment a strategy invariant or a
-  data-quality condition fails): `completed` and, on a stop, `failure` (kind
-  `StrategyInvariant` or `DataQuality`, the condition, the quote, the message);
+  store at the end of the run, or at the moment a strategy invariant, a
+  data-quality condition or a session-map coverage mismatch fails): `completed`
+  and, on a stop, `failure` (kind `StrategyInvariant`, `DataQuality` or
+  `SessionMap`, the condition, the quote, the message);
   `hardBreakevenVerification` (`StrategyDefinitionResolved`,
   `HardBEVerifiedUnderConfiguredExecutionModel`, scope, assumptions, what is
   not covered); the symbol, market and `quoteTimeZone`; the parameters; quote
@@ -474,9 +478,11 @@ the same thing:
   (section 8.7); no claim in this document should be read as source-to-strategy completeness until
   that blocker is resolved and PR-1 passes.
 - **strategy-eligible**: the quote may drive the strategy (anchor, entries, exits, trailing,
-  rejections, ledger, events). The first and last five minutes of every source-derived session are
-  quote-only: the strategy observes them and accounts for them, but acts on nothing until the next
-  eligible quote, evaluated from its own fresh Bid/Ask. Nothing crossed during a buffer is queued.
+  rejections, ledger, events). The first and last five minutes of every **complete** source-derived
+  session are quote-only, and the final, dataset-end session has an opening buffer only (no
+  fabricated close): the strategy observes those quotes and accounts for them, but acts on nothing
+  until the next eligible quote, evaluated from its own fresh Bid/Ask. Nothing crossed during a
+  buffer is queued.
 
 The five-minute width is an explicit research assumption (fixed, not configurable); the source
 carries no broker session definition, so it is not a claim about historical broker times. The
@@ -524,6 +530,12 @@ end equal to it) are all required. The loader validates structure, not derivatio
 hand edit cannot be cryptographically ruled out, so the map's SHA-256 and its source lineage are
 recorded with every run's results.
 
+Map creation is consistent with loading: the constructor accepts only the v1 `America/New_York`
+junction zone, refuses a **completed** session shorter than ten minutes (the two five-minute
+windows would overlap and the opening-first classification order would silently decide), and
+`Save` refuses a map without source provenance, so a file that `Load` would reject is never
+written. Source-less maps remain valid as in-memory fixtures only.
+
 ### 8.2 The five-minute rule
 
 `HistoricalTradingAvailability` classifies each quote in the quote clock:
@@ -538,7 +550,9 @@ Exact millisecond boundaries: `t = T0` and `t = T0 + 4m59.999s` are quote-only, 
 tradable, `t = T1 - 5m` is tradable, `t = T1 - 4m59.999s` and `t = T1` are quote-only. A quote
 after the source coverage end, before the first session, or in a gap a malformed map does not
 describe is a deliberate run failure (`SessionMapException`, structured results), not a silent
-classification.
+classification. A completed session is required to be at least ten minutes long, so the two
+windows cannot overlap; a dataset-end session (no `T1`) may be shorter, and is then wholly
+opening-buffer quote-only.
 
 ### 8.3 The engine gate
 
@@ -585,11 +599,15 @@ MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
 The source is read-only and the output is deterministic (same source, same map and stats). Only a
 legitimate quote may define a session boundary: pass 1 parses the timestamp and the Bid/Ask
 columns and requires the engine's own contract (positive Bid and Ask, `Ask >= Bid`), so a
-timestamp-valid but price-invalid row cannot move a five-minute boundary. The map's symbol is the
-source's own symbol read from the file names, never a hardcoded instrument label, so a directory
-of another instrument's files can never produce a map that claims to be XAUUSD. The stats file
-keeps the overall and complete-session populations separate with their own percentages, because
-the final, dataset-end session contributes opening-buffer rows but no closing buffer.
+timestamp-valid but price-invalid row cannot move a five-minute boundary. The generator is
+deliberately **XAUUSD-specific**: source files must be the Dukascopy/JForex monthly form
+`XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv`, and any other instrument or provider is refused
+rather than relabeled, because the junction rule was established from that history and no other
+instrument's quote-session structure has been examined. Both passes complete before publication:
+the map and stats files are written only after the second-pass classification succeeded, so a map
+on disk is a validated artifact, never a partial result. The stats file keeps the overall and
+complete-session populations separate with their own percentages, because the final, dataset-end
+session contributes opening-buffer rows but no closing buffer.
 
 The map is placed outside Git (or copied under a research data folder) and named in the run with
 `single-anchor-session-map`; the value cannot contain `:` on the helper's `-Parameters` route, so

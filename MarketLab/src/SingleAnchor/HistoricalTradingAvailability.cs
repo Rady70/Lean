@@ -66,6 +66,12 @@ namespace MarketLab.SingleAnchor
                 {
                     throw new ArgumentException($"session {i} ends at or before it starts", nameof(sessions));
                 }
+                if (session.End.HasValue && session.End.Value - session.Start < QuoteOnlyBuffer + QuoteOnlyBuffer)
+                {
+                    throw new ArgumentException(
+                        $"completed session {i} is shorter than ten minutes; the five-minute buffers would overlap " +
+                        "and its trading availability would be ambiguous", nameof(sessions));
+                }
                 if (!session.End.HasValue && i != sessions.Count - 1)
                 {
                     throw new ArgumentException("only the final session may have no observable end", nameof(sessions));

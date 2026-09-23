@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
     Behaviour tests for the SingleAnchor vNext strategy engine on deterministic synthetic quotes.
-    No LEAN engine run and no market data: the engine is driven directly and orders are filled by
-    a synthetic executor. Package versions match the upstream Tests project so no new package
-    is introduced. Run: dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj -c Release
+    No LEAN engine run: the engine is driven directly and orders are filled by a synthetic
+    executor. The session-map generator tests create tiny synthetic CSV fixtures in temporary
+    directories outside the repository; no real market data is used or committed. Package versions
+    match the upstream Tests project so no new package is introduced.
+    Run: dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj -c Release
   -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>

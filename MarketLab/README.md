@@ -481,7 +481,8 @@ LEAN order, and writes its own results (`storage\single-anchor\results.json`
 in the run directory and the algorithm log); LEAN's statistics for such a run
 show an empty portfolio and are not strategy results. The optional
 `single-anchor-session-map` parameter names a source-derived session map and
-makes the first and last five minutes of each historical session quote-only:
+makes the first and last five minutes of each complete historical session
+quote-only (the final truncated session has an opening buffer only):
 the engine observes every quote LEAN delivers, and the results report delivered,
 quote-only and strategy-eligible counts separately (section 8 of the
 implementation note, and `tools\session-map\`). Without it the run is

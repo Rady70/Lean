@@ -127,9 +127,11 @@ namespace MarketLab.SingleAnchor
             {
                 throw new ArgumentException("a session map needs a symbol", nameof(symbol));
             }
-            if (string.IsNullOrWhiteSpace(junctionTimeZone))
+            if (!string.Equals(junctionTimeZone, SessionJunctionRule.TimeZoneId, StringComparison.Ordinal))
             {
-                throw new ArgumentException("a session map needs the junction-rule time zone", nameof(junctionTimeZone));
+                throw new ArgumentException(
+                    $"the v1 session-map contract only defines the {SessionJunctionRule.TimeZoneId} junction rule " +
+                    $"(got '{junctionTimeZone}')", nameof(junctionTimeZone));
             }
             if (sessions == null || sessions.Count == 0)
             {
@@ -152,6 +154,16 @@ namespace MarketLab.SingleAnchor
                     if (session.End.Value <= session.Start)
                     {
                         throw new ArgumentException($"session {i} ends at or before it starts", nameof(sessions));
+                    }
+                    // The two five-minute buffers need ten minutes; a shorter completed session
+                    // would make opening and closing overlap and the classification order decide
+                    // silently. The source-derived history has no such session; one is refused
+                    // rather than guessed at.
+                    if (session.End.Value - session.Start < HistoricalTradingAvailability.QuoteOnlyBuffer + HistoricalTradingAvailability.QuoteOnlyBuffer)
+                    {
+                        throw new ArgumentException(
+                            $"completed session {i} is shorter than ten minutes; the five-minute buffers would overlap " +
+                            "and its trading availability would be ambiguous", nameof(sessions));
                     }
                 }
                 else if (i != sessions.Count - 1)
@@ -289,12 +301,22 @@ namespace MarketLab.SingleAnchor
             return new HistoricalTradingAvailability(local, coverageEnd);
         }
 
-        /// <summary>Writes the map as the contract JSON document.</summary>
+        /// <summary>
+        /// Writes the map as the contract JSON document. A map without source provenance would be
+        /// refused by <see cref="Load"/> (the provenance is what bounds the final dataset-end
+        /// session and makes the map reproducible), so it cannot be saved either; source-less
+        /// maps exist only as in-memory fixtures.
+        /// </summary>
         public void Save(string path)
         {
             if (path == null)
             {
                 throw new ArgumentNullException(nameof(path));
+            }
+            if (Source == null)
+            {
+                throw new InvalidOperationException(
+                    "a session-map file must carry source provenance; a map without it cannot be loaded again");
             }
 
             var dto = new MapDto

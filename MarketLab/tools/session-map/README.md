@@ -1,9 +1,11 @@
 # Session-map generator (MarketLab-owned)
 
 `MarketLab.SessionMapTool` derives the source-session map the SingleAnchor historical replay uses
-to apply the five-minute quote-only buffers. It reads the immutable Dukascopy/JForex monthly CSV
-history (XAUUSD in this dataset), uses the strategy assembly's own session-junction rule and
-availability classifier (`MarketLab.SingleAnchor`), and writes two research artifacts outside Git:
+to apply the five-minute quote-only buffers. It reads the immutable Dukascopy/JForex **XAUUSD**
+monthly CSV history, uses the strategy assembly's own session-junction rule and availability
+classifier (`MarketLab.SingleAnchor`), and writes two research artifacts outside Git. The tool is
+deliberately XAUUSD-specific: the junction rule was established from that history only, so any
+other instrument or provider is refused rather than relabeled.
 
 - the session map (`marketlab-single-anchor-session-map-v1`): every source session as its exact
   first and last observed quote timestamp in UTC, with source provenance (file count, row count,
@@ -22,9 +24,9 @@ MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
     --stats D:\quant_research_workspace\work\lean\single-anchor-sessions\xauusd-sessions-stats.json
 ```
 
-Options: `--source <csv directory>` (required; monthly files named `<SYMBOL>_<YYYY>_<MM>_...csv`,
-contiguous months, read-only), `--out <map.json>` (required), `--stats <stats.json>` (optional),
-`--jobs <n>` (default `min(processor count, 8)`).
+Options: `--source <csv directory>` (required; Dukascopy/JForex XAUUSD monthly files named
+`XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv`, contiguous months, read-only), `--out <map.json>`
+(required), `--stats <stats.json>` (optional), `--jobs <n>` (default `min(processor count, 8)`).
 
 ## What it does
 
@@ -40,10 +42,12 @@ contiguous months, read-only), `--out <map.json>` (required), `--stats <stats.js
 3. Classifies every source row again with the runtime availability classifier and counts the
    opening-buffer, tradable and closing-buffer rows per session.
 
-The map's `symbol` is the source's own symbol from the file names (all files must agree); the
-generator never labels another instrument's sessions as XAUUSD. The loader independently checks
-that adjacent sessions are separated by the declared junction rule and that the source provenance
-is coherent (including `lastQuoteUtc` equal to the final session's observed end when it has one).
+Both passes complete before anything is published: the map and stats files are written only after
+the classification pass succeeded, so a map on disk is a validated artifact, never a partial
+result. The loader independently checks that adjacent sessions are separated by the declared
+junction rule, that a completed session is at least ten minutes long (the two buffers may not
+overlap), and that the source provenance is coherent (including `lastQuoteUtc` equal to the final
+session's observed end when it has one).
 
 The source is never modified. The map is deterministic: the same immutable source produces the same
 map and stats byte for byte (`--jobs` only changes speed).

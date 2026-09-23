@@ -36,7 +36,13 @@ namespace MarketLab.SessionMapTool
     {
         private const string Header = "timestamp,bid,ask,bidVolume,askVolume";
         private const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'";
-        private const string SourceFileNamePattern = @"^(?<symbol>[A-Z]+)_(?<year>\d{4})_(?<month>\d{2})_";
+        // This generator is deliberately narrow: the 17:00-18:00 New York junction rule was
+        // established from the Dukascopy/JForex XAUUSD history only, and no other instrument's
+        // quote-session structure has been examined. A source file must therefore be an XAUUSD
+        // Dukascopy/JForex monthly file; another provider or instrument is refused, never
+        // relabeled.
+        private const string SourceSymbol = "XAUUSD";
+        private const string SourceFileNamePattern = @"^XAUUSD_(?<year>\d{4})_(?<month>\d{2})_DUKASCOPY_JFOREX_FULL\.csv$";
         private static readonly Regex SourceFileName = new Regex(SourceFileNamePattern, RegexOptions.Compiled);
 
         private static int Main(string[] args)
@@ -96,8 +102,7 @@ namespace MarketLab.SessionMapTool
             }
 
             var files = FindSourceFiles(sourceDirectory);
-            var symbol = files[0].Symbol;
-            Console.WriteLine($"source: {files.Count} monthly files for {symbol} in {sourceDirectory}");
+            Console.WriteLine($"source: {files.Count} monthly Dukascopy/JForex XAUUSD files in {sourceDirectory}");
 
             var scans = ScanFiles(files, jobs);
             ValidateContiguity(scans);
@@ -107,14 +112,14 @@ namespace MarketLab.SessionMapTool
             var aggregate = AggregateHash(scans);
             var sourceIdentity = new HistoricalSessionMapSource(
                 scans.Length, totalRows, aggregate, firstQuote, lastQuote);
-            // The map symbol is the source's own symbol, never a constant: a map must not label
-            // another instrument's sessions as XAUUSD.
             var map = HistoricalSessionMap.Derive(
-                scans.SelectMany(scan => scan.Segments), symbol, SessionJunctionRule.TimeZoneId, sourceIdentity);
-            map.Save(outPath!);
+                scans.SelectMany(scan => scan.Segments), SourceSymbol, SessionJunctionRule.TimeZoneId, sourceIdentity);
 
+            // Both passes must complete before anything is published: a map on disk is a validated
+            // artifact, never a partial result of a run whose classification pass failed.
             var counts = CountAvailability(files, map, jobs);
             var stats = SessionMapStats.Compute(map, counts.Open, counts.Close, totalRows);
+            map.Save(outPath!);
             if (statsPath != null)
             {
                 File.WriteAllText(statsPath, JsonConvert.SerializeObject(stats, Formatting.Indented), new UTF8Encoding(false));
@@ -156,20 +161,18 @@ namespace MarketLab.SessionMapTool
                 if (!match.Success)
                 {
                     throw new InvalidDataException(
-                        $"source file name does not match the expected '<SYMBOL>_<YYYY>_<MM>_...' pattern: {path}");
+                        $"source file name is not the Dukascopy/JForex {SourceSymbol} monthly form " +
+                        $"'XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv': {path}. This generator is {SourceSymbol}-specific: " +
+                        "the junction rule was established from that history only, and another instrument or provider " +
+                        "is refused rather than relabeled.");
                 }
-                var symbol = match.Groups["symbol"].Value;
                 var year = int.Parse(match.Groups["year"].Value, CultureInfo.InvariantCulture);
                 var month = int.Parse(match.Groups["month"].Value, CultureInfo.InvariantCulture);
                 if (month < 1 || month > 12)
                 {
                     throw new InvalidDataException($"source file name has an invalid month: {path}");
                 }
-                if (files.Count > 0 && files[0].Symbol != symbol)
-                {
-                    throw new InvalidDataException($"source directory mixes symbols: {files[0].Path} and {path}");
-                }
-                files.Add(new SourceFile(path, symbol, year, month));
+                files.Add(new SourceFile(path, year, month));
             }
             if (files.Count == 0)
             {
@@ -426,7 +429,7 @@ namespace MarketLab.SessionMapTool
             return value.ToString(TimestampFormat, CultureInfo.InvariantCulture);
         }
 
-        private sealed record SourceFile(string Path, string Symbol, int Year, int Month);
+        private sealed record SourceFile(string Path, int Year, int Month);
 
         private sealed record FileScan(
             string Path,
