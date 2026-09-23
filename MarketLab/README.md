@@ -24,6 +24,7 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `scripts\build.ps1` | runs the two Batch A build commands verbatim |
 | `scripts\run-backtest.ps1` | pre-flight checks, direct Launcher invocation, post-run data check |
 | `tests\Test-MarketLabBacktesting.ps1` | self-contained assertions for the above |
+| `tests\Test-TradingAvailabilityEndToEnd.ps1` | end-to-end check of the SingleAnchor session map through the real LEAN helper on a native tick fixture |
 | `SINGLE_ANCHOR_VNEXT_STRATEGY.md` | the SingleAnchor vNext strategy specification (authoritative behaviour) |
 | `SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` | where its C# implementation lives, how it is built, tested and run, what is deferred |
 | `SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md` | approved roadmap for historical-data qualification, C# research analytics, account survival and the first baseline research run |
@@ -481,9 +482,12 @@ in the run directory and the algorithm log); LEAN's statistics for such a run
 show an empty portfolio and are not strategy results. The optional
 `single-anchor-session-map` parameter names a source-derived session map and
 makes the first and last five minutes of each historical session quote-only:
-LEAN still delivers every quote, and the results report delivered, quote-only
-and strategy-eligible counts separately (section 8 of the implementation note,
-and `tools\session-map\`). Without it the run is unrestricted.
+the engine observes every quote LEAN delivers, and the results report delivered,
+quote-only and strategy-eligible counts separately (section 8 of the
+implementation note, and `tools\session-map\`). Without it the run is
+unrestricted. Whether LEAN itself delivers every source quote is a separate
+data-path property (section 8.7): on the current research data folder it does
+not yet, so no source-to-strategy completeness is claimed here.
 [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md)
 has the commands, the parameter names, the deferred items and a validation
 record. Its default dates lie inside upstream's shipped Oanda XAUUSD tick

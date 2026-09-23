@@ -6,8 +6,10 @@ CSV history, uses the strategy assembly's own session-junction rule and availabi
 (`MarketLab.SingleAnchor`), and writes two research artifacts outside Git:
 
 - the session map (`marketlab-single-anchor-session-map-v1`): every source session as its exact
-  first and last observed quote timestamp in UTC, with source provenance;
-- an optional stats file: the quote-only and tradable row counts, per the runtime classifier.
+  first and last observed quote timestamp in UTC, with source provenance (file count, row count,
+  aggregate SHA-256, first and last quote) that the replay binds into its results;
+- an optional stats file: the quote-only and tradable row counts per the runtime classifier, with
+  the overall and complete-session populations and percentages kept separate.
 
 ## Build and run
 
@@ -28,10 +30,13 @@ contiguous months, read-only), `--out <map.json>` (required), `--stats <stats.js
 
 1. Scans every monthly file in order (parallel per file) into junction-split segments, validating
    the header, the canonical `yyyy-MM-ddTHH:mm:ss.fffZ` timestamps, non-decreasing time and month
-   contiguity, and hashes each file (SHA-256).
+   contiguity, and the quote contract the engine/PR-1 path uses (Bid > 0, Ask > 0, `Ask >= Bid`);
+   a timestamp-valid but price-invalid row fails the generation instead of moving a boundary. Each
+   file is hashed (SHA-256).
 2. Derives the sessions: adjacent segments belong to one session unless the gap fully contains the
    New York local settlement interval `17:00:00 <= t < 18:00:00`. The final session of the dataset
-   gets no end (no close is fabricated).
+   gets no end (no close is fabricated); the source coverage end still bounds it at runtime
+   (`ToAvailability`), and a quote after it is refused.
 3. Classifies every source row again with the runtime availability classifier and counts the
    opening-buffer, tradable and closing-buffer rows per session.
 
@@ -53,10 +58,14 @@ powershell -File MarketLab\scripts\run-backtest.ps1 `
 ```
 
 An absolute path can be given through a config copy (`parameters` object) and `-Config`.
-The run log records the map path, its SHA-256, the session count and the final-end observability;
+The loader requires the map's contract, v1 junction rule, ordered sessions and complete source
+provenance, and accepts any quote clock (the UTC boundaries are converted to the subscription's
+clock; the junction-rule zone is not required to equal it). The run log records the resolved map
+path, its SHA-256, the junction-rule zone, the quote clock and the source identity;
 `storage\single-anchor\results.json` carries `quoteTicksProcessed`, `quoteOnlyQuotes`,
-`strategyEligibleQuotes` and the `sessionMap` provenance block. Without the parameter the run is
-unrestricted, exactly as before this feature.
+`strategyEligibleQuotes` and the `sessionMap` provenance block (configured parameter value, map
+hash, session count, final-end observability, source file/row counts, aggregate hash, first quote
+and coverage end). Without the parameter the run is unrestricted, exactly as before this feature.
 
 ## Evidence
 

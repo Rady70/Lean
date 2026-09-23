@@ -289,6 +289,47 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
+    /// Why a quote did not fall inside the configured source-derived session map.
+    /// </summary>
+    public enum SessionMapIssue
+    {
+        /// <summary>The quote is before the first session or after the source coverage end (the map does not describe the replay data).</summary>
+        QuoteOutsideMapCoverage
+    }
+
+    /// <summary>
+    /// Thrown by the engine when a quote is outside the configured session-map coverage: the map
+    /// describes a different or older source revision than the replay data, so continuing would
+    /// silently misclassify trading availability. It is a run-ending condition like the
+    /// data-quality faults, and the refused quote is not counted or assigned as the last
+    /// processed quote.
+    /// </summary>
+    public sealed class SessionMapException : SingleAnchorRunException
+    {
+        /// <summary>Creates the exception.</summary>
+        public SessionMapException(SessionMapIssue issue, Quote quote, string message)
+            : base(quote, message)
+        {
+            Issue = issue;
+        }
+
+        /// <summary>Which map-coverage condition failed.</summary>
+        public SessionMapIssue Issue { get; }
+
+        /// <inheritdoc />
+        public override string Kind => "SessionMap";
+
+        /// <inheritdoc />
+        public override string Condition => Issue.ToString();
+
+        /// <inheritdoc />
+        public override SingleAnchorRunException AsRefusal()
+        {
+            return new SessionMapException(Issue, Quote, "The engine is faulted and accepts no further quotes: " + Message);
+        }
+    }
+
+    /// <summary>
     /// What the hard-BE requirement covers under a run's configuration, for the structured results.
     /// <see cref="StrategyDefinitionResolved"/> states that the two formerly open strategy-definition
     /// points (first-entry handling and the meaning of T_up / T_down) are resolved by the

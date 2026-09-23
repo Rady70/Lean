@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using NodaTime;
 
@@ -14,9 +15,10 @@ namespace MarketLab.SingleAnchor
     /// session junctions (<see cref="SessionJunctionRule"/>). <see cref="Start"/> is the exact
     /// timestamp of the first observed quote of the run and <see cref="End"/> the exact timestamp
     /// of the last one, in the clock the session set was loaded in (UTC for a session-map file,
-    /// the subscription's exchange time zone once converted for a run). A null <see cref="End"/>
-    /// means the natural end of the session is not observable in the source (the dataset ends
-    /// mid-session); it is never fabricated.
+    /// the subscription's quote clock once converted for a run). A null <see cref="End"/> means the
+    /// natural end of the session is not observable inside the source (the dataset ends
+    /// mid-session); it is never fabricated, and the source coverage end
+    /// (<see cref="HistoricalSessionMapSource.LastQuoteUtc"/>) still bounds it.
     /// </summary>
     public sealed record HistoricalSession(DateTime Start, DateTime? End);
 
@@ -79,11 +81,12 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
-    /// Provenance of the immutable source a session map was derived from. Recorded for the
-    /// research record; the replay itself only consumes <see cref="HistoricalSessionMap.Sessions"/>.
+    /// Provenance of the immutable source a session map was derived from. This is the semantic
+    /// source identity: file count, row count, the aggregate SHA-256 over the per-file hashes and
+    /// the first and last observed quote. The machine location of the source is deliberately not
+    /// part of it, so moving identical data does not change the map.
     /// </summary>
     public sealed record HistoricalSessionMapSource(
-        string Directory,
         int FileCount,
         long RowCount,
         string Sha256Aggregate,
@@ -96,6 +99,9 @@ namespace MarketLab.SingleAnchor
     /// contract is <c>marketlab-single-anchor-session-map-v1</c>; timestamps are UTC instants with
     /// exactly millisecond precision. The map carries no buffer policy: the five-minute
     /// quote-only windows are the strategy-side rule in <see cref="HistoricalTradingAvailability"/>.
+    /// The recorded <see cref="JunctionTimeZone"/> is the clock the junction rule was evaluated in
+    /// (America/New_York); the replay may deliver quotes in any clock, and the UTC boundaries are
+    /// converted to that clock at load.
     /// </summary>
     public sealed class HistoricalSessionMap
     {
@@ -108,11 +114,12 @@ namespace MarketLab.SingleAnchor
             "New York local settlement interval 17:00:00 <= t < 18:00:00 (America/New_York).";
 
         private const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'";
+        private static readonly Regex AggregateHash = new Regex("^[0-9a-f]{64}$", RegexOptions.Compiled);
 
         /// <summary>Creates a map from validated sessions (UTC instants, sorted, non-overlapping).</summary>
         public HistoricalSessionMap(
             string symbol,
-            string exchangeTimeZone,
+            string junctionTimeZone,
             IReadOnlyList<HistoricalSession> sessions,
             HistoricalSessionMapSource? source = null)
         {
@@ -120,9 +127,9 @@ namespace MarketLab.SingleAnchor
             {
                 throw new ArgumentException("a session map needs a symbol", nameof(symbol));
             }
-            if (string.IsNullOrWhiteSpace(exchangeTimeZone))
+            if (string.IsNullOrWhiteSpace(junctionTimeZone))
             {
-                throw new ArgumentException("a session map needs an exchange time zone", nameof(exchangeTimeZone));
+                throw new ArgumentException("a session map needs the junction-rule time zone", nameof(junctionTimeZone));
             }
             if (sessions == null || sessions.Count == 0)
             {
@@ -166,8 +173,13 @@ namespace MarketLab.SingleAnchor
                 }
             }
 
+            if (source != null)
+            {
+                ValidateSource(source, sessions);
+            }
+
             Symbol = symbol;
-            ExchangeTimeZone = exchangeTimeZone;
+            JunctionTimeZone = junctionTimeZone;
             Sessions = sessions.ToArray();
             Source = source;
         }
@@ -175,8 +187,8 @@ namespace MarketLab.SingleAnchor
         /// <summary>The instrument the sessions were derived for.</summary>
         public string Symbol { get; }
 
-        /// <summary>The exchange time zone the session boundaries are meaningful in.</summary>
-        public string ExchangeTimeZone { get; }
+        /// <summary>The clock the junction rule was evaluated in (the rule is New York based).</summary>
+        public string JunctionTimeZone { get; }
 
         /// <summary>The source provenance recorded at derivation, when available.</summary>
         public HistoricalSessionMapSource? Source { get; }
@@ -185,15 +197,17 @@ namespace MarketLab.SingleAnchor
         public IReadOnlyList<HistoricalSession> Sessions { get; }
 
         /// <summary>
-        /// Derives the map from source segments in order. Adjacent segments are merged into one
+        /// Derives the map from source segments in order. Segments must be ordered and
+        /// non-overlapping (the generator guarantees it); adjacent segments are merged into one
         /// session unless <see cref="SessionJunctionRule.IsJunction"/> separates them. The final
         /// session of the dataset is always given no end: the source cannot prove that the last
-        /// observed quote was a natural close, so no <c>T1</c> is fabricated for it.
+        /// observed quote was a natural close, so no <c>T1</c> is fabricated for it. The source
+        /// coverage end still bounds it at runtime.
         /// </summary>
         public static HistoricalSessionMap Derive(
             IEnumerable<HistoricalSegment> segments,
             string symbol = "XAUUSD",
-            string exchangeTimeZone = SessionJunctionRule.TimeZoneId,
+            string junctionTimeZone = SessionJunctionRule.TimeZoneId,
             HistoricalSessionMapSource? source = null)
         {
             if (segments == null)
@@ -211,6 +225,12 @@ namespace MarketLab.SingleAnchor
                 if (segment.Last < segment.First)
                 {
                     throw new ArgumentException("a segment ends before it starts", nameof(segments));
+                }
+                if (hasSegment && segment.First < currentLast)
+                {
+                    throw new ArgumentException(
+                        "segments must be ordered and non-overlapping; a segment starts before the previous one ends",
+                        nameof(segments));
                 }
                 if (!hasSegment)
                 {
@@ -231,31 +251,33 @@ namespace MarketLab.SingleAnchor
                 throw new ArgumentException("a session map needs at least one segment", nameof(segments));
             }
             sessions.Add(new HistoricalSession(sessionStart ?? currentFirst, null));
-            return new HistoricalSessionMap(symbol, exchangeTimeZone, sessions, source);
+            return new HistoricalSessionMap(symbol, junctionTimeZone, sessions, source);
         }
 
         /// <summary>
-        /// Converts the UTC session boundaries into the given exchange time zone and returns the
-        /// runtime classifier over the converted sessions. The conversion is unavoidable: LEAN
-        /// hands the strategy exchange-local quote times, and a session boundary must be compared
-        /// in the same clock as the quotes it bounds.
+        /// Converts the UTC session boundaries into the given quote clock and returns the runtime
+        /// classifier over the converted sessions. The conversion is unavoidable: LEAN hands the
+        /// strategy quotes in its subscription clock, and a session boundary must be compared in
+        /// the same clock as the quotes it bounds. The clock is whatever LEAN delivers (it is not
+        /// tied to the junction-rule zone, which is New York for this rule).
         /// </summary>
-        public HistoricalTradingAvailability ToAvailability(DateTimeZone exchangeZone)
+        public HistoricalTradingAvailability ToAvailability(DateTimeZone quoteClock)
         {
-            if (exchangeZone == null)
+            if (quoteClock == null)
             {
-                throw new ArgumentNullException(nameof(exchangeZone));
+                throw new ArgumentNullException(nameof(quoteClock));
             }
 
             var local = new HistoricalSession[Sessions.Count];
             for (var i = 0; i < Sessions.Count; i++)
             {
                 var session = Sessions[i]!;
-                var start = ToLocal(session.Start, exchangeZone);
-                var end = session.End.HasValue ? ToLocal(session.End.Value, exchangeZone) : (DateTime?)null;
+                var start = ToClock(session.Start, quoteClock);
+                var end = session.End.HasValue ? ToClock(session.End.Value, quoteClock) : (DateTime?)null;
                 local[i] = new HistoricalSession(start, end);
             }
-            return new HistoricalTradingAvailability(local);
+            var coverageEnd = Source == null ? (DateTime?)null : ToClock(Source.LastQuoteUtc, quoteClock);
+            return new HistoricalTradingAvailability(local, coverageEnd);
         }
 
         /// <summary>Writes the map as the contract JSON document.</summary>
@@ -270,11 +292,10 @@ namespace MarketLab.SingleAnchor
             {
                 Contract = Contract,
                 Symbol = Symbol,
-                ExchangeTimeZone = ExchangeTimeZone,
+                JunctionTimeZone = JunctionTimeZone,
                 JunctionRule = JunctionRuleText,
                 Source = Source == null ? null : new SourceDto
                 {
-                    Directory = Source.Directory,
                     FileCount = Source.FileCount,
                     RowCount = Source.RowCount,
                     Sha256Aggregate = Source.Sha256Aggregate,
@@ -290,7 +311,11 @@ namespace MarketLab.SingleAnchor
             File.WriteAllText(path, JsonConvert.SerializeObject(dto, Formatting.Indented), new UTF8Encoding(false));
         }
 
-        /// <summary>Loads and validates a map file. Malformed or non-canonical input is refused.</summary>
+        /// <summary>
+        /// Loads and validates a production map file. The contract, the junction rule, the session
+        /// ordering and the source provenance are all required: a map is a research-critical input
+        /// and a hand-edited one must not silently change trading eligibility.
+        /// </summary>
         public static HistoricalSessionMap Load(string path)
         {
             if (path == null)
@@ -324,13 +349,25 @@ namespace MarketLab.SingleAnchor
                 throw new InvalidDataException(
                     $"session map contract is '{dto.Contract}', expected '{Contract}': {path}");
             }
-            if (string.IsNullOrWhiteSpace(dto.Symbol) || string.IsNullOrWhiteSpace(dto.ExchangeTimeZone))
+            if (!string.Equals(dto.JunctionRule, JunctionRuleText, StringComparison.Ordinal))
             {
-                throw new InvalidDataException($"session map is missing its symbol or exchange time zone: {path}");
+                throw new InvalidDataException(
+                    $"session map junction rule is not the v1 rule: '{dto.JunctionRule}' ({path})");
+            }
+            if (string.IsNullOrWhiteSpace(dto.Symbol)
+                || !string.Equals(dto.JunctionTimeZone, SessionJunctionRule.TimeZoneId, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    $"session map is missing its symbol or names a junction time zone other than '{SessionJunctionRule.TimeZoneId}': {path}");
             }
             if (dto.Sessions == null || dto.Sessions.Count == 0)
             {
                 throw new InvalidDataException($"session map carries no sessions: {path}");
+            }
+            if (dto.Source == null)
+            {
+                throw new InvalidDataException(
+                    $"session map carries no source provenance; a map without it cannot bound the dataset-end session or be reproduced: {path}");
             }
 
             var sessions = new List<HistoricalSession>(dto.Sessions.Count);
@@ -341,21 +378,29 @@ namespace MarketLab.SingleAnchor
                 sessions.Add(new HistoricalSession(start, end));
             }
 
-            HistoricalSessionMapSource? source = null;
-            if (dto.Source != null)
+            if (dto.Source.FileCount <= 0)
             {
-                source = new HistoricalSessionMapSource(
-                    dto.Source.Directory ?? string.Empty,
-                    dto.Source.FileCount,
-                    dto.Source.RowCount,
-                    dto.Source.Sha256Aggregate ?? string.Empty,
-                    ParseUtc(dto.Source.FirstQuoteUtc, "source.firstQuoteUtc", path),
-                    ParseUtc(dto.Source.LastQuoteUtc, "source.lastQuoteUtc", path));
+                throw new InvalidDataException($"session map source file count must be positive: {path}");
             }
+            if (dto.Source.RowCount <= 0)
+            {
+                throw new InvalidDataException($"session map source row count must be positive: {path}");
+            }
+            if (dto.Source.Sha256Aggregate == null || !AggregateHash.IsMatch(dto.Source.Sha256Aggregate))
+            {
+                throw new InvalidDataException(
+                    $"session map source aggregate SHA-256 is not 64 lower-case hex characters: {path}");
+            }
+            var source = new HistoricalSessionMapSource(
+                dto.Source.FileCount,
+                dto.Source.RowCount,
+                dto.Source.Sha256Aggregate,
+                ParseUtc(dto.Source.FirstQuoteUtc, "source.firstQuoteUtc", path),
+                ParseUtc(dto.Source.LastQuoteUtc, "source.lastQuoteUtc", path));
 
             try
             {
-                return new HistoricalSessionMap(dto.Symbol, dto.ExchangeTimeZone, sessions, source);
+                return new HistoricalSessionMap(dto.Symbol!, dto.JunctionTimeZone!, sessions, source);
             }
             catch (ArgumentException error)
             {
@@ -363,9 +408,45 @@ namespace MarketLab.SingleAnchor
             }
         }
 
-        private static DateTime ToLocal(DateTime utc, DateTimeZone zone)
+        private static void ValidateSource(HistoricalSessionMapSource source, IReadOnlyList<HistoricalSession> sessions)
         {
-            return Instant.FromDateTimeUtc(utc).InZone(zone).LocalDateTime.ToDateTimeUnspecified();
+            if (source.FileCount <= 0)
+            {
+                throw new ArgumentException("source file count must be positive", nameof(source));
+            }
+            if (source.RowCount <= 0)
+            {
+                throw new ArgumentException("source row count must be positive", nameof(source));
+            }
+            if (source.Sha256Aggregate == null || !AggregateHash.IsMatch(source.Sha256Aggregate))
+            {
+                throw new ArgumentException("source aggregate SHA-256 must be 64 lower-case hex characters", nameof(source));
+            }
+            if (source.FirstQuoteUtc.Kind != DateTimeKind.Utc || source.LastQuoteUtc.Kind != DateTimeKind.Utc)
+            {
+                throw new ArgumentException("source quote timestamps must be UTC instants", nameof(source));
+            }
+            if (source.LastQuoteUtc < source.FirstQuoteUtc)
+            {
+                throw new ArgumentException("source last quote precedes the first", nameof(source));
+            }
+            if (sessions[0]!.Start != source.FirstQuoteUtc)
+            {
+                throw new ArgumentException(
+                    "the first session must start at the source's first observed quote", nameof(source));
+            }
+            var last = sessions[sessions.Count - 1]!;
+            var lastEnd = last.End ?? last.Start;
+            if (source.LastQuoteUtc < lastEnd)
+            {
+                throw new ArgumentException(
+                    "the source coverage end must not precede the final session's last observed quote", nameof(source));
+            }
+        }
+
+        private static DateTime ToClock(DateTime utc, DateTimeZone quoteClock)
+        {
+            return Instant.FromDateTimeUtc(utc).InZone(quoteClock).LocalDateTime.ToDateTimeUnspecified();
         }
 
         private static string FormatUtc(DateTime value)
@@ -394,7 +475,7 @@ namespace MarketLab.SingleAnchor
         {
             [JsonProperty("contract")] public string? Contract { get; set; }
             [JsonProperty("symbol")] public string? Symbol { get; set; }
-            [JsonProperty("exchangeTimeZone")] public string? ExchangeTimeZone { get; set; }
+            [JsonProperty("junctionTimeZone")] public string? JunctionTimeZone { get; set; }
             [JsonProperty("junctionRule")] public string? JunctionRule { get; set; }
             [JsonProperty("source")] public SourceDto? Source { get; set; }
             [JsonProperty("sessions")] public List<SessionDto?>? Sessions { get; set; }
@@ -402,7 +483,6 @@ namespace MarketLab.SingleAnchor
 
         private sealed class SourceDto
         {
-            [JsonProperty("directory")] public string? Directory { get; set; }
             [JsonProperty("fileCount")] public int FileCount { get; set; }
             [JsonProperty("rowCount")] public long RowCount { get; set; }
             [JsonProperty("sha256Aggregate")] public string? Sha256Aggregate { get; set; }

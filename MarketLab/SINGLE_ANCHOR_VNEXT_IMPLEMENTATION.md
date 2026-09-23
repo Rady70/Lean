@@ -57,6 +57,7 @@ basket, so LEAN's orders, equity, drawdown, fees and margin stay empty and are
 | `tools\session-map\` | the `MarketLab.SessionMapTool` generator that derives a session map from the immutable Dukascopy/JForex XAUUSD CSV history and counts the quote-only rows (section 8) |
 | `src\SingleAnchor\SingleAnchorVNextAlgorithm.cs`, `ParameterParsing.cs` | the `QCAlgorithm` host: XAUUSD CFD quote ticks, LEAN parameters, event logging, end-of-data mark to market, results file |
 | `tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj` | NUnit tests on deterministic synthetic quotes (same NUnit / test SDK versions as upstream's `Tests` project) |
+| `tests\Test-TradingAvailabilityEndToEnd.ps1` | end-to-end check through the real LEAN helper: a synthetic native tick fixture where a quote-only buffer quote is suppressed with the session map and trades without it (section 8.6) |
 
 ## 2. Build, test, run
 
@@ -467,7 +468,11 @@ The historical Dukascopy/JForex replay separates two properties of a quote that 
 the same thing:
 
 - **delivered**: LEAN read the quote from the native tick partition and handed it to the strategy
-  (`QuoteTickFeed` -> `SingleAnchorEngine.OnQuote`); every legitimate source quote stays here;
+  (`QuoteTickFeed` -> `SingleAnchorEngine.OnQuote`). This gate changes nothing about delivery; it
+  neither adds nor removes a delivered quote. Whether every legitimate source quote is delivered
+  is a separate data-path property, and on the current research data folder it is **not** yet true
+  (section 8.7); no claim in this document should be read as source-to-strategy completeness until
+  that blocker is resolved and PR-1 passes.
 - **strategy-eligible**: the quote may drive the strategy (anchor, entries, exits, trailing,
   rejections, ledger, events). The first and last five minutes of every source-derived session are
   quote-only: the strategy observes them and accounts for them, but acts on nothing until the next
@@ -493,13 +498,27 @@ For each session `T0` is the exact timestamp of the first observed quote and `T1
 timestamp of the last one (millisecond precision, no rounding). Two dataset boundaries are
 explicit: the first session starts at the first observed quote of the dataset, and the final
 session's natural end is unobservable, so the map records no end for it and no close is
-fabricated. A null end means "no closing buffer"; the opening buffer still applies.
+fabricated. A null end means "no closing buffer", **not** "unbounded": the source coverage end
+(the dataset's last observed quote) still bounds the final session, and a quote after it is
+refused (section 8.2). The first session's start is the dataset's first observed quote; it is the
+observed start, not a claim about the true market open.
+
+The rule time zone and the quote clock are separate concepts. The junction rule is evaluated in
+New York (`America/New_York`, recorded as `junctionTimeZone`), while a replay may deliver quotes
+in any clock LEAN resolves for the subscription; the UTC session boundaries are converted once, at
+load, into whatever quote clock the run uses (`ToAvailability`), and no equality between the two
+zones is required.
 
 The map is a contract file (`marketlab-single-anchor-session-map-v1`) of ordered UTC sessions plus
-source provenance (directory, file count, row count, per-file SHA-256 aggregate, first and last
-quote). `HistoricalSessionMap.Derive` builds it from ordered segments; `Load`/`Save` implement the
-file contract; `ToAvailability` converts the UTC boundaries once, at load, into the subscription's
-exchange time zone, which is the clock of LEAN's delivered tick times.
+source provenance: file count, row count, the aggregate SHA-256 over the per-file hashes and the
+first and last observed quote. That is the semantic source identity; the machine directory of the
+source is deliberately not part of the map, so identical data at another path produces the same
+bytes. `HistoricalSessionMap.Derive` builds the map from ordered segments (rejecting unordered or
+overlapping ones); `Load`/`Save` implement the file contract. `Load` is strict because the map is
+a research-critical input: the contract, the v1 junction-rule text, the junction time zone,
+ordered sessions, and a complete, coherent source provenance block (positive counts, a 64-hex
+aggregate, first quote equal to the first session's start, coverage end not before the final
+session's last observed quote) are all required.
 
 ### 8.2 The five-minute rule
 
@@ -513,24 +532,35 @@ exchange time zone, which is the clock of LEAN's delivered tick times.
 
 Exact millisecond boundaries: `t = T0` and `t = T0 + 4m59.999s` are quote-only, `t = T0 + 5m` is
 tradable, `t = T1 - 5m` is tradable, `t = T1 - 4m59.999s` and `t = T1` are quote-only. A quote
-outside every session (map and replay window mismatch) is refused loudly.
+after the source coverage end, before the first session, or in a gap a malformed map does not
+describe is a deliberate run failure (`SessionMapException`, structured results), not a silent
+classification.
 
 ### 8.3 The engine gate
 
-The gate sits inside `SingleAnchorEngine.OnQuote`, after the data-quality validation and the
+The gate sits inside `SingleAnchorEngine.OnQuote`, after the data-quality validation and before the
 delivery accounting, and before any strategy work. For a quote-only quote the engine:
 
-- validates, counts and records it as before (`QuotesProcessed++`, `LastProcessedQuote` update);
+- classifies it, then counts and records it as before (`QuotesProcessed++`, `LastProcessedQuote`
+  update);
 - increments `QuoteOnlyQuotes` and returns, so it does **not** create or reset an anchor, open or
   reject an entry, size a leg, close or fail to close a basket, activate or advance trailing,
   advance the sequence, touch rejection bookkeeping, raise a strategy event, or change realized
   P/L; the skipped-first-entry trace is untouched too;
 - the end-of-data mark to market still uses the last delivered quote.
 
-`StrategyEligibleQuotes == QuotesProcessed - QuoteOnlyQuotes`. The results file reports
+A quote outside the map's coverage faults the engine (`SessionMapException`, condition
+`QuoteOutsideMapCoverage`) before it is counted or assigned, exactly like a data-quality fault;
+the host writes structured results with `failure.kind = "SessionMap"` instead of stopping without
+evidence.
+
+`StrategyEligibleQuotes == QuotesProcessed - QuoteOnlyQuotes` counts quotes permitted to evaluate
+strategy logic (most cause no trade), not executed actions. The results file reports
 `quoteTicksProcessed` (delivered), `quoteOnlyQuotes`, `strategyEligibleQuotes` and a `sessionMap`
-provenance block (path, SHA-256, session count, first session start, final-end observability), so a
-reduced eligible count can never be read as missing historical quotes. Without the
+provenance block: the configured parameter value (not the resolved absolute path), the map's
+SHA-256, symbol, junction time zone, session count, first session start, final-end observability,
+and the source's file count, row count, aggregate SHA-256, first quote and coverage end. A reduced
+eligible count can never be read as missing historical quotes. Without the
 `single-anchor-session-map` parameter the engine has no availability: `QuoteOnlyQuotes` is 0 and
 every delivered quote is eligible, exactly the previous behaviour.
 
@@ -548,8 +578,14 @@ MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
     --stats D:\quant_research_workspace\work\lean\single-anchor-sessions\xauusd-sessions-stats.json
 ```
 
-The source is read-only and the output is deterministic (same source, same map and stats). The
-map is placed outside Git (or copied under a research data folder) and named in the run with
+The source is read-only and the output is deterministic (same source, same map and stats). Only a
+legitimate quote may define a session boundary: pass 1 parses the timestamp and the Bid/Ask
+columns and requires the engine's own contract (positive Bid and Ask, `Ask >= Bid`), so a
+timestamp-valid but price-invalid row cannot move a five-minute boundary. The stats file keeps the
+overall and complete-session populations separate with their own percentages, because the final,
+dataset-end session contributes opening-buffer rows but no closing buffer.
+
+The map is placed outside Git (or copied under a research data folder) and named in the run with
 `single-anchor-session-map`; the value cannot contain `:` on the helper's `-Parameters` route, so
 the relative-to-data-folder form is the practical one (see
 [tools/session-map/README.md](tools/session-map/README.md)).
@@ -566,13 +602,16 @@ qualification rule; no source row is excluded, filtered, redescribed or converte
 
 `MarketLab.SessionMapTool` over the 90-file immutable Dukascopy/JForex XAUUSD source
 (413,750,130 rows, `D:\quant_research_workspace\common\market_data\raw\XAUUSD_raw_history`,
-first quote `2019-01-01T23:00:07.151Z`, last `2026-06-30T23:59:59.678Z`, wall time 103 s):
+first quote `2019-01-01T23:00:07.151Z`, last `2026-06-30T23:59:59.678Z`, wall time 103-125 s;
+every row passed the generator's timestamp and Bid/Ask contract validation):
 
 - **1,935 sessions, 1,934 junctions** — exactly the previously established segmentation; 1,934
   sessions have an observable end and the final session (dataset end) has none.
 - **exact-timestamp buffer counts** for the complete sessions: 817,808 opening + 529,041 closing =
   **1,346,849 quote-only rows = 0.325522 %** of all source rows; the final session adds 802
-  opening-buffer rows and has no closing buffer (1,347,651 quote-only rows overall).
+  opening-buffer rows and has no closing buffer (**1,347,651 quote-only rows overall =
+  0.325716 %**). The map is byte-identical across runs (SHA-256
+  `33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`).
 - The investigation's published **1,339,139 (0.323659 %)** was reproduced exactly by re-running
   the investigation's own counter against the current `sessions.json` (same totals, by year and
   by class), so the evidence is internally consistent. Its scan recorded gap endpoints at whole
@@ -597,20 +636,26 @@ quote-only and produced the same strategy outcome on this window (no trigger hap
 buffer). The log and `storage\single-anchor\results.json` carry the map provenance and the three
 counts.
 
-### 8.7 Quote delivery on the current research data folder (separate blocker)
+A second, behavioral end-to-end check runs through the real helper on a synthetic native tick
+fixture and proves the host path (map loading, quote-clock conversion, feed wiring, engine gate)
+as a unit: `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1` (12 checks,
+exit 0). On its five-quote fixture the identical delivered count (5) yields one BUY without the
+map and no position with it (4 quote-only, 1 eligible), and the results carry the configured map
+value and the source row count. The strategy unit tests are 164 (see section 7 plus the new
+availability, coverage-end, provenance, stats and out-of-coverage failure tests).
 
-The runtime market-hours entry this checkout's data folder resolves for XAUUSD/Oanda
-(`Data\market-hours\market-hours-database.json`, `Cfd-oanda-XAUUSD`, reached through the data
-folder's junction) ends the New York day at 16:58 and reopens at 18:03. LEAN's
-`SubscriptionFilterEnumerator` drops ticks outside the resolved sessions, so those minutes never
-reach the replay: the earlier real-data PR-1 exercise measured 6,798 accepted rows (16:58-18:03
-New York) that were not delivered in 2023-03. The strategy-side availability does not remove any
-quote, but it also cannot restore quotes LEAN's session filter already dropped.
+### 8.7 Quote delivery on the current research data folder (separate blocker, not fixed here)
 
-Minimum correction, kept separate from this feature and from PR-1: a MarketLab-owned copy of the
-runtime market-hours database for the research data folder whose `Cfd-oanda-XAUUSD` entry covers
-the full observed session (New York close 17:00, reopen 18:00) and lists the source's
-full-closure dates so no partition is requested on a day that has no source rows. That is a
-research-data-folder configuration, not a repository or PR-1 change; the qualification manifest
-already records the runtime database's SHA-256, so a corrected copy is bound into the PR-1 record
-unchanged.
+The strategy-side availability removes no delivered quote, but it cannot restore quotes the LEAN
+data path filtered out before the strategy. On the current research data folder the resolved
+runtime session identity/hours clip legitimate source ticks at both session edges (in the earlier
+real-data PR-1 exercise, 6,798 accepted rows in 2023-03 were never delivered because the resolved
+Oanda XAUUSD entry ends the New York day at 16:58 and reopens at 18:03). Until that identity is
+corrected, "every legitimate Dukascopy quote is in the strategy stream" is **not** true
+end-to-end, and PR-1 on the full history would not pass.
+
+Resolving it is deliberately out of scope for this feature and for this branch: the replay's
+market/data identity and session definition must allow every legitimate source tick, and the
+proper source-appropriate LEAN identity for the Dukascopy history is a separate decision to be
+made and validated with the data owner. This section records the blocker; it prescribes no
+broker-specific calendar and no maintained holiday list.

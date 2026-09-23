@@ -105,23 +105,27 @@ namespace MarketLab.SessionMapTool
             var lastQuote = scans[scans.Length - 1].LastQuoteUtc;
             var aggregate = AggregateHash(scans);
             var sourceIdentity = new HistoricalSessionMapSource(
-                Path.GetFullPath(sourceDirectory), scans.Length, totalRows, aggregate, firstQuote, lastQuote);
+                scans.Length, totalRows, aggregate, firstQuote, lastQuote);
             var map = HistoricalSessionMap.Derive(
                 scans.SelectMany(scan => scan.Segments), "XAUUSD", SessionJunctionRule.TimeZoneId, sourceIdentity);
             map.Save(outPath!);
 
             var counts = CountAvailability(files, map, jobs);
-            var stats = BuildStats(map, counts, totalRows);
+            var stats = SessionMapStats.Compute(map, counts.Open, counts.Close, totalRows);
             if (statsPath != null)
             {
                 File.WriteAllText(statsPath, JsonConvert.SerializeObject(stats, Formatting.Indented), new UTF8Encoding(false));
             }
 
             Console.WriteLine($"rows: {totalRows} quote rows ({scans.Length} files); first {Format(firstQuote)}, last {Format(lastQuote)}");
-            Console.WriteLine($"sessions: {map.Sessions.Count}; junctions: {map.Sessions.Count - 1}; observable ends: {map.Sessions.Count - 1}");
+            Console.WriteLine($"sessions: {stats.Sessions}; junctions: {stats.Junctions}; observable ends: {stats.CompleteSessions}");
             Console.WriteLine(
-                $"quote-only rows: {stats.QuoteOnlyRows} ({stats.QuoteOnlyPercentOfSourceRows.ToString("0.######", CultureInfo.InvariantCulture)}% of source rows); " +
-                $"complete sessions {stats.CompleteSessionQuoteOnlyRows}, final session opening buffer {stats.FinalSessionOpenBufferRows}");
+                $"quote-only rows (all sessions): {stats.QuoteOnlyRows} " +
+                $"({stats.QuoteOnlyPercentOfSourceRows.ToString("0.######", CultureInfo.InvariantCulture)}% of source rows; " +
+                $"final session opening buffer {stats.FinalSessionOpenBufferRows})");
+            Console.WriteLine(
+                $"quote-only rows (complete sessions): {stats.CompleteSessionQuoteOnlyRows} " +
+                $"({stats.CompleteSessionQuoteOnlyPercentOfSourceRows.ToString("0.######", CultureInfo.InvariantCulture)}% of source rows)");
             Console.WriteLine($"map written: {Path.GetFullPath(outPath!)}");
             if (statsPath != null)
             {
@@ -271,6 +275,25 @@ namespace MarketLab.SessionMapTool
                     throw new InvalidDataException(
                         $"row {rows + 2} in {path} has a non-canonical UTC timestamp: '{text}'");
                 }
+                // Only a legitimate quote may define a session boundary, exactly under the engine's
+                // and PR-1's quote contract: Bid > 0, Ask > 0, Ask >= Bid. A timestamp-valid row
+                // with an invalid price would otherwise move a five-minute boundary.
+                var bidComma = line.IndexOf(',', comma + 1);
+                var askComma = bidComma < 0 ? -1 : line.IndexOf(',', bidComma + 1);
+                if (bidComma < 0 || askComma < 0)
+                {
+                    throw new InvalidDataException(
+                        $"row {rows + 2} in {path} does not carry timestamp,bid,ask columns: '{line}'");
+                }
+                var bidText = line.Substring(comma + 1, bidComma - comma - 1);
+                var askText = line.Substring(bidComma + 1, askComma - bidComma - 1);
+                if (!decimal.TryParse(bidText, NumberStyles.Float, CultureInfo.InvariantCulture, out var bid)
+                    || !decimal.TryParse(askText, NumberStyles.Float, CultureInfo.InvariantCulture, out var ask)
+                    || bid <= 0m || ask <= 0m || ask < bid)
+                {
+                    throw new InvalidDataException(
+                        $"row {rows + 2} in {path} is not a valid quote (bid '{bidText}', ask '{askText}')");
+                }
                 if (rows > 0)
                 {
                     if (timestamp < segmentLast)
@@ -395,43 +418,6 @@ namespace MarketLab.SessionMapTool
             return new AvailabilityCounts(open, close, rows);
         }
 
-        private static SessionMapStats BuildStats(HistoricalSessionMap map, AvailabilityCounts counts, long totalRows)
-        {
-            var completeSessions = map.Sessions.Count - 1; // only the final session has no observable end
-            long completeOpen = 0;
-            long completeClose = 0;
-            long allOpen = 0;
-            long observableClose = 0;
-            for (var session = 0; session < map.Sessions.Count; session++)
-            {
-                allOpen += counts.Open[session];
-                observableClose += counts.Close[session];
-                if (session < completeSessions)
-                {
-                    completeOpen += counts.Open[session];
-                    completeClose += counts.Close[session];
-                }
-            }
-            var completeQuoteOnly = completeOpen + completeClose;
-            return new SessionMapStats
-            {
-                Sessions = map.Sessions.Count,
-                Junctions = map.Sessions.Count - 1,
-                CompleteSessions = completeSessions,
-                FinalSessionEndObservable = false,
-                SourceRows = totalRows,
-                AllOpenBufferRows = allOpen,
-                ObservableCloseBufferRows = observableClose,
-                QuoteOnlyRows = allOpen + observableClose,
-                TradableRows = totalRows - allOpen - observableClose,
-                CompleteSessionOpenBufferRows = completeOpen,
-                CompleteSessionCloseBufferRows = completeClose,
-                CompleteSessionQuoteOnlyRows = completeQuoteOnly,
-                FinalSessionOpenBufferRows = allOpen - completeOpen,
-                QuoteOnlyPercentOfSourceRows = totalRows == 0 ? 0d : completeQuoteOnly * 100d / totalRows
-            };
-        }
-
         private static string Format(DateTime value)
         {
             return value.ToString(TimestampFormat, CultureInfo.InvariantCulture);
@@ -448,24 +434,5 @@ namespace MarketLab.SessionMapTool
             IReadOnlyList<HistoricalSegment> Segments);
 
         private sealed record AvailabilityCounts(long[] Open, long[] Close, long Rows);
-
-        private sealed class SessionMapStats
-        {
-            [JsonProperty("contract")] public string Contract { get; set; } = "marketlab-single-anchor-session-map-stats-v1";
-            [JsonProperty("sessions")] public int Sessions { get; set; }
-            [JsonProperty("junctions")] public int Junctions { get; set; }
-            [JsonProperty("completeSessions")] public int CompleteSessions { get; set; }
-            [JsonProperty("finalSessionEndObservable")] public bool FinalSessionEndObservable { get; set; }
-            [JsonProperty("sourceRows")] public long SourceRows { get; set; }
-            [JsonProperty("allOpenBufferRows")] public long AllOpenBufferRows { get; set; }
-            [JsonProperty("observableCloseBufferRows")] public long ObservableCloseBufferRows { get; set; }
-            [JsonProperty("quoteOnlyRows")] public long QuoteOnlyRows { get; set; }
-            [JsonProperty("tradableRows")] public long TradableRows { get; set; }
-            [JsonProperty("completeSessionOpenBufferRows")] public long CompleteSessionOpenBufferRows { get; set; }
-            [JsonProperty("completeSessionCloseBufferRows")] public long CompleteSessionCloseBufferRows { get; set; }
-            [JsonProperty("completeSessionQuoteOnlyRows")] public long CompleteSessionQuoteOnlyRows { get; set; }
-            [JsonProperty("finalSessionOpenBufferRows")] public long FinalSessionOpenBufferRows { get; set; }
-            [JsonProperty("quoteOnlyPercentOfSourceRows")] public double QuoteOnlyPercentOfSourceRows { get; set; }
-        }
     }
 }

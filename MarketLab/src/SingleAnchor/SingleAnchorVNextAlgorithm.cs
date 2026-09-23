@@ -29,11 +29,12 @@ namespace MarketLab.SingleAnchor
     /// USD account) and must be given for any other ticker: the host is XAUUSD-focused and does
     /// not carry instrument economics for anything else. <c>single-anchor-session-map</c> names an
     /// optional source-derived session map (absolute, or relative to the data folder). With it,
-    /// LEAN still delivers every quote, and the engine observes every quote, but a quote in the
-    /// first or last five minutes of its source session cannot drive strategy state: it is counted
-    /// as <c>quoteOnlyQuotes</c> next to the delivered <c>quoteTicksProcessed</c> and the
-    /// <c>strategyEligibleQuotes</c>. Without it, every delivered quote is strategy-eligible, the
-    /// pre-existing behaviour. A strategy invariant failure
+    /// the engine observes every quote LEAN delivers but a quote in the first or last five minutes
+    /// of its source session cannot drive strategy state: it is counted as <c>quoteOnlyQuotes</c>
+    /// next to the delivered <c>quoteTicksProcessed</c> and the <c>strategyEligibleQuotes</c>.
+    /// This gate removes no delivered quote; quotes LEAN itself filtered out before the strategy
+    /// (session identity/hours) are a separate data-path concern. Without the parameter, every
+    /// delivered quote is strategy-eligible, the pre-existing behaviour. A strategy invariant failure
     /// (<see cref="StrategyInvariantException"/>) or a data-quality failure
     /// (<see cref="DataQualityException"/>) writes the results with the failure recorded and then
     /// stops the run as a LEAN runtime error. The results also carry the hard-BE verification
@@ -210,23 +211,25 @@ namespace MarketLab.SingleAnchor
                 throw new ArgumentException(
                     $"session map {path} is for '{map.Symbol}' but the run is configured for '{_ticker}'.");
             }
-            var exchangeTimeZone = security.Exchange.TimeZone.Id;
-            if (!string.Equals(map.ExchangeTimeZone, exchangeTimeZone, StringComparison.Ordinal))
-            {
-                throw new ArgumentException(
-                    $"session map {path} was derived in '{map.ExchangeTimeZone}' but the subscription trades in '{exchangeTimeZone}'.");
-            }
 
+            // The junction rule is evaluated in the junction time zone, but the replay may deliver
+            // quotes in any clock (LEAN's subscription time zone); the UTC boundaries are
+            // converted to whatever clock this run actually delivers.
             var availability = map.ToAvailability(security.Exchange.TimeZone);
+            var source = map.Source!;
             var final = map.Sessions[map.Sessions.Count - 1]!;
             _sessionMapInfo = new SessionMapRunInfo(
-                path, Sha256File(path), map.Sessions.Count, map.Sessions[0]!.Start, final.End.HasValue);
+                _sessionMap, Sha256File(path), map.Symbol, map.JunctionTimeZone, map.Sessions.Count,
+                map.Sessions[0]!.Start, final.End.HasValue,
+                source.FileCount, source.RowCount, source.Sha256Aggregate, source.FirstQuoteUtc, source.LastQuoteUtc);
             Log(
                 $"SingleAnchor session map: {map.Sessions.Count} source-derived sessions from {path} (sha256 {_sessionMapInfo.Sha256}); " +
+                $"junction rule zone {map.JunctionTimeZone}, quote clock {security.Exchange.TimeZone.Id}; " +
+                $"source {source.FileCount} files / {source.RowCount} rows (aggregate sha256 {source.Sha256Aggregate}); " +
                 $"five-minute quote-only buffers at both session ends; first session starts {FormatUtc(map.Sessions[0]!.Start)}; " +
                 (final.End.HasValue
-                    ? $"final session ends {FormatUtc(final.End.Value)}."
-                    : "final session end not observable in the source (no closing buffer is applied)."));
+                    ? $"final session ends {FormatUtc(final.End.Value)} (coverage end {FormatUtc(source.LastQuoteUtc)})."
+                    : $"final session end not observable (no closing buffer; coverage ends {FormatUtc(source.LastQuoteUtc)})."));
             return availability;
         }
 
@@ -243,11 +246,18 @@ namespace MarketLab.SingleAnchor
         }
 
         private sealed record SessionMapRunInfo(
-            string Path,
+            string Map,
             string Sha256,
+            string Symbol,
+            string JunctionTimeZone,
             int Sessions,
             DateTime FirstSessionStartUtc,
-            bool FinalSessionEndObservable);
+            bool FinalSessionEndObservable,
+            int SourceFileCount,
+            long SourceRowCount,
+            string SourceSha256Aggregate,
+            DateTime SourceFirstQuoteUtc,
+            DateTime SourceCoverageEndUtc);
 
         /// <inheritdoc />
         public override void OnData(Slice slice)

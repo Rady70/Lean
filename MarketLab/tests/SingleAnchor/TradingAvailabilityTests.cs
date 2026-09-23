@@ -23,9 +23,19 @@ namespace MarketLab.SingleAnchor.Tests
             return new HistoricalTradingAvailability(sessions);
         }
 
+        public static HistoricalTradingAvailability Coverage(DateTime coverageEnd, params HistoricalSession[] sessions)
+        {
+            return new HistoricalTradingAvailability(sessions, coverageEnd);
+        }
+
         public static HistoricalTradingAvailability TwoSessions()
         {
             return Availability(Window(S0, S0End), Window(S1, S1End));
+        }
+
+        public static HistoricalSessionMapSource Source(DateTime firstQuoteUtc, DateTime lastQuoteUtc, int files = 90, long rows = 413750130)
+        {
+            return new HistoricalSessionMapSource(files, rows, new string('a', 64), firstQuoteUtc, lastQuoteUtc);
         }
 
         public static DateTime U(int year, int month, int day, int hour, int minute, int second)
@@ -57,14 +67,26 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void SessionWithoutObservableEndHasAnOpeningBufferAndNoClosingBuffer()
+        public void SessionWithoutObservableEndHasAnOpeningBufferAndStopsAtTheSourceCoverageEnd()
         {
-            var a = Sessions.Availability(Sessions.Window(Sessions.S0, null));
+            var coverageEnd = Sessions.S0.AddHours(10);
+            var a = Sessions.Coverage(coverageEnd, Sessions.Window(Sessions.S0, null));
 
             Assert.That(a.Classify(Sessions.S0.AddMilliseconds(299_999)), Is.EqualTo(QuoteTradability.QuoteOnlyOpeningBuffer));
             Assert.That(a.Classify(Sessions.S0.AddMilliseconds(300_000)), Is.EqualTo(QuoteTradability.Tradable));
-            Assert.That(a.Classify(Sessions.S0.AddDays(10)), Is.EqualTo(QuoteTradability.Tradable),
-                "the dataset cannot prove a close, so no closing buffer is fabricated");
+            Assert.That(a.Classify(coverageEnd), Is.EqualTo(QuoteTradability.Tradable),
+                "the natural close is unknown, so no closing buffer is fabricated, but coverage is finite");
+            Assert.Throws<InvalidOperationException>(() => a.Classify(coverageEnd.AddMilliseconds(1)),
+                "one millisecond after the last observed quote is outside the map");
+        }
+
+        [Test]
+        public void AFinalSessionWithoutObservableEndRequiresTheCoverageEnd()
+        {
+            var error = Assert.Throws<ArgumentException>(() =>
+                new HistoricalTradingAvailability(new[] { Sessions.Window(Sessions.S0, null) }))!;
+
+            Assert.That(error.Message, Does.Contain("coverage end"));
         }
 
         [Test]
@@ -92,16 +114,22 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void AMapConvertsUtcSessionsIntoTheExchangeClock()
+        public void TheSameMapServesAnyQuoteClock()
         {
-            // 2024-01-02 23:00:00Z is 18:00:00 New York (EST): the session opens 18:00 local.
+            // 2024-01-02 23:00:00Z is 18:00 New York: the junction rule is New York based, but the
+            // replay may deliver quotes in another clock, so the UTC boundaries are converted to
+            // whatever clock the run uses.
             var map = new HistoricalSessionMap(
-                "XAUUSD", "America/New_York", new[] { Sessions.Window(Sessions.U(2024, 1, 2, 23, 0, 0), null) });
-            var a = map.ToAvailability(DateTimeZoneProviders.Tzdb["America/New_York"]);
+                "XAUUSD", SessionJunctionRule.TimeZoneId,
+                new[] { Sessions.Window(Sessions.U(2024, 1, 2, 23, 0, 0), Sessions.U(2024, 1, 3, 2, 0, 0)) });
 
-            Assert.That(a.Classify(new DateTime(2024, 1, 2, 18, 0, 0)), Is.EqualTo(QuoteTradability.QuoteOnlyOpeningBuffer));
-            Assert.That(a.Classify(new DateTime(2024, 1, 2, 18, 4, 59)), Is.EqualTo(QuoteTradability.QuoteOnlyOpeningBuffer));
-            Assert.That(a.Classify(new DateTime(2024, 1, 2, 18, 5, 0)), Is.EqualTo(QuoteTradability.Tradable));
+            var newYork = map.ToAvailability(DateTimeZoneProviders.Tzdb["America/New_York"]);
+            Assert.That(newYork.Classify(new DateTime(2024, 1, 2, 18, 0, 0)), Is.EqualTo(QuoteTradability.QuoteOnlyOpeningBuffer));
+            Assert.That(newYork.Classify(new DateTime(2024, 1, 2, 18, 5, 0)), Is.EqualTo(QuoteTradability.Tradable));
+
+            var utc = map.ToAvailability(DateTimeZone.Utc);
+            Assert.That(utc.Classify(new DateTime(2024, 1, 2, 23, 0, 0)), Is.EqualTo(QuoteTradability.QuoteOnlyOpeningBuffer));
+            Assert.That(utc.Classify(new DateTime(2024, 1, 2, 23, 5, 0)), Is.EqualTo(QuoteTradability.Tradable));
         }
     }
 
@@ -192,6 +220,24 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void DeriveRefusesUnorderedOrOverlappingSegments()
+        {
+            var outOfOrder = new[]
+            {
+                new HistoricalSegment(Sessions.U(2024, 1, 2, 10, 0, 0), Sessions.U(2024, 1, 2, 12, 0, 0)),
+                new HistoricalSegment(Sessions.U(2024, 1, 2, 9, 0, 0), Sessions.U(2024, 1, 2, 9, 30, 0))
+            };
+            Assert.Throws<ArgumentException>(() => HistoricalSessionMap.Derive(outOfOrder));
+
+            var overlapping = new[]
+            {
+                new HistoricalSegment(Sessions.U(2024, 1, 2, 10, 0, 0), Sessions.U(2024, 1, 2, 12, 0, 0)),
+                new HistoricalSegment(Sessions.U(2024, 1, 2, 11, 0, 0), Sessions.U(2024, 1, 2, 13, 0, 0))
+            };
+            Assert.Throws<ArgumentException>(() => HistoricalSessionMap.Derive(overlapping));
+        }
+
+        [Test]
         public void ASessionCanSpanAMonthBoundary()
         {
             // 2024-01-31 23:59:59Z = 18:59:59 New York and 2024-02-01 00:00:00Z is one second
@@ -220,21 +266,21 @@ namespace MarketLab.SingleAnchor.Tests
             var path = Path.Combine(directory, "xauusd-sessions.json");
             try
             {
+                var first = Sessions.U(2024, 1, 2, 0, 0, 0);
+                var last = Sessions.U(2024, 1, 3, 21, 59, 59);
                 var map = HistoricalSessionMap.Derive(
                     new[]
                     {
-                        new HistoricalSegment(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 21, 59, 59)),
-                        new HistoricalSegment(Sessions.U(2024, 1, 2, 23, 0, 0), Sessions.U(2024, 1, 3, 21, 59, 59))
+                        new HistoricalSegment(first, Sessions.U(2024, 1, 2, 21, 59, 59)),
+                        new HistoricalSegment(Sessions.U(2024, 1, 2, 23, 0, 0), last)
                     },
-                    source: new HistoricalSessionMapSource(
-                        "D:\\source", 90, 413750130, "aggregate",
-                        Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 3, 21, 59, 59)));
+                    source: Sessions.Source(first, last));
                 map.Save(path);
 
                 var loaded = HistoricalSessionMap.Load(path);
 
                 Assert.That(loaded.Symbol, Is.EqualTo("XAUUSD"));
-                Assert.That(loaded.ExchangeTimeZone, Is.EqualTo("America/New_York"));
+                Assert.That(loaded.JunctionTimeZone, Is.EqualTo("America/New_York"));
                 Assert.That(loaded.Sessions, Has.Count.EqualTo(2));
                 Assert.That(loaded.Sessions[0]!.Start, Is.EqualTo(map.Sessions[0]!.Start));
                 Assert.That(loaded.Sessions[0]!.End, Is.EqualTo(map.Sessions[0]!.End));
@@ -242,7 +288,12 @@ namespace MarketLab.SingleAnchor.Tests
                 Assert.That(loaded.Sessions[1]!.End, Is.Null);
                 Assert.That(loaded.Source!.FileCount, Is.EqualTo(90));
                 Assert.That(loaded.Source.RowCount, Is.EqualTo(413750130));
-                Assert.That(loaded.Source.Sha256Aggregate, Is.EqualTo("aggregate"));
+                Assert.That(loaded.Source.Sha256Aggregate, Is.EqualTo(new string('a', 64)));
+                Assert.That(loaded.Source.FirstQuoteUtc, Is.EqualTo(first));
+                Assert.That(loaded.Source.LastQuoteUtc, Is.EqualTo(last));
+
+                var rules = loaded.ToAvailability(DateTimeZone.Utc);
+                Assert.That(rules.CoverageEnd, Is.EqualTo(last), "the coverage end survives the file round trip");
             }
             finally
             {
@@ -251,19 +302,68 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void AMalformedMapFileIsRefused()
+        public void AMalformedOrIncompleteMapFileIsRefused()
         {
             var directory = Path.Combine(Path.GetTempPath(), "marketlab-session-map-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, "bad.json");
+            var first = Sessions.U(2024, 1, 2, 0, 0, 0);
+            var last = Sessions.U(2024, 1, 3, 21, 59, 59);
             try
             {
                 File.WriteAllText(path, "{\"contract\":\"wrong\"}");
                 Assert.Throws<InvalidDataException>(() => HistoricalSessionMap.Load(path));
 
-                File.WriteAllText(
-                    path,
-                    "{\"contract\":\"marketlab-single-anchor-session-map-v1\",\"symbol\":\"XAUUSD\",\"exchangeTimeZone\":\"America/New_York\",\"sessions\":[{\"startUtc\":\"2024-01-02T00:00:00.000Z\",\"endUtc\":null},{\"startUtc\":\"2024-01-03T00:00:00.000Z\",\"endUtc\":null}]}");
+                File.WriteAllText(path, $"{{" +
+                    $"\"contract\":\"{HistoricalSessionMap.Contract}\"," +
+                    $"\"symbol\":\"XAUUSD\"," +
+                    $"\"junctionTimeZone\":\"America/New_York\"," +
+                    $"\"junctionRule\":\"a different rule\"," +
+                    $"\"sessions\":[{{\"startUtc\":\"2024-01-02T00:00:00.000Z\",\"endUtc\":null}}]}}");
+                Assert.Throws<InvalidDataException>(() => HistoricalSessionMap.Load(path),
+                    "a map with a different junction rule must be refused even with the same contract");
+
+                File.WriteAllText(path, $"{{" +
+                    $"\"contract\":\"{HistoricalSessionMap.Contract}\"," +
+                    $"\"symbol\":\"XAUUSD\"," +
+                    $"\"junctionTimeZone\":\"America/New_York\"," +
+                    $"\"junctionRule\":\"{HistoricalSessionMap.JunctionRuleText}\"," +
+                    $"\"sessions\":[{{\"startUtc\":\"2024-01-02T00:00:00.000Z\",\"endUtc\":null}}]}}");
+                Assert.Throws<InvalidDataException>(() => HistoricalSessionMap.Load(path),
+                    "production map files must carry source provenance");
+
+                File.WriteAllText(path, $"{{" +
+                    $"\"contract\":\"{HistoricalSessionMap.Contract}\"," +
+                    $"\"symbol\":\"XAUUSD\"," +
+                    $"\"junctionTimeZone\":\"America/New_York\"," +
+                    $"\"junctionRule\":\"{HistoricalSessionMap.JunctionRuleText}\"," +
+                    $"\"source\":{{\"fileCount\":90,\"rowCount\":413750130,\"sha256Aggregate\":\"nothex\"," +
+                    $"\"firstQuoteUtc\":\"2024-01-02T00:00:00.000Z\",\"lastQuoteUtc\":\"2024-01-03T21:59:59.000Z\"}}," +
+                    $"\"sessions\":[{{\"startUtc\":\"2024-01-02T00:00:00.000Z\",\"endUtc\":null}}]}}");
+                Assert.Throws<InvalidDataException>(() => HistoricalSessionMap.Load(path),
+                    "a malformed source aggregate hash must be refused");
+
+                File.WriteAllText(path, $"{{" +
+                    $"\"contract\":\"{HistoricalSessionMap.Contract}\"," +
+                    $"\"symbol\":\"XAUUSD\"," +
+                    $"\"junctionTimeZone\":\"America/New_York\"," +
+                    $"\"junctionRule\":\"{HistoricalSessionMap.JunctionRuleText}\"," +
+                    $"\"source\":{{\"fileCount\":1,\"rowCount\":2,\"sha256Aggregate\":\"{new string('a', 64)}\"," +
+                    $"\"firstQuoteUtc\":\"2024-01-02T00:00:01.000Z\",\"lastQuoteUtc\":\"2024-01-02T01:00:00.000Z\"}}," +
+                    $"\"sessions\":[{{\"startUtc\":\"2024-01-02T00:00:00.000Z\",\"endUtc\":\"2024-01-02T00:30:00.000Z\"}}]}}");
+                Assert.Throws<InvalidDataException>(() => HistoricalSessionMap.Load(path),
+                    "the first session must start at the source's first observed quote");
+
+                File.WriteAllText(path, $"{{" +
+                    $"\"contract\":\"{HistoricalSessionMap.Contract}\"," +
+                    $"\"symbol\":\"XAUUSD\"," +
+                    $"\"junctionTimeZone\":\"America/New_York\"," +
+                    $"\"junctionRule\":\"{HistoricalSessionMap.JunctionRuleText}\"," +
+                    $"\"source\":{{\"fileCount\":1,\"rowCount\":2,\"sha256Aggregate\":\"{new string('a', 64)}\"," +
+                    $"\"firstQuoteUtc\":\"2024-01-02T00:00:00.000Z\",\"lastQuoteUtc\":\"2024-01-03T21:59:59.000Z\"}}," +
+                    $"\"sessions\":[" +
+                    $"{{\"startUtc\":\"2024-01-02T00:00:00.000Z\",\"endUtc\":null}}," +
+                    $"{{\"startUtc\":\"2024-01-03T00:00:00.000Z\",\"endUtc\":null}}]}}");
                 Assert.Throws<InvalidDataException>(() => HistoricalSessionMap.Load(path),
                     "only the final session may have no observable end");
             }
@@ -271,6 +371,35 @@ namespace MarketLab.SingleAnchor.Tests
             {
                 Directory.Delete(directory, true);
             }
+        }
+    }
+
+    [TestFixture]
+    public class SessionMapStatsTests
+    {
+        [Test]
+        public void OverallAndCompleteSessionPercentagesUseTheirOwnNumerator()
+        {
+            var map = new HistoricalSessionMap(
+                "XAUUSD", SessionJunctionRule.TimeZoneId,
+                new[]
+                {
+                    Sessions.Window(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 2, 0, 0)),
+                    Sessions.Window(Sessions.U(2024, 1, 2, 3, 0, 0), null)
+                },
+                Sessions.Source(Sessions.U(2024, 1, 2, 0, 0, 0), Sessions.U(2024, 1, 2, 6, 0, 0)));
+
+            var stats = SessionMapStats.Compute(map, new long[] { 10, 5 }, new long[] { 3, 0 }, 100);
+
+            Assert.That(stats.Sessions, Is.EqualTo(2));
+            Assert.That(stats.Junctions, Is.EqualTo(1));
+            Assert.That(stats.CompleteSessions, Is.EqualTo(1));
+            Assert.That(stats.QuoteOnlyRows, Is.EqualTo(18), "all sessions: 10 + 3 + 5 opening + 0 closing");
+            Assert.That(stats.CompleteSessionQuoteOnlyRows, Is.EqualTo(13), "complete sessions only: 10 + 3");
+            Assert.That(stats.FinalSessionOpenBufferRows, Is.EqualTo(5));
+            Assert.That(stats.TradableRows, Is.EqualTo(82));
+            Assert.That(stats.QuoteOnlyPercentOfSourceRows, Is.EqualTo(18d));
+            Assert.That(stats.CompleteSessionQuoteOnlyPercentOfSourceRows, Is.EqualTo(13d));
         }
     }
 
@@ -428,6 +557,26 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.Engine.QuoteOnlyQuotes, Is.EqualTo(0));
             Assert.That(h.Engine.StrategyEligibleQuotes, Is.EqualTo(2));
             Assert.That(h.Engine.Basket!.Legs, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void AQuoteAfterTheSourceCoverageEndIsAStructuredRunFailure()
+        {
+            var coverageEnd = Sessions.S0.AddHours(2);
+            var h = new Harness(Harness.NoExits(), Sessions.Coverage(coverageEnd, Sessions.Window(Sessions.S0, null)));
+            h.FeedAt(Sessions.S0.AddMinutes(6), 1999.9m, 2000.1m);          // anchors, tradable
+
+            var failure = Assert.Throws<SessionMapException>(() =>
+                h.FeedAt(coverageEnd.AddMilliseconds(1), 1999.9m, 2000.1m))!;
+
+            Assert.That(failure.Kind, Is.EqualTo("SessionMap"));
+            Assert.That(failure.Condition, Is.EqualTo("QuoteOutsideMapCoverage"));
+            Assert.That(h.Engine.Faulted, Is.True);
+            Assert.That(h.Engine.QuotesProcessed, Is.EqualTo(1), "the out-of-coverage quote is not counted");
+            Assert.That(h.Engine.LastProcessedQuote!.Value.Time, Is.EqualTo(Sessions.S0.AddMinutes(6)));
+            Assert.That(h.Engine.QuoteOnlyQuotes, Is.EqualTo(0));
+
+            Assert.Throws<SessionMapException>(() => h.FeedAt(coverageEnd.AddMinutes(30), 1999.9m, 2000.1m));
         }
     }
 }

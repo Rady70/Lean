@@ -26,16 +26,16 @@ namespace MarketLab.SingleAnchor
     /// <c>T0 + 5min &lt;= t &lt;= T1 - 5min</c> is tradable and
     /// <c>T1 - 5min &lt; t &lt;= T1</c> is quote-only (closing buffer), with exact millisecond
     /// semantics. <c>T0</c> and <c>T1</c> are the exact timestamps of the first and last observed
-    /// quotes of the source session (<see cref="HistoricalSession"/>). A session with no
-    /// observable end has no closing buffer: the dataset cannot prove a close, so none is
-    /// fabricated.
+    /// quotes of the source session (<see cref="HistoricalSession"/>).
     /// </summary>
     /// <remarks>
-    /// The sessions are in the same clock as the quotes they classify. The map is derived in UTC
-    /// and converted once, by the host, into the subscription's exchange time zone, which is the
-    /// clock of LEAN's delivered <c>Tick.Time</c>. The instance is stateful and expects quotes in
-    /// non-decreasing time order, exactly like the engine that owns it; a quote outside every
-    /// session is refused loudly because it means the map and the replay data window do not match.
+    /// A session whose dataset cannot prove a close has no <c>T1</c> and therefore no closing
+    /// buffer, but it is not unbounded: the source coverage end is the last observed quote of the
+    /// dataset, and a quote after it is refused because the map no longer describes the replay
+    /// data. The sessions are in the same clock as the quotes they classify. The map is derived in
+    /// UTC and converted once, by the host, into the subscription's quote clock. The instance is
+    /// stateful and expects quotes in non-decreasing time order, exactly like the engine that owns
+    /// it; a quote outside the map's coverage is refused loudly.
     /// </remarks>
     public sealed class HistoricalTradingAvailability
     {
@@ -43,10 +43,16 @@ namespace MarketLab.SingleAnchor
         public static readonly TimeSpan QuoteOnlyBuffer = TimeSpan.FromMinutes(5);
 
         private readonly IReadOnlyList<HistoricalSession> _sessions;
+        private readonly DateTime? _coverageEnd;
         private int _next;
 
-        /// <summary>Creates the classifier over validated sessions (sorted, non-overlapping).</summary>
-        public HistoricalTradingAvailability(IReadOnlyList<HistoricalSession> sessions)
+        /// <summary>
+        /// Creates the classifier over validated sessions (sorted, non-overlapping) in the quote
+        /// clock. <paramref name="coverageEnd"/> is the last observed quote of the source, in the
+        /// same clock; it is required when the final session has no observable end, because such a
+        /// session must stop at the coverage end rather than continue forever.
+        /// </summary>
+        public HistoricalTradingAvailability(IReadOnlyList<HistoricalSession> sessions, DateTime? coverageEnd = null)
         {
             if (sessions == null || sessions.Count == 0)
             {
@@ -74,14 +80,39 @@ namespace MarketLab.SingleAnchor
                 }
             }
 
+            var final = sessions[sessions.Count - 1]!;
+            if (!final.End.HasValue && !coverageEnd.HasValue)
+            {
+                throw new ArgumentException(
+                    "a final session with no observable end needs the source coverage end; " +
+                    "without it the session would be unbounded", nameof(coverageEnd));
+            }
+            if (coverageEnd.HasValue)
+            {
+                var lastObserved = final.End ?? final.Start;
+                if (coverageEnd.Value < lastObserved)
+                {
+                    throw new ArgumentException(
+                        "the source coverage end must not precede the final session's last observed quote",
+                        nameof(coverageEnd));
+                }
+            }
+
             _sessions = sessions;
+            _coverageEnd = coverageEnd;
         }
 
         /// <summary>The sessions this classifier was built from, in order.</summary>
         public IReadOnlyList<HistoricalSession> Sessions => _sessions;
 
+        /// <summary>The source coverage end (last observed quote) in the quote clock, when known.</summary>
+        public DateTime? CoverageEnd => _coverageEnd;
+
         /// <summary>
-        /// Classifies one quote. Quotes must arrive in non-decreasing time order.
+        /// Classifies one quote. Quotes must arrive in non-decreasing time order. Throws
+        /// <see cref="InvalidOperationException"/> when the quote is outside the map's coverage
+        /// (before the first session, after the source coverage end, or in a gap a malformed map
+        /// does not describe).
         /// </summary>
         public QuoteTradability Classify(DateTime quoteTime)
         {
@@ -95,6 +126,13 @@ namespace MarketLab.SingleAnchor
         /// </summary>
         public QuoteTradability Classify(DateTime quoteTime, out int sessionIndex)
         {
+            if (_coverageEnd.HasValue && quoteTime > _coverageEnd.Value)
+            {
+                throw new InvalidOperationException(
+                    $"quote at {quoteTime:yyyy-MM-dd HH:mm:ss.fff} is after the source coverage end " +
+                    $"{_coverageEnd.Value:yyyy-MM-dd HH:mm:ss.fff}; the map and the replay data do not match.");
+            }
+
             while (_next < _sessions.Count)
             {
                 var candidate = _sessions[_next]!;
