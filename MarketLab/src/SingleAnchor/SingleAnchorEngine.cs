@@ -18,6 +18,9 @@ namespace MarketLab.SingleAnchor
     /// Order of work on every quote (sections 14 and 15):
     /// <list type="number">
     /// <item>reject an invalid or out-of-order quote explicitly;</item>
+    /// <item>when a source-session trading availability is configured, observe but do not act on
+    /// a quote inside a session's five-minute opening or closing buffer; such a quote is counted
+    /// in <see cref="QuoteOnlyQuotes"/> and is not strategy-eligible;</item>
     /// <item>with no basket, anchor a new one on this quote's midpoint;</item>
     /// <item>with open legs: escape, then fixed take-profit, then trailing; a close ends the quote
     /// (no replacement basket on the same quote); a failed close also ends the quote;</item>
@@ -32,12 +35,16 @@ namespace MarketLab.SingleAnchor
     /// <see cref="StrategyInvariantException"/>. A quote with invalid prices or one earlier than an
     /// already processed quote faults it with a <see cref="DataQualityException"/> at this lowest
     /// layer, so no host can continue a deterministic replay after a market quote was lost. A
-    /// faulted engine refuses every further quote; a host must stop the run.
+    /// quote outside the configured session-map coverage faults it with a
+    /// <see cref="SessionMapException"/> the same way: the map describes a different source
+    /// revision, and continuing would silently misclassify trading availability. A faulted engine
+    /// refuses every further quote; a host must stop the run.
     /// </remarks>
     public sealed class SingleAnchorEngine
     {
         private readonly SingleAnchorParameters _p;
         private readonly IBasketExecutor _executor;
+        private readonly HistoricalTradingAvailability? _availability;
         private readonly List<BasketCloseRecord> _closedBaskets = new List<BasketCloseRecord>();
         private Basket? _basket;
         private int _basketSequence;
@@ -49,9 +56,24 @@ namespace MarketLab.SingleAnchor
         /// Creates an engine. Throws <see cref="ArgumentException"/> when the parameters are invalid.
         /// </summary>
         public SingleAnchorEngine(SingleAnchorParameters parameters, IBasketExecutor executor)
+            : this(parameters, executor, null)
+        {
+        }
+
+        /// <summary>
+        /// Creates an engine with an optional source-session trading availability. When it is
+        /// given, a quote in the first or last five minutes of its source session is observed,
+        /// validated and counted (<see cref="QuoteOnlyQuotes"/>) but changes no strategy state;
+        /// every other quote behaves exactly as without it.
+        /// </summary>
+        public SingleAnchorEngine(
+            SingleAnchorParameters parameters,
+            IBasketExecutor executor,
+            HistoricalTradingAvailability? tradingAvailability)
         {
             _p = parameters ?? throw new ArgumentNullException(nameof(parameters));
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
+            _availability = tradingAvailability;
             _p.Validate();
         }
 
@@ -71,12 +93,13 @@ namespace MarketLab.SingleAnchor
         public IReadOnlyList<BasketCloseRecord> ClosedBaskets => _closedBaskets;
 
         /// <summary>
-        /// The last quote whose processing began (valid and in order), or null before the first.
-        /// A quote refused for data quality (invalid or out of order) is never assigned here: on a
-        /// <see cref="DataQualityException"/> this stays the last valid processed quote while
-        /// <see cref="Fault"/>'s quote is the refused one and
-        /// <see cref="QuotesProcessed"/> does not include it. A strategy-invariant fault happens on
-        /// a quote that was processed, so there this is the faulting quote.
+        /// The last quote whose processing began (valid, in order and inside the configured
+        /// session-map coverage), or null before the first. A quote refused for data quality
+        /// (invalid or out of order) or for a session-map coverage mismatch is never assigned
+        /// here: on a <see cref="DataQualityException"/> or <see cref="SessionMapException"/> this
+        /// stays the last valid processed quote while <see cref="Fault"/>'s quote is the refused
+        /// one and <see cref="QuotesProcessed"/> does not include it. A strategy-invariant fault
+        /// happens on a quote that was processed, so there this is the faulting quote.
         /// </summary>
         public Quote? LastProcessedQuote => _lastProcessedQuote;
 
@@ -98,11 +121,31 @@ namespace MarketLab.SingleAnchor
         public decimal RealizedProfit { get; private set; }
 
         /// <summary>
-        /// Quotes whose processing began (valid and in order), including a faulting strategy quote.
-        /// The count after a quote is that quote's sequence number, as recorded in the traces. A
-        /// quote refused for data quality is not counted (see <see cref="LastProcessedQuote"/>).
+        /// Quotes whose processing began (valid, in order and inside the configured session-map
+        /// coverage), including a faulting strategy quote and a quote-only quote inside a
+        /// source-session buffer. The count after a quote is that quote's sequence number, as
+        /// recorded in the traces. A quote refused for data quality or for a session-map coverage
+        /// mismatch is not counted (see <see cref="LastProcessedQuote"/>). This is the count of
+        /// quotes the host delivered into the strategy's coverage, never a count of quotes the
+        /// strategy acted on.
         /// </summary>
         public long QuotesProcessed { get; private set; }
+
+        /// <summary>
+        /// Delivered quotes inside the five-minute opening or closing buffer of their
+        /// source-derived session (see <see cref="HistoricalTradingAvailability"/>): observed,
+        /// validated, ordered and counted, but excluded from every strategy decision and mutation.
+        /// Zero when the engine has no trading availability, so quote delivery accounting is never
+        /// reduced by this restriction.
+        /// </summary>
+        public long QuoteOnlyQuotes { get; private set; }
+
+        /// <summary>
+        /// Quotes permitted to evaluate strategy logic: every processed quote outside a quote-only
+        /// buffer, plus the faulting quote of a strategy invariant. Most of them cause no trade or
+        /// state change.
+        /// </summary>
+        public long StrategyEligibleQuotes => QuotesProcessed - QuoteOnlyQuotes;
 
         /// <summary>Legs opened and published over the engine's lifetime (a tail leg that fails the post-fill invariant is not published).</summary>
         public long EntriesOpened { get; private set; }
@@ -145,8 +188,9 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>
         /// Processes one quote. Throws <see cref="DataQualityException"/> for a quote with invalid
-        /// prices or one earlier than an already processed quote, and
-        /// <see cref="StrategyInvariantException"/> when a strategy invariant fails; either faults
+        /// prices or one earlier than an already processed quote, <see cref="SessionMapException"/>
+        /// for a quote outside the configured session-map coverage, and
+        /// <see cref="StrategyInvariantException"/> when a strategy invariant fails; each faults
         /// the engine, which then throws again on every call. A quote that satisfies both
         /// first-entry boundaries of a still-empty basket is skipped, not an error.
         /// </summary>
@@ -166,8 +210,34 @@ namespace MarketLab.SingleAnchor
                 throw RecordFault(new DataQualityException(DataQualityIssue.OutOfOrderQuote, quote,
                     $"Quote {quote} is earlier than the previously processed quote {_lastProcessedQuote.Value}; the tick chronology is broken and the run is stopped."));
             }
+            var tradability = QuoteTradability.Tradable;
+            if (_availability != null)
+            {
+                try
+                {
+                    tradability = _availability.Classify(quote.Time);
+                }
+                catch (InvalidOperationException error)
+                {
+                    // A map-coverage mismatch is a run-ending configuration condition at the same
+                    // layer as a data-quality fault: the quote is not counted, not assigned as the
+                    // last processed quote, and the host writes structured failure evidence.
+                    throw RecordFault(new SessionMapException(SessionMapIssue.QuoteOutsideMapCoverage, quote, error.Message));
+                }
+            }
+
             _lastProcessedQuote = quote;
             QuotesProcessed++;
+
+            if (tradability != QuoteTradability.Tradable)
+            {
+                // The quote is in a source-session buffer: it exists, it was validated and it is
+                // counted, but the strategy may not anchor, exit, enter, trail, reject, close or
+                // change any ledger on it. The next tradable quote is evaluated from its own
+                // values; nothing crossed during the buffer is queued.
+                QuoteOnlyQuotes++;
+                return;
+            }
 
             if (_basket == null)
             {

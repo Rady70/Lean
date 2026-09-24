@@ -24,6 +24,7 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `scripts\build.ps1` | runs the two Batch A build commands verbatim |
 | `scripts\run-backtest.ps1` | pre-flight checks, direct Launcher invocation, post-run data check |
 | `tests\Test-MarketLabBacktesting.ps1` | self-contained assertions for the above |
+| `tests\Test-TradingAvailabilityEndToEnd.ps1` | end-to-end check of the SingleAnchor session map through the real LEAN helper on a native tick fixture |
 | `SINGLE_ANCHOR_VNEXT_STRATEGY.md` | the SingleAnchor vNext strategy specification (authoritative behaviour) |
 | `SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` | where its C# implementation lives, how it is built, tested and run, what is deferred |
 | `SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md` | approved roadmap for historical-data qualification, C# research analytics, account survival and the first baseline research run |
@@ -478,7 +479,16 @@ parameters. LEAN is the data and time host only: the strategy engine keeps its
 own hedged basket ledger and fills deterministically from the quotes, places no
 LEAN order, and writes its own results (`storage\single-anchor\results.json`
 in the run directory and the algorithm log); LEAN's statistics for such a run
-show an empty portfolio and are not strategy results.
+show an empty portfolio and are not strategy results. The optional
+`single-anchor-session-map` parameter names a source-derived session map and
+makes the first and last five minutes of each complete historical session
+quote-only (the final truncated session has an opening buffer only):
+the engine observes every quote LEAN delivers, and the results report delivered,
+quote-only and strategy-eligible counts separately (section 8 of the
+implementation note, and `tools\session-map\`). Without it the run is
+unrestricted. Whether LEAN itself delivers every source quote is a separate
+data-path property (section 8.7): on the current research data folder it does
+not yet, so no source-to-strategy completeness is claimed here.
 [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md)
 has the commands, the parameter names, the deferred items and a validation
 record. Its default dates lie inside upstream's shipped Oanda XAUUSD tick
@@ -493,9 +503,15 @@ against the strategy's quote contract, writes native
 verifies the quotes the unchanged LEAN engine actually delivers with a separate
 replay probe. See [its README](tools/historical-data/README.md). **PR 1 of the
 [research implementation plan](SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md) is
-complete**; the user's real historical dataset has not been qualified yet, and
-the next implementation phase (**PR 2**, C# research account and bounded
-analytics) starts after the data path has been exercised on real data.
+complete**, and **PR 7** (source-derived session maps and the five-minute
+quote-only trading availability described above) is merged. The user's real
+historical dataset has not been qualified yet, and the plan's replay-identity
+gate is still unresolved: the runtime session identity/hours currently clip
+legitimate source rows before the strategy (section 8.7 of the implementation
+note), so a full-history PR 1 PASS is blocked. Resolving that identity is the
+next separate prerequisite before full historical strategy research; the next
+implementation phase (**PR 2**, C# research account and bounded analytics)
+starts after the data path has been exercised on real data.
 
 ## 10. When required data is missing
 

@@ -4,10 +4,20 @@ Status: approved implementation plan for the next research-qualification phase.
 
 Implementation note (finalization record, not a plan change): PR 1
 (historical dataset qualification and exact native-LEAN replay) is implemented
-and merged. The user's real historical dataset has not been qualified yet; the
-next non-blocking measurement is qualification speed/memory on a representative
-large slice, and PR 2 remains the next implementation phase after the data path
-has been exercised on real data.
+and merged, and PR 7 implements the source-derived trading availability for the
+historical replay (source-derived sessions, the five-minute quote-only buffers
+at session ends, and delivered-versus-eligible accounting; see
+SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 8) and is merged with this note.
+PR 7 changes no strategy formula and no PR 1 qualification semantics. The
+user's real historical dataset has not been qualified yet, and the PR 1
+replay-identity gate (section 3.6) remains unresolved: the runtime session
+identity/hours currently clip legitimate source rows before the strategy (the
+2023-03 exercise measured 6,798 accepted rows not delivered), so a full-history
+PR 1 PASS is still blocked. Resolving that identity is the next separate
+prerequisite before full historical strategy research; the next non-blocking
+measurement is qualification speed/memory on a representative large slice, and
+PR 2 remains the next implementation phase after the data path has been
+exercised on real data.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy

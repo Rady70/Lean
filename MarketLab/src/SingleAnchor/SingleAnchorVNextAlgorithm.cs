@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Security.Cryptography;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using QuantConnect;
@@ -25,9 +27,17 @@ namespace MarketLab.SingleAnchor
     /// <c>single-anchor-projected-spread</c> have no specified default and must be given;
     /// <c>single-anchor-point-value-per-lot</c> defaults to 100 for XAUUSD only (100 oz per lot,
     /// USD account) and must be given for any other ticker: the host is XAUUSD-focused and does
-    /// not carry instrument economics for anything else. A strategy invariant failure
-    /// (<see cref="StrategyInvariantException"/>) or a data-quality failure
-    /// (<see cref="DataQualityException"/>) writes the results with the failure recorded and then
+    /// not carry instrument economics for anything else. <c>single-anchor-session-map</c> names an
+    /// optional source-derived session map (absolute, or relative to the data folder). With it,
+    /// the engine observes every quote LEAN delivers but a quote in the first or last five minutes
+    /// of its source session cannot drive strategy state: it is counted as <c>quoteOnlyQuotes</c>
+    /// next to the delivered <c>quoteTicksProcessed</c> and the <c>strategyEligibleQuotes</c>.
+    /// This gate removes no delivered quote; quotes LEAN itself filtered out before the strategy
+    /// (session identity/hours) are a separate data-path concern. Without the parameter, every
+    /// delivered quote is strategy-eligible, the pre-existing behaviour. A strategy invariant
+    /// failure (<see cref="StrategyInvariantException"/>), a data-quality failure
+    /// (<see cref="DataQualityException"/>) or a session-map coverage mismatch
+    /// (<see cref="SessionMapException"/>) writes the results with the failure recorded and then
     /// stops the run as a LEAN runtime error. The results also carry the hard-BE verification
     /// metadata (strategy definition resolved, requirement verified at each tail entry under the
     /// configured execution model).
@@ -50,6 +60,7 @@ namespace MarketLab.SingleAnchor
         [Parameter("single-anchor-start-date")] private string _startDate = "2014-05-02";
         [Parameter("single-anchor-end-date")] private string _endDate = "2014-05-14";
         [Parameter("single-anchor-cash")] private decimal _cash = 100000m;
+        [Parameter("single-anchor-session-map")] private string _sessionMap = "";
 
         // ---- Specification section 17: principal research parameters ----
         [Parameter("single-anchor-step-percent")] private decimal _stepPercent = 0m;
@@ -79,6 +90,7 @@ namespace MarketLab.SingleAnchor
         private Symbol _symbol = null!;
         private SingleAnchorEngine _engine = null!;
         private SingleAnchorParameters _parameters = null!;
+        private SessionMapRunInfo? _sessionMapInfo;
         private readonly QuoteTickFeed _feed = new QuoteTickFeed();
 
         /// <summary>The strategy engine (exposed for inspection after a run).</summary>
@@ -151,7 +163,8 @@ namespace MarketLab.SingleAnchor
                 throw new ArgumentException("SingleAnchor parameters are invalid (see the single-anchor-* parameters): " + string.Join(" ", errors));
             }
 
-            _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters));
+            var availability = ResolveTradingAvailability(security);
+            _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters), availability);
             WireEvents();
 
             var verification = _engine.HardBreakevenStatus;
@@ -168,6 +181,86 @@ namespace MarketLab.SingleAnchor
                 $"swap buy {F(p.BuySwapPerLotPerDay)} / sell {F(p.SellSwapPerLotPerDay)} per lot per day (financing not supported; both must be 0).");
         }
 
+        /// <summary>
+        /// Loads the optional source-derived session map and turns it into the engine's
+        /// trading-availability classifier. Without the parameter the run keeps the unrestricted
+        /// behaviour: every delivered quote is strategy-eligible. With it, the map must exist and
+        /// be for this symbol; its UTC sessions are converted into this subscription's exchange
+        /// time zone, which is the clock of LEAN's tick times, while the junction-rule zone stays
+        /// the map's own.
+        /// </summary>
+        private HistoricalTradingAvailability? ResolveTradingAvailability(Security security)
+        {
+            if (string.IsNullOrWhiteSpace(_sessionMap))
+            {
+                Log("SingleAnchor session map: none configured; every delivered quote is strategy-eligible (no five-minute trading-availability restriction).");
+                return null;
+            }
+
+            var path = Path.IsPathRooted(_sessionMap)
+                ? _sessionMap
+                : Path.Combine(Globals.DataFolder, _sessionMap);
+            if (!File.Exists(path))
+            {
+                throw new ArgumentException(
+                    $"single-anchor-session-map is '{_sessionMap}' but '{path}' does not exist. " +
+                    "Generate it with MarketLab\\tools\\session-map from the immutable source and place it outside Git.");
+            }
+
+            var map = HistoricalSessionMap.Load(path);
+            if (!string.Equals(map.Symbol, _ticker, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    $"session map {path} is for '{map.Symbol}' but the run is configured for '{_ticker}'.");
+            }
+
+            // The junction rule is evaluated in the junction time zone, but the replay may deliver
+            // quotes in any clock (LEAN's subscription time zone); the UTC boundaries are
+            // converted to whatever clock this run actually delivers.
+            var availability = map.ToAvailability(security.Exchange.TimeZone);
+            var source = map.Source!;
+            var final = map.Sessions[map.Sessions.Count - 1]!;
+            _sessionMapInfo = new SessionMapRunInfo(
+                _sessionMap, Sha256File(path), map.Symbol, map.JunctionTimeZone, map.Sessions.Count,
+                map.Sessions[0]!.Start, final.End.HasValue,
+                source.FileCount, source.RowCount, source.Sha256Aggregate, source.FirstQuoteUtc, source.LastQuoteUtc);
+            Log(
+                $"SingleAnchor session map: {map.Sessions.Count} source-derived sessions from {path} (sha256 {_sessionMapInfo.Sha256}); " +
+                $"junction rule zone {map.JunctionTimeZone}, quote clock {security.Exchange.TimeZone.Id}; " +
+                $"source {source.FileCount} files / {source.RowCount} rows (aggregate sha256 {source.Sha256Aggregate}); " +
+                $"five-minute quote-only buffers at both session ends; first session starts {FormatUtc(map.Sessions[0]!.Start)}; " +
+                (final.End.HasValue
+                    ? $"final session ends {FormatUtc(final.End.Value)} (coverage end {FormatUtc(source.LastQuoteUtc)})."
+                    : $"final session end not observable (no closing buffer; coverage ends {FormatUtc(source.LastQuoteUtc)})."));
+            return availability;
+        }
+
+        private static string FormatUtc(DateTime value)
+        {
+            return value.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+        }
+
+        private static string Sha256File(string path)
+        {
+            using var stream = File.OpenRead(path);
+            using var sha = SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
+        }
+
+        private sealed record SessionMapRunInfo(
+            string Map,
+            string Sha256,
+            string Symbol,
+            string JunctionTimeZone,
+            int Sessions,
+            DateTime FirstSessionStartUtc,
+            bool FinalSessionEndObservable,
+            int SourceFileCount,
+            long SourceRowCount,
+            string SourceSha256Aggregate,
+            DateTime SourceFirstQuoteUtc,
+            DateTime SourceCoverageEndUtc);
+
         /// <inheritdoc />
         public override void OnData(Slice slice)
         {
@@ -182,8 +275,9 @@ namespace MarketLab.SingleAnchor
             catch (SingleAnchorRunException failure)
             {
                 // LEAN ends the run on the rethrow without calling OnEndOfAlgorithm, so the
-                // results are written here, with the failure recorded. Both kinds (a strategy
-                // invariant, a data-quality condition) end the run the same way.
+                // results are written here, with the failure recorded. Every engine fault kind
+                // (strategy invariant, data quality, session-map coverage) ends the run the same
+                // way.
                 Error($"SingleAnchor {failure.Kind} failure ({failure.Condition}): {failure.Message}");
                 Log($"SingleAnchor run stopped by the {failure.Condition} condition at {failure.Quote}.");
                 WriteResults(new RunFailure(failure.Kind, failure.Condition, failure.Quote, failure.Message));
@@ -194,7 +288,7 @@ namespace MarketLab.SingleAnchor
         /// <inheritdoc />
         public override void OnEndOfAlgorithm()
         {
-            Log($"SingleAnchor end of data: {_engine.QuotesProcessed} quote ticks processed ({_feed.NonQuoteTicks} non-quote ticks unused), {_engine.EntriesOpened} legs opened, {_engine.EntriesRejected} distinct rejected entries ({_engine.RejectedEntryAttempts} attempts), {_engine.BasketsClosed} baskets closed, realized profit {F(_engine.RealizedProfit)}.");
+            Log($"SingleAnchor end of data: {_engine.QuotesProcessed} quote ticks delivered and processed ({_feed.NonQuoteTicks} non-quote ticks unused), {_engine.QuoteOnlyQuotes} quote-only in five-minute session buffers, {_engine.StrategyEligibleQuotes} strategy-eligible; {_engine.EntriesOpened} legs opened, {_engine.EntriesRejected} distinct rejected entries ({_engine.RejectedEntryAttempts} attempts), {_engine.BasketsClosed} baskets closed, realized profit {F(_engine.RealizedProfit)}.");
 
             var snapshot = CurrentBasketSnapshot();
             var basket = _engine.Basket;
@@ -240,6 +334,9 @@ namespace MarketLab.SingleAnchor
                 ["endDate"] = _endDate,
                 ["parameters"] = _parameters,
                 ["quoteTicksProcessed"] = _engine.QuotesProcessed,
+                ["quoteOnlyQuotes"] = _engine.QuoteOnlyQuotes,
+                ["strategyEligibleQuotes"] = _engine.StrategyEligibleQuotes,
+                ["sessionMap"] = _sessionMapInfo,
                 ["nonQuoteTicksUnused"] = _feed.NonQuoteTicks,
                 ["lastProcessedQuote"] = _engine.LastProcessedQuote,
                 ["legsOpened"] = _engine.EntriesOpened,
