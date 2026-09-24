@@ -503,9 +503,15 @@ against the strategy's quote contract, writes native
 verifies the quotes the unchanged LEAN engine actually delivers with a separate
 replay probe. See [its README](tools/historical-data/README.md). **PR 1 of the
 [research implementation plan](SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md) is
-complete**; the user's real historical dataset has not been qualified yet, and
-the next implementation phase (**PR 2**, C# research account and bounded
-analytics) starts after the data path has been exercised on real data.
+complete**, and **PR 7** (source-derived session maps and the five-minute
+quote-only trading availability described above) is merged. The user's real
+historical dataset has not been qualified yet, and the plan's replay-identity
+gate is still unresolved: the runtime session identity/hours currently clip
+legitimate source rows before the strategy (section 8.7 of the implementation
+note), so a full-history PR 1 PASS is blocked. Resolving that identity is the
+next separate prerequisite before full historical strategy research; the next
+implementation phase (**PR 2**, C# research account and bounded analytics)
+starts after the data path has been exercised on real data.
 
 ## 10. When required data is missing
 

@@ -5,8 +5,11 @@ namespace MarketLab.SingleAnchor
 {
     /// <summary>
     /// How a delivered quote relates to the source-derived session it falls in, under the
-    /// five-minute research assumption: the first and last five minutes of every session are
-    /// quote-only windows in which the strategy may observe the quote but must not act on it.
+    /// five-minute research assumption: the first and last five minutes of every complete session
+    /// are quote-only windows in which the strategy may observe the quote but must not act on it.
+    /// A session with no observable end has an opening buffer only (no fabricated closing
+    /// buffer), so any of its observed portion after <c>T0 + 5min</c> remains tradable up to the
+    /// source coverage end.
     /// </summary>
     public enum QuoteTradability
     {

@@ -329,8 +329,13 @@ culture; `true`/`false` for booleans.
   `cfd\oanda\tick\xauusd` partitions into a research data folder outside Git,
   and verifies the delivered stream through the unchanged LEAN engine; a
   research history still needs its own provenance, licensing and integrity
-  record, and only a qualification PASS may precede a strategy run. The user's
-  real dataset has not been qualified yet; PR 2 remains the next implementation
+  record, and only a qualification PASS may precede a strategy run. The
+  source-derived session map and the five-minute trading availability are
+  implemented (section 8), but the replay-identity gate (section 8.7) remains
+  unresolved: the runtime session identity/hours currently clip legitimate
+  source rows before the strategy, so a full-history PR 1 PASS is still blocked.
+  The user's real dataset has not been qualified yet; resolving that identity
+  is the next separate prerequisite, and PR 2 remains the next implementation
   phase after that data-path exercise.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants

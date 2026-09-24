@@ -387,10 +387,14 @@ material only; nothing here is a runtime dependency on them.
   probe and LEAN assemblies it launches (`runtime_binaries` in the record), and
   the probe adds an in-process `runtime.assemblies` list as supplemental
   evidence (byte-loaded assemblies may not expose a file `Location`).
-- The user's real historical CSV has **not been qualified yet**. The next
-  non-blocking measurement is qualification speed and memory on a
-  representative large slice of that dataset (the per-day conversion buffer and
-  the exact spread histogram are the two candidates); only after the data path
-  is exercised on real data does the plan continue with **PR 2** (C# research
-  account view and bounded analytics), which remains the next implementation
-  phase.
+- The user's real historical CSV has **not been qualified yet**, and the 2023-03
+  real-data exercise exposed the unresolved replay-identity gate: the runtime
+  session identity/hours clipped 6,798 accepted rows before the strategy, so a
+  full-history PASS requires resolving that identity (a separate prerequisite,
+  recorded in `SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` section 8.7; no tooling
+  change is made here). The next non-blocking measurement is qualification speed
+  and memory on a representative large slice of that dataset (the per-day
+  conversion buffer and the exact spread histogram are the two candidates); only
+  after the data path is exercised on real data does the plan continue with
+  **PR 2** (C# research account view and bounded analytics), which remains the
+  next implementation phase.
