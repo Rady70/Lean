@@ -551,8 +551,9 @@ tradable, `t = T1 - 5m` is tradable, `t = T1 - 4m59.999s` and `t = T1` are quote
 after the source coverage end, before the first session, or in a gap a malformed map does not
 describe is a deliberate run failure (`SessionMapException`, structured results), not a silent
 classification. A completed session is required to be at least ten minutes long, so the two
-windows cannot overlap; a dataset-end session (no `T1`) may be shorter, and is then wholly
-opening-buffer quote-only.
+windows cannot overlap; a dataset-end session (no `T1`) may be shorter. It has no closing buffer,
+and only its first five minutes are opening-buffer quote-only: any part after `T0 + 5min` up to
+the coverage end remains tradable.
 
 ### 8.3 The engine gate
 
@@ -599,8 +600,10 @@ MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
 The source is read-only and the output is deterministic (same source, same map and stats). Only a
 legitimate quote may define a session boundary: pass 1 parses the timestamp and the Bid/Ask
 columns and requires the engine's own contract (positive Bid and Ask, `Ask >= Bid`) and the exact
-five-column row shape PR-1 requires, so neither a price-invalid nor a wrongly shaped row can move
-a five-minute boundary. The output paths are checked before the source is scanned: `--out` and
+five-column Dukascopy source format (`timestamp,bid,ask,bidVolume,askVolume`), so neither a
+price-invalid nor a wrongly shaped row can move a five-minute boundary. The shape rule is this
+tool's own, stricter than PR-1: PR-1 rejects extra cells but its reader can tolerate a row missing
+only unused trailing volume fields. The output paths are checked before the source is scanned: `--out` and
 `--stats` must be distinct and must not point into the source directory, so the tool can never
 replace immutable source history. The generator is
 deliberately **XAUUSD-specific**: source files must be the Dukascopy/JForex monthly form
@@ -668,7 +671,7 @@ fixture and proves the host path (map loading, quote-clock conversion, feed wiri
 as a unit: `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1` (12 checks,
 exit 0). On its five-quote fixture the identical delivered count (5) yields one BUY without the
 map and no position with it (4 quote-only, 1 eligible), and the results carry the configured map
-value and the source row count. The strategy unit tests are 167 (see section 7 plus the new
+value and the source row count. The strategy unit tests are 174 (see section 7 plus the new
 availability, coverage-end, provenance, junction-consistency, grid/reversal-buffer and
 out-of-coverage failure tests, and the generator symbol/quote-contract tests).
 

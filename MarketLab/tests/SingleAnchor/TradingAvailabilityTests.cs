@@ -84,7 +84,8 @@ namespace MarketLab.SingleAnchor.Tests
         public void ATruncatedFinalSessionMayBeShorterThanTenMinutes()
         {
             // The ten-minute minimum applies to completed sessions; a dataset-end session has no
-            // fabricated close, so a short tail is all opening-buffer quote-only.
+            // fabricated close and therefore no closing buffer. This three-minute fixture lies
+            // entirely inside the opening buffer, so every quote is opening-buffer quote-only.
             var coverageEnd = Sessions.S0.AddMinutes(3);
             var a = Sessions.Coverage(coverageEnd, Sessions.Window(Sessions.S0, null));
 
@@ -774,6 +775,40 @@ namespace MarketLab.SingleAnchor.Tests
             {
                 Directory.Delete(sourceDirectory, true);
                 Directory.Delete(outputDirectory, true);
+            }
+        }
+
+        [Test]
+        public void TheGeneratorRefusesADotDotNamedChildButAllowsASiblingPrefix()
+        {
+            var sourceDirectory = NewScratchDirectory();
+            var siblingDirectory = sourceDirectory + "-output";
+            Directory.CreateDirectory(siblingDirectory);
+            try
+            {
+                var source = WriteValidXauusdSource(sourceDirectory);
+                var before = File.ReadAllBytes(source);
+
+                // A child directory whose name merely begins with two dots is still inside the
+                // source directory and must be refused.
+                var tricky = Path.Combine(sourceDirectory, "..output", "map.json");
+                Assert.Throws<ArgumentException>(
+                    () => MarketLab.SessionMapTool.Program.Run(new[] { "--source", sourceDirectory, "--out", tricky }),
+                    "a '..output' child is inside the source and must be refused");
+
+                // A sibling directory whose name shares a prefix is outside the source and works.
+                var siblingMap = Path.Combine(siblingDirectory, "map.json");
+                Assert.That(
+                    MarketLab.SessionMapTool.Program.Run(new[] { "--source", sourceDirectory, "--out", siblingMap }),
+                    Is.EqualTo(0),
+                    "a sibling sharing a name prefix is outside the source and is allowed");
+                Assert.That(File.Exists(siblingMap), Is.True);
+                Assert.That(File.ReadAllBytes(source), Is.EqualTo(before));
+            }
+            finally
+            {
+                Directory.Delete(sourceDirectory, true);
+                Directory.Delete(siblingDirectory, true);
             }
         }
 

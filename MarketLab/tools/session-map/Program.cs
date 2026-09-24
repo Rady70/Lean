@@ -169,12 +169,18 @@ namespace MarketLab.SessionMapTool
         /// <summary>
         /// Refuses an output path inside the immutable source directory (the source file itself,
         /// any other path under the directory, or the directory itself), so the tool can never
-        /// overwrite source history. Paths outside the directory, including other drives, pass.
+        /// overwrite source history. Paths outside the directory, including other drives and
+        /// siblings whose names merely share a prefix, pass. The test is a prefix test on the
+        /// canonical directory with a separator, so a child named like "..output" cannot slip
+        /// through a "starts with two dots" check.
         /// </summary>
         private static void EnsureOutsideSource(string sourceDirectory, string candidate, string option)
         {
-            var relative = Path.GetRelativePath(sourceDirectory, candidate);
-            if (!relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relative))
+            var sourceWithSeparator = sourceDirectory.EndsWith(Path.DirectorySeparatorChar)
+                ? sourceDirectory
+                : sourceDirectory + Path.DirectorySeparatorChar;
+            if (string.Equals(candidate, sourceDirectory, StringComparison.OrdinalIgnoreCase)
+                || candidate.StartsWith(sourceWithSeparator, StringComparison.OrdinalIgnoreCase))
             {
                 throw new ArgumentException(
                     $"{option} must not point into the immutable source directory ({sourceDirectory}); got {candidate}");
@@ -320,9 +326,10 @@ namespace MarketLab.SessionMapTool
                     throw new InvalidDataException(
                         $"row {rows + 2} in {path} does not carry timestamp,bid,ask columns: '{line}'");
                 }
-                // The row shape must match the five-column header exactly, as PR-1's
-                // qualification rejects a row with more cells than the header; a row PR-1 would
-                // reject must not define a session boundary here either.
+                // The row shape must match the expected five-column Dukascopy header exactly.
+                // PR-1 rejects a row with more cells than the header; this generator is stricter
+                // and also refuses fewer, because only the expected source format may define a
+                // session boundary here.
                 var fourthComma = line.IndexOf(',', askComma + 1);
                 if (fourthComma < 0 || line.IndexOf(',', fourthComma + 1) >= 0)
                 {

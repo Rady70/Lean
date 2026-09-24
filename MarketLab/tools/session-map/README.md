@@ -31,8 +31,9 @@ Options: `--source <csv directory>` (required; Dukascopy/JForex XAUUSD monthly f
 ## What it does
 
 1. Scans every monthly file in order (parallel per file) into junction-split segments, validating
-   the header, the canonical `yyyy-MM-ddTHH:mm:ss.fffZ` timestamps, the exact five-column row
-   shape (`timestamp,bid,ask,bidVolume,askVolume`, as PR-1's qualification requires), non-decreasing
+   the header, the canonical `yyyy-MM-ddTHH:mm:ss.fffZ` timestamps, the expected five-column
+   Dukascopy row shape (`timestamp,bid,ask,bidVolume,askVolume`; stricter than PR-1, which rejects
+   extra cells but tolerates a row missing only unused trailing volume fields), non-decreasing
    time and month contiguity, and the quote contract the engine/PR-1 path uses (Bid > 0, Ask > 0,
    `Ask >= Bid`); a timestamp-valid but price-invalid or wrongly shaped row fails the generation
    instead of moving a boundary. Each file is hashed (SHA-256).
