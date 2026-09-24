@@ -387,7 +387,7 @@ material only; nothing here is a runtime dependency on them.
   probe and LEAN assemblies it launches (`runtime_binaries` in the record), and
   the probe adds an in-process `runtime.assemblies` list as supplemental
   evidence (byte-loaded assemblies may not expose a file `Location`).
-- The user's real historical CSV has **not been qualified yet**, and the 2023-03
+- The full historical dataset has **not yet completed qualification or achieved a PR 1 PASS**, and the 2023-03
   real-data exercise exposed the unresolved replay-identity gate: the runtime
   session identity/hours clipped 6,798 accepted rows before the strategy, so a
   full-history PASS requires resolving that identity (a separate prerequisite,
