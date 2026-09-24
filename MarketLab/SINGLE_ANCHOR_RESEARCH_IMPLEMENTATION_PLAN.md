@@ -768,6 +768,17 @@ the baseline against the Oanda fixture default in a qualified Dukascopy data
 folder would resolve a different subscription identity and is not a valid
 baseline.
 
+PR 1 qualifies one source file per run and writes one native data folder per
+run, so the 90-month full-history qualification is a decomposed acceptance of
+the data and not itself one continuous LEAN data tree. After PR 2 and PR 3 and
+before the frozen baseline, compose the already-qualified daily partitions into
+a single continuous research data folder under the same derived identity,
+carrying over each partition's hash and the qualification identity, and re-run
+the replay probe over the composed folder to prove its delivery equals the
+concatenated per-month qualification evidence. Do not run 90 independent
+monthly strategy runs and treat that as the full-history baseline; that
+composition step is deliberately out of scope for PR 1.
+
 The historical files themselves remain outside Git.
 
 ## 6. Freeze the complete baseline configuration
@@ -783,8 +794,9 @@ Freeze one complete immutable baseline configuration including at least:
 
 - data identity: `single-anchor-symbol = XAUUSD`, `single-anchor-market =
   dukascopy`, `single-anchor-security-type = Cfd`, with the qualified
-  `XAUUSD/dukascopy/Cfd` data folder (the Oanda fixture default is not a
-  research configuration);
+  `XAUUSD/dukascopy/Cfd` data folder — the single composed continuous folder
+  from section 5, not the 90 per-run qualification folders (the Oanda fixture
+  default is not a research configuration);
 - the qualified start/end dates and, when used, the source-derived
   `single-anchor-session-map`;
 - StepPercent;

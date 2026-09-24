@@ -27,7 +27,11 @@ from .replay import (
     require_probe_structure,
     require_runtime_binaries_structure,
 )
-from .summary import FullHistorySummaryError, build_full_history_summary
+from .summary import (
+    FullHistorySummaryError,
+    build_full_history_summary,
+    ensure_summary_output_allowed,
+)
 from .transactions import OutputTransaction, OutputTransactionError
 
 __all__ = ["main"]
@@ -108,8 +112,20 @@ def _summarize_history_parser(subparsers) -> None:
         "data\\marketlab-qualification\\qualification-record.json (the per-file sweep layout)",
     )
     parser.add_argument(
+        "--expected-first-month",
+        required=True,
+        help="first month the sequence must start at (YYYY_MM); contiguity alone does not "
+        "prove the qualified coverage",
+    )
+    parser.add_argument(
+        "--expected-last-month",
+        required=True,
+        help="last month the sequence must end at (YYYY_MM)",
+    )
+    parser.add_argument(
         "--output",
-        help="summary path (default: <months-root>\\full-history-summary.json)",
+        help="summary path (default: <months-root>\\full-history-summary.json); an output "
+        "inside a month directory or a source directory is refused",
     )
     parser.add_argument("--json", action="store_true", help="print the summary JSON to stdout")
 
@@ -235,7 +251,11 @@ def _run_prepare_identity(args) -> int:
 
 def _run_summarize_history(args) -> int:
     try:
-        summary = build_full_history_summary(Path(args.months_root))
+        summary = build_full_history_summary(
+            Path(args.months_root),
+            expected_first_month=args.expected_first_month,
+            expected_last_month=args.expected_last_month,
+        )
     except FullHistorySummaryError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
@@ -245,10 +265,11 @@ def _run_summarize_history(args) -> int:
         else Path(args.months_root) / "full-history-summary.json"
     )
     try:
+        ensure_summary_output_allowed(output, Path(args.months_root), summary)
         with OutputTransaction(allow_overwrite=True) as transaction:
             transaction.stage_text(output, dump_json(summary))
             transaction.commit()
-    except OutputTransactionError as error:
+    except (FullHistorySummaryError, OutputTransactionError) as error:
         print(f"ERROR: summary not written: {error}", file=sys.stderr)
         return 2
 

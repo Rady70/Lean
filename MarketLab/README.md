@@ -518,7 +518,11 @@ clipped 6,798 rows. The full 90-month sweep (2019-01..2026-06) completed with
 90/90 PASS: accepted = converted = delivered = probe-processed =
 413,750,130 rows, 0 rejected rows, 0 session drops, every count and ordered
 semantic digest equal; the evidence stays outside Git (see the tools README).
-**PR 2** (C# research account and bounded analytics) remains the next
+The sweep is a decomposed per-file acceptance that produced 90 separate native
+data folders; composing the already-qualified daily partitions into one
+continuous research data folder under the same identity is required after
+PR 2/PR 3 and before the frozen baseline, and is deliberately not implemented
+in PR 1. **PR 2** (C# research account and bounded analytics) remains the next
 implementation phase.
 
 ## 10. When required data is missing

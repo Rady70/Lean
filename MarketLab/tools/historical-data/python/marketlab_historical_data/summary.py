@@ -11,10 +11,19 @@ decomposition explicit and machine-checked:
   months (``YYYY_MM``), each record's source file name must match its month,
   each record's first/last timestamps must fall inside that month, and
   consecutive months must not overlap (previous last < next first);
+- the sequence must start and end at the caller's expected first/last month:
+  contiguity alone would accept any contiguous subset (for example a single
+  year), so completeness is stated explicitly per invocation;
 - the identity must be a singleton across every run: symbol, market, security
   type, native path, time zones, market-hours database SHA-256,
   symbol-properties SHA-256, converter source aggregate, clean checkout and the
   runtime binary set.
+
+Output safety: ``summarize-history`` overwrites its output by design (the
+aggregate is deterministic), so ``ensure_summary_output_allowed`` refuses an
+output that resolves inside a month directory of the months root or inside a
+source directory recorded by the month records. The default
+``<months-root>/full-history-summary.json`` stays valid.
 
 Aggregate hashes (documented in ``aggregate_algorithm`` and in the emitted
 summary):
@@ -37,14 +46,16 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from .replay import MANIFEST_CONTRACT, RECORD_CONTRACT, require_manifest_structure
+from .replay import RECORD_CONTRACT, require_manifest_structure
 
 __all__ = [
     "FULL_HISTORY_SUMMARY_CONTRACT",
     "FullHistorySummaryError",
     "build_full_history_summary",
     "discover_month_records",
+    "ensure_summary_output_allowed",
     "load_qualification_record",
+    "require_record_structure",
 ]
 
 FULL_HISTORY_SUMMARY_CONTRACT = "marketlab-full-history-qualification-summary-v1"
@@ -114,6 +125,167 @@ def load_qualification_record(path: Path) -> dict:
     return payload
 
 
+def _require_object(value, label: str) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} is missing or not an object")
+    return value
+
+
+def _require_string(value, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} is missing or not a non-empty string")
+    return value
+
+
+def _require_int(value, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{label} is missing or not a non-negative integer")
+    return value
+
+
+def require_record_structure(record) -> None:
+    """Raises ``ValueError`` when a record lacks a field the aggregator consumes.
+
+    This is deliberately not a general schema: only the record and manifest
+    sections/fields dereferenced below are checked, so a malformed record
+    produces a controlled aggregation error instead of a ``KeyError`` or
+    ``TypeError`` traceback.
+    """
+    if not isinstance(record, dict):
+        raise ValueError("qualification record is not a JSON object")
+    if record.get("contract") != RECORD_CONTRACT:
+        raise ValueError("record contract is missing or unknown")
+    manifest = _require_object(record.get("manifest"), "record manifest")
+    require_manifest_structure(manifest)
+    counts = manifest["counts"]
+    _require_int(counts.get("raw_row_count"), "manifest counts.raw_row_count")
+    _require_int(counts.get("rejected_row_count"), "manifest counts.rejected_row_count")
+    _require_string(counts.get("first_canonical_utc"), "manifest counts.first_canonical_utc")
+    _require_string(counts.get("last_canonical_utc"), "manifest counts.last_canonical_utc")
+    lean = manifest["lean"]
+    layout = _require_object(lean.get("native_layout"), "manifest lean.native_layout")
+    _require_string(layout.get("zip_directory"), "manifest lean.native_layout.zip_directory")
+    market_hours = lean["market_hours_database"]
+    _require_string(
+        market_hours.get("entry_key"), "manifest lean.market_hours_database.entry_key"
+    )
+    if not isinstance(market_hours.get("always_open"), bool):
+        raise ValueError(
+            "manifest lean.market_hours_database.always_open is missing or not a boolean"
+        )
+    symbol_properties = _require_object(
+        lean.get("symbol_properties_database"), "manifest lean.symbol_properties_database"
+    )
+    _require_string(
+        symbol_properties.get("sha256"), "manifest lean.symbol_properties_database.sha256"
+    )
+    identity = lean.get("runtime_identity")
+    if identity is not None:
+        identity = _require_object(identity, "manifest lean.runtime_identity")
+        _require_string(identity.get("contract"), "manifest lean.runtime_identity.contract")
+        derived = identity.get("derived_market_hours_database")
+        if derived is not None:
+            _require_object(
+                derived, "manifest lean.runtime_identity.derived_market_hours_database"
+            )
+    converter_source = lean.get("converter_source")
+    if converter_source is not None:
+        converter_source = _require_object(converter_source, "manifest lean.converter_source")
+        if "aggregate_sha256" in converter_source:
+            _require_string(
+                converter_source["aggregate_sha256"],
+                "manifest lean.converter_source.aggregate_sha256",
+            )
+    checkout = lean.get("converter_checkout")
+    if checkout is not None:
+        checkout = _require_object(checkout, "manifest lean.converter_checkout")
+        if "head_sha" in checkout:
+            _require_string(checkout["head_sha"], "manifest lean.converter_checkout.head_sha")
+        if "dirty" in checkout and not isinstance(checkout["dirty"], bool):
+            raise ValueError("manifest lean.converter_checkout.dirty is not a boolean")
+    replay = _require_object(record.get("native_replay"), "record native_replay")
+    _require_int(
+        replay.get("lean_delivered_row_count"), "record native_replay.lean_delivered_row_count"
+    )
+    _require_int(
+        replay.get("session_delivery_difference"), "record native_replay.session_delivery_difference"
+    )
+    _require_string(
+        replay.get("ordered_source_semantic_digest"),
+        "record native_replay.ordered_source_semantic_digest",
+    )
+    _require_string(
+        replay.get("ordered_lean_delivered_semantic_digest"),
+        "record native_replay.ordered_lean_delivered_semantic_digest",
+    )
+    probe = record.get("probe")
+    if probe is not None:
+        probe = _require_object(probe, "record probe")
+        runtime = _require_object(probe.get("runtime"), "record probe.runtime")
+        _require_int(
+            runtime.get("engine_quotes_processed"), "record probe.runtime.engine_quotes_processed"
+        )
+        delivered = _require_object(probe.get("delivered"), "record probe.delivered")
+        per_partition = _require_object(
+            delivered.get("per_partition"), "record probe.delivered.per_partition"
+        )
+        for day, entry in per_partition.items():
+            entry = _require_object(entry, f"record probe.delivered.per_partition[{day}]")
+            _require_int(
+                entry.get("quote_count"), f"record probe.delivered.per_partition[{day}].quote_count"
+            )
+            _require_string(
+                entry.get("semantic_digest"),
+                f"record probe.delivered.per_partition[{day}].semantic_digest",
+            )
+        if "sha256" in probe:
+            _require_string(probe["sha256"], "record probe.sha256")
+    binaries = record.get("runtime_binaries")
+    if binaries is not None:
+        files = _require_object(binaries, "record runtime_binaries").get("files")
+        if files is not None:
+            files = _require_object(files, "record runtime_binaries.files")
+            for name, digest in files.items():
+                _require_string(digest, f"record runtime_binaries.files[{name}]")
+
+
+def _is_within(path: Path, directory: Path) -> bool:
+    try:
+        path.relative_to(directory)
+    except ValueError:
+        return False
+    return True
+
+
+def ensure_summary_output_allowed(output: Path, months_root: Path, summary: dict) -> None:
+    """Refuses a summary output that could overwrite qualification or source evidence.
+
+    Overwrites are intentional at the default output, but the path is
+    user-supplied and the surrounding directories are immutable evidence: no
+    month directory of the months root and no source-file directory recorded by
+    the month records may be an output target.
+    """
+    resolved = Path(output).resolve()
+    root = Path(months_root).resolve()
+    if root.is_dir():
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            child_resolved = child.resolve()
+            if resolved == child_resolved or _is_within(resolved, child_resolved):
+                raise FullHistorySummaryError(
+                    f"refusing summary output {output}: it is inside the month directory "
+                    f"{child_resolved}; qualification evidence must not be overwritten"
+                )
+    for entry in summary.get("months", []):
+        source = Path(entry["source_path"]).resolve()
+        if resolved == source or _is_within(resolved, source.parent):
+            raise FullHistorySummaryError(
+                f"refusing summary output {output}: it is inside the immutable source "
+                f"directory {source.parent}; source data must not be overwritten"
+            )
+
+
 def _runtime_binary_set_sha256(record: dict) -> str | None:
     files = (record.get("runtime_binaries") or {}).get("files")
     if not isinstance(files, dict) or not files:
@@ -130,8 +302,21 @@ def _timestamp_month(timestamp: str) -> str | None:
     return f"{parsed.year:04d}_{parsed.month:02d}"
 
 
-def build_full_history_summary(months_root: Path) -> dict:
-    """Validates the ordered month records and returns the aggregate summary."""
+def build_full_history_summary(
+    months_root: Path, *, expected_first_month: str, expected_last_month: str
+) -> dict:
+    """Validates the ordered month records and returns the aggregate summary.
+
+    ``expected_first_month``/``expected_last_month`` are ``YYYY_MM`` bounds the
+    sequence must start and end at; together with contiguity they prove the
+    stated coverage instead of accepting any contiguous subset.
+    """
+    for label, month in (
+        ("expected first month", expected_first_month),
+        ("expected last month", expected_last_month),
+    ):
+        if not isinstance(month, str) or not re.fullmatch(r"\d{4}_\d{2}", month):
+            raise FullHistorySummaryError(f"{label} is missing or not YYYY_MM")
     errors: list[str] = []
     month_entries: list[dict] = []
     for directory_name, record_path in discover_month_records(months_root):
@@ -139,15 +324,12 @@ def build_full_history_summary(months_root: Path) -> dict:
             errors.append(f"{directory_name}: month directory name is not YYYY_MM")
             continue
         record = load_qualification_record(record_path)
-        if record.get("contract") != RECORD_CONTRACT:
-            errors.append(f"{directory_name}: record contract is missing or unknown")
-            continue
-        manifest = record.get("manifest")
         try:
-            require_manifest_structure(manifest)
+            require_record_structure(record)
         except ValueError as error:
             errors.append(f"{directory_name}: {error}")
             continue
+        manifest = record["manifest"]
 
         source_path = Path(manifest["source"]["path"])
         source_name = source_path.name
@@ -317,6 +499,16 @@ def build_full_history_summary(months_root: Path) -> dict:
         if actual != expected:
             errors.append(
                 "the month sequence is not contiguous and ordered: " + ", ".join(months)
+            )
+        if months[0] != expected_first_month:
+            errors.append(
+                f"the month sequence does not start at the expected {expected_first_month} "
+                f"(starts at {months[0]})"
+            )
+        if months[-1] != expected_last_month:
+            errors.append(
+                f"the month sequence does not end at the expected {expected_last_month} "
+                f"(ends at {months[-1]})"
             )
         for previous, current in zip(month_entries, month_entries[1:]):
             if previous["last_canonical_utc"] >= current["first_canonical_utc"]:

@@ -196,26 +196,38 @@ re-validated with the tracked command:
 
 ```powershell
 python -m marketlab_historical_data summarize-history `
-    --months-root E:\research-data\history-months
+    --months-root E:\research-data\history-months `
+    --expected-first-month 2019_01 `
+    --expected-last-month 2026_06
 ```
 
 Each direct child of `--months-root` is one month directory (`YYYY_MM`) holding
 `data\marketlab-qualification\qualification-record.json`. The command requires:
-one contiguous, ordered, gap-free month sequence; each record a structurally
-valid `PASS` with helper exit 0, accepted = converted = LEAN-delivered =
-probe-processed, zero rejected rows and session differences, equal per-partition
-counts/digests and equal source/delivered digests; no missing partition, no
-coverage gap and no stale/hash-mismatched partition; each record's source file
-name matching its month and its first/last timestamps falling inside that month;
-and a singleton identity across every run (symbol, market, security type, native
-path, time zones, market-hours database SHA-256, symbol-properties SHA-256,
-converter source aggregate, clean checkout and runtime binary set). It writes
-`full-history-summary.json` with totals and two documented aggregate hashes:
+the explicit expected first/last month, so a contiguous subset (for example a
+single year) cannot claim the qualified window; one contiguous, ordered,
+gap-free month sequence; each record a structurally valid `PASS` with helper
+exit 0, accepted = converted = LEAN-delivered = probe-processed, zero rejected
+rows and session differences, equal per-partition counts/digests and equal
+source/delivered digests; no missing partition, no coverage gap and no
+stale/hash-mismatched partition; each record's source file name matching its
+month and its first/last timestamps falling inside that month; and a singleton
+identity across every run (symbol, market, security type, native path, time
+zones, market-hours database SHA-256, symbol-properties SHA-256, converter
+source aggregate, clean checkout and runtime binary set). A record missing any
+field the aggregator consumes is reported as an error instead of a traceback.
+It writes `full-history-summary.json` with totals and two documented aggregate
+hashes:
 
 - `source_file_set_sha256` = SHA-256 of the newline-joined
   `<source file name>:<source sha256>` lines in month order;
 - `ordered_month_digest_chain_sha256` = SHA-256 of the newline-joined
   per-month ordered source semantic digests in month order.
+
+The default output is `<months-root>\full-history-summary.json`; the command
+overwrites only that aggregate, and refuses a user-supplied `--output` that
+resolves inside any month directory of the months root or inside a source
+directory recorded by the month records, so a mistaken path cannot overwrite a
+qualification record or a raw source file.
 
 Both are aggregates over the decomposition. Per-month ordinals restart per file
 and the tooling does not ingest multiple source files into one run, so there is
@@ -514,11 +526,24 @@ material only; nothing here is a runtime dependency on them.
   command) stay outside Git under
   `D:\quant_research_workspace\work\lean\pr1-xauusd-full-history-dukascopy\`.
   A distilled evidence fixture with no market data — one row per month carrying
-  the source file name/hash/size, canonical first/last timestamps, counts and
-  the ordered source/delivered digests — is tracked at
-  `fixtures\full-history-sweep-evidence.json`, and a test recomputes both
-  aggregate hashes and the sequence/boundary properties from it, so the
-  full-history claim is verifiable from the repository without the external
-  records or the raw source. Only after the data path is exercised on the full
+  the source file name/hash/size, canonical first/last timestamps, every
+  compared row count (raw/accepted/rejected/converted/delivered/processed), the
+  session difference, the source/delivered digests, failed-request counts and
+  the distilled identity hashes — is tracked at
+  `fixtures\full-history-sweep-evidence.json`; tests recompute the totals, the
+  singleton identity and both aggregate hashes, and re-check the
+  sequence/boundary properties, so the full-history claim is verifiable from
+  the repository without the external records or the raw source.
+
+  The sweep is a decomposed per-file acceptance: PR 1 writes one native data
+  folder per run and does not compose multiple source files into one data tree.
+  After PR 2, PR 3 and the baseline freeze — and before the first frozen
+  full-history strategy run — the already-qualified daily partitions must be
+  materialized into one continuous research data folder under the same derived
+  identity, preserving each partition's hash and the qualification identity,
+  and the replay probe must re-prove the composed delivery against the
+  concatenated per-month evidence. Running 90 independent monthly strategy runs
+  is not the full-history baseline. That composition step is deliberately not
+  implemented in PR 1. Only after the data path is exercised on the full
   history does the plan continue with **PR 2** (C# research account view and
   bounded analytics), which remains the next implementation phase.

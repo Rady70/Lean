@@ -722,9 +722,18 @@ per-month records and the aggregate `full-history-summary.json` stay outside
 Git under
 `D:\quant_research_workspace\work\lean\pr1-xauusd-full-history-dukascopy\`; the
 tools README carries the details, and the tracked `summarize-history` command
-re-validates the ordered 90-file set, month boundaries, singleton identity and
-aggregate hashes. This is a 90-month decomposed exact-replay sweep (one PR-1
-run per monthly file), not a single-stream ordinal digest.
+re-validates the ordered 90-file set against explicit `2019_01`/`2026_06`
+expected bounds, month boundaries, singleton identity and aggregate hashes.
+This is a 90-month decomposed exact-replay sweep (one PR-1 run per monthly
+file), not a single-stream ordinal digest. It also produced 90 separate native
+data folders, not one continuous LEAN data tree: after PR 2, PR 3 and the
+baseline freeze, and before the first frozen full-history strategy run, the
+already-qualified daily partitions must be composed into one continuous
+research data folder under the same derived identity, preserving each
+partition's hash and the qualification identity and re-proving the composed
+delivery with the replay probe against the concatenated per-month evidence.
+Running 90 independent monthly strategy runs is not the full-history baseline;
+the composition step is deliberately not implemented in PR 1.
 
 Any real historical strategy run must use the qualified identity:
 `single-anchor-symbol: XAUUSD`, `single-anchor-market: dukascopy`,
