@@ -39,12 +39,14 @@ fixtures (linked as junctions).
 
 Before the LEAN run, missing auxiliary runtime data is linked (directory
 junctions, never copies) from -AuxiliaryDataSource into the data folder:
-alternative, equity and cfd\oanda\hour (plus market-hours and
-symbol-properties for -Market oanda). These are the unchanged engine fixtures
-the subscription setup reads (interest rates, map files, the hour sample).
-Junctions keep the assets in place; nothing is copied or redistributed, and an
-existing path is never replaced. Use -NoAuxiliaryLinks to skip this and accept
-the helper's missing-data warnings.
+alternative and equity (plus market-hours, symbol-properties and
+cfd\oanda\hour for -Market oanda). The Dukascopy identity does not link or
+require the Oanda hour fixture or the Oanda calendar; it derives its own
+databases. These are the unchanged engine fixtures the subscription setup
+reads (interest rates, map files, the Oanda hour sample). Junctions keep the
+assets in place; nothing is copied or redistributed, and an existing path is
+never replaced. Use -NoAuxiliaryLinks to skip this and accept the helper's
+missing-data warnings.
 
 Historical data and all generated qualification outputs stay outside Git.
 
@@ -90,7 +92,8 @@ Root for the LEAN run directories (default: <LeanRoot>\MarketLab\output).
 .PARAMETER AuxiliaryDataSource
 Runtime data folder that already contains the auxiliary databases and engine
 fixtures (default: <LeanRoot>\Data). For -Market dukascopy it is also the
-unchanged source the derived always-open identity databases are prepared from.
+unchanged source the derived always-open identity databases are prepared
+from; the Oanda hour fixture is neither read nor required for that identity.
 
 .PARAMETER NoAuxiliaryLinks
 Do not link auxiliary data; expect missing-data warnings from the helper.
@@ -224,12 +227,18 @@ if ($Symbol -ne 'XAUUSD' -or $SecurityType -ne 'Cfd' -or ($Market -ne 'oanda' -a
 if (-not $NoAuxiliaryLinks) {
     $auxiliaryLinks = @(
         'alternative',
-        'equity',
-        'cfd\oanda\hour'
+        'equity'
     )
     if ($Market -eq 'oanda') {
-        # The engine fixture databases are the qualified Oanda identity.
-        $auxiliaryLinks = @('market-hours', 'symbol-properties') + $auxiliaryLinks
+        # The Oanda fixture identity uses the engine fixture databases and its
+        # hour sample. The Dukascopy identity derives its own databases and does
+        # not read the Oanda hour sample: the engine requests the Dukascopy hour
+        # path, which is absent and recorded as an unrelated failed request.
+        $auxiliaryLinks = @(
+            'market-hours',
+            'symbol-properties',
+            'cfd\oanda\hour'
+        ) + $auxiliaryLinks
     }
     foreach ($relative in $auxiliaryLinks) {
         $target = Join-Path $dataRoot $relative

@@ -12,8 +12,10 @@ asserts the observable outcome:
   replay-pass          strict PASS: accepted = converted = LEAN-delivered,
                        equal semantic digests, zero session difference
   dukascopy-identity   the same session-gap source under the derived
-                       always-open Dukascopy identity: PASS with every quote
-                       delivered (the Oanda fixture identity filters one)
+                       always-open Dukascopy identity, with an auxiliary
+                       source that has no Oanda cfd/hour fixture at all:
+                       PASS with every quote delivered (the Oanda fixture
+                       identity filters one and requires the hour fixture)
   session-filter-gap   LEAN session filtering removes one accepted quote under
                        the Oanda fixture identity: the record must FAIL with a
                        delivery difference
@@ -107,6 +109,7 @@ $scratch = Join-Path $env:TEMP ("marketlab-historical-data-tests-" + [guid]::New
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 $dataPass = $null
 $dataDukascopy = $null
+$dukascopyAux = $null
 $dataGap = $null
 $dataPrecision = $null
 $dataCrossed = $null
@@ -154,9 +157,16 @@ try {
     Assert-True ($runtimeBinaryNames -contains 'QuantConnect.Lean.Launcher.dll') 'runtime binaries include the Launcher assembly'
     Assert-True ($recordPass.helper_exit_code -eq 0) 'the record carries the clean helper exit code 0'
 
-    Write-Host 'case 2: dukascopy identity resolves the same source with no session filter (expected PASS)'
+    Write-Host 'case 2: dukascopy identity resolves the same source with no session filter and no Oanda hour fixture (expected PASS)'
     $dataDukascopy = Join-Path $scratch 'case-dukascopy'
     New-Item -ItemType Directory -Force -Path $dataDukascopy | Out-Null
+    $dukascopyAux = Join-Path $scratch 'aux-dukascopy'
+    New-Item -ItemType Directory -Force -Path $dukascopyAux | Out-Null
+    foreach ($relative in @('market-hours', 'symbol-properties', 'alternative', 'equity')) {
+        New-Item -ItemType Junction -Path (Join-Path $dukascopyAux $relative) `
+            -Target (Join-Path $LeanRoot "Data\$relative") | Out-Null
+    }
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $dukascopyAux 'cfd'))) 'the dukascopy auxiliary source deliberately has no Oanda cfd fixture'
     $dukascopyLog = Invoke-Driver $driver @{
         SourceCsv = Join-Path $fixtures 'session-filter-gap.csv'
         DataFolder = $dataDukascopy
@@ -168,6 +178,7 @@ try {
         LeanRoot = $LeanRoot
         PythonExe = $PythonExe
         OutputRoot = Join-Path $scratch 'output'
+        AuxiliaryDataSource = $dukascopyAux
     }
     Set-Content -LiteralPath (Join-Path $scratch 'case-dukascopy.log') -Value $dukascopyLog -Encoding UTF8
     $exitDukascopy = $script:driverExit
@@ -186,6 +197,7 @@ try {
     Assert-True ($recordDukascopy.manifest.session_preview.session_excluded_rows -eq 0) 'dukascopy offline session preview excludes no accepted row'
     Assert-True (Test-Path -LiteralPath (Join-Path $dataDukascopy 'cfd\dukascopy\tick\xauusd\20140505_quote.zip')) 'dukascopy native partition exists under cfd\dukascopy'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $dataDukascopy 'cfd\oanda\tick\xauusd'))) 'no Oanda-path partition was written for the Dukascopy identity'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $dataDukascopy 'cfd\oanda\hour'))) 'the Dukascopy identity did not link the Oanda hour fixture'
 
     $dukascopyForceLog = Invoke-Driver $driver @{
         SourceCsv = Join-Path $fixtures 'session-filter-gap.csv'
@@ -198,6 +210,7 @@ try {
         LeanRoot = $LeanRoot
         PythonExe = $PythonExe
         OutputRoot = Join-Path $scratch 'output'
+        AuxiliaryDataSource = $dukascopyAux
         Force = $true
     }
     Set-Content -LiteralPath (Join-Path $scratch 'case-dukascopy-force.log') -Value $dukascopyForceLog -Encoding UTF8
@@ -326,7 +339,7 @@ finally {
         Write-Host "kept scratch: $scratch"
     }
     else {
-        foreach ($caseDirectory in @($dataPass, $dataDukascopy, $dataGap, $dataPrecision, $dataCrossed, $dataUnsupported)) {
+        foreach ($caseDirectory in @($dataPass, $dataDukascopy, $dukascopyAux, $dataGap, $dataPrecision, $dataCrossed, $dataUnsupported)) {
             if ($caseDirectory) { Remove-Junctions $caseDirectory }
         }
         Remove-Item -Recurse -Force -LiteralPath $scratch -ErrorAction SilentlyContinue

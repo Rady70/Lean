@@ -188,6 +188,42 @@ is the authoritative way to obtain the derived databases; a data folder whose
 always-open identity was hand-assembled without the recorded provenance cannot
 produce a PASS (`RuntimeIdentityProvenanceMissing`, section 5).
 
+### Aggregating a per-file sweep
+
+The CLI qualifies one source file per run, so a full-history qualification is a
+sequence of per-file PR-1 runs. The per-month records are aggregated and
+re-validated with the tracked command:
+
+```powershell
+python -m marketlab_historical_data summarize-history `
+    --months-root E:\research-data\history-months
+```
+
+Each direct child of `--months-root` is one month directory (`YYYY_MM`) holding
+`data\marketlab-qualification\qualification-record.json`. The command requires:
+one contiguous, ordered, gap-free month sequence; each record a structurally
+valid `PASS` with helper exit 0, accepted = converted = LEAN-delivered =
+probe-processed, zero rejected rows and session differences, equal per-partition
+counts/digests and equal source/delivered digests; no missing partition, no
+coverage gap and no stale/hash-mismatched partition; each record's source file
+name matching its month and its first/last timestamps falling inside that month;
+and a singleton identity across every run (symbol, market, security type, native
+path, time zones, market-hours database SHA-256, symbol-properties SHA-256,
+converter source aggregate, clean checkout and runtime binary set). It writes
+`full-history-summary.json` with totals and two documented aggregate hashes:
+
+- `source_file_set_sha256` = SHA-256 of the newline-joined
+  `<source file name>:<source sha256>` lines in month order;
+- `ordered_month_digest_chain_sha256` = SHA-256 of the newline-joined
+  per-month ordered source semantic digests in month order.
+
+Both are aggregates over the decomposition. Per-month ordinals restart per file
+and the tooling does not ingest multiple source files into one run, so there is
+**no single-stream PR-1 ordinal digest**; the per-month PR-1 digests and the
+chain are the evidence. The command exits 0 only when every check passes, 1 for
+a non-conforming record set (the summary still lists the errors), and 2 for a
+missing or invalid months root.
+
 `-AllowMissingData` is required for step 2 because LEAN probes the trading days
 adjacent to the qualified window for continuity; the final record classifies
 every failed request, so a missing native partition that carries accepted rows
@@ -341,18 +377,19 @@ carry accepted rows remains `NativePartitionMissing`.
 ## 6. Auxiliary runtime data and the junction warning
 
 `Invoke-ReplayQualification.ps1` links, from `-AuxiliaryDataSource`
-(default `<LeanRoot>\Data`), any missing `alternative`, `equity` and
-`cfd\oanda\hour` path into the research data folder as a directory
-**junction**. For the `oanda` fixture identity it also links `market-hours`
-and `symbol-properties` (the engine fixture databases). For the `dukascopy`
-identity it instead runs `prepare-identity`, which reads the engine fixture
-databases from `-AuxiliaryDataSource` and writes the derived always-open
-runtime databases into the data folder (real files, never through a junction;
-writing through a junction is refused). These are the unchanged engine
-fixtures the subscription setup reads; junctions keep them in place and copy
-nothing. Use `-NoAuxiliaryLinks` to skip the links and accept the helper's
-missing-data warnings, which the final record reports (`prepare-identity` still
-runs for `dukascopy`, because it only reads from `-AuxiliaryDataSource`).
+(default `<LeanRoot>\Data`), any missing `alternative` and `equity` path into
+the research data folder as a directory **junction**. For the `oanda` fixture
+identity it also links `market-hours`, `symbol-properties` and
+`cfd\oanda\hour`. For the `dukascopy` identity it instead runs
+`prepare-identity`, which reads the engine fixture databases from
+`-AuxiliaryDataSource` and writes the derived always-open runtime databases
+into the data folder (real files, never through a junction; writing through a
+junction is refused). The Dukascopy identity does **not** link or require the
+Oanda hour fixture or the Oanda calendar, and the end-to-end test exercises a
+Dukascopy run whose auxiliary source has no `cfd` directory at all. Use
+`-NoAuxiliaryLinks` to skip the links and accept the helper's missing-data
+warnings, which the final record reports (`prepare-identity` still runs for
+`dukascopy`, because it only reads from `-AuxiliaryDataSource`).
 
 > **Warning:** a directory junction is a link, not a copy. Deleting a research
 > data folder that contains junctions with a recursive delete tool that follows
@@ -384,7 +421,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (198 tests)
+# Python offline tool (216 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -397,9 +434,10 @@ powershell -File MarketLab\tools\historical-data\scripts\Test-HistoricalDataQual
 
 The end-to-end test uses the committed fixtures in `fixtures\` (not the user's
 dataset): an exact-replay PASS, the same session-gap source under the derived
-always-open Dukascopy identity (PASS, every quote delivered) and under the
-Oanda fixture identity (FAIL, one quote filtered), a sub-millisecond source that
-must fail before conversion, a crossed quote that must fail without cleaning, an
+always-open Dukascopy identity with a Dukascopy auxiliary source that has no
+Oanda `cfd` fixture at all (PASS, every quote delivered) and under the Oanda
+fixture identity (FAIL, one quote filtered), a sub-millisecond source that must
+fail before conversion, a crossed quote that must fail without cleaning, an
 unsupported identity and an in-worktree data folder that must be refused. It
 creates scratch data folders outside the repository and removes the junctions
 as links during cleanup.
@@ -442,12 +480,15 @@ material only; nothing here is a runtime dependency on them.
   probe and LEAN assemblies it launches (`runtime_binaries` in the record), and
   the probe adds an in-process `runtime.assemblies` list as supplemental
   evidence (byte-loaded assemblies may not expose a file `Location`).
-- The full historical dataset completed a **90-month qualification sweep**
-  (2019-01..2026-06, 90 source files, 22.35 GiB) on 2026-09-24: **90/90 months
-  PASS, 0 failures**, with accepted = converted = LEAN-delivered =
+- The full historical dataset completed a **90-month decomposed exact-replay
+  sweep** (2019-01..2026-06, 90 source files, 22.35 GiB) on 2026-09-24: **90/90
+  months PASS, 0 failures**, with accepted = converted = LEAN-delivered =
   probe-processed = **413,750,130** rows, 0 rejected rows, 0 session drops,
   every per-partition count and semantic digest equal and every per-month
-  source/delivered digest equal. The source file-set SHA-256 is
+  source/delivered digest equal. This is the sequence of per-file runs the CLI
+  supports, re-validated by the tracked `summarize-history` command, which also
+  checks the ordered 90-file set, adjacent month boundaries, totals, singleton
+  identity, clean checkout and runtime binary set. The source file-set SHA-256 is
   `8ce98dd27c2df3166a0dc3ec30c6be4756887f323934a6a0ca1c348592c6f1fd`; the
   aggregate chain over the 90 ordered per-month digests (an aggregate, not a
   single-run PR-1 digest) is
@@ -455,18 +496,29 @@ material only; nothing here is a runtime dependency on them.
   months resolved the identical derived identity (market-hours SHA-256
   `325a7abc8214216c9107d45bb4e0a7fd291d2a5d771d3ebed6828d02da72518e`,
   symbol-properties SHA-256 `7d52262f53fbec169b6e03c7acb220a73ea4ff95f48c198e4977e2280407d5ed`,
-  converter source aggregate `1642c5c2ab7cd0422290859ad685138fedfb2c7ece9ea0d98f46d40bd40957bf`,
-  converted from clean HEAD `ab7754af8c7175fe7f9837cf17541956a094927b`). First
-  delivered timestamp `2019-01-01T23:00:07.151Z`, last
+  converter source aggregate `1642c5c2ab7cd0422290859ad685138fedfb2c7ece9ea0d98f46d40bd40957bf`
+  as recorded by those runs — later review-fix commits added the tracked
+  aggregator and tightened the identity preparation without changing the
+  qualification behavior, so the records remain the authority for the sweep's
+  tooling identity — from clean HEAD
+  `ab7754af8c7175fe7f9837cf17541956a094927b`; runtime
+  binary set SHA-256 `eceb4d7526ff78098c0f29e88e1cc0fff0b9ff1a32d64e943e0237e90ce11f5b`).
+  First delivered timestamp `2019-01-01T23:00:07.151Z`, last
   `2026-06-30T23:59:59.678Z`. The always-open identity recorded 376
   source-absent days (weekends and source holidays LEAN requested with no
   accepted rows) as evidence; no coverage gap and no missing accepted
   partition. Exactly one unrelated failed request per month
-  (`cfd/dukascopy/hour/xauusd.zip`, the benchmark hour file). The sweep ran
-  the CLI once per monthly source file (the tooling takes one source file per
-  run) in 6.83 h of driver wall time; the per-month records and the aggregate
-  `full-history-summary.json` stay outside Git under
+  (`cfd/dukascopy/hour/xauusd.zip`, the benchmark hour file). The sweep ran in
+  6.83 h of driver wall time; the per-month records, the runner log and
+  `full-history-summary.json` (regenerated and validated by the tracked
+  command) stay outside Git under
   `D:\quant_research_workspace\work\lean\pr1-xauusd-full-history-dukascopy\`.
-  Only after the data path is exercised on the full history does the plan
-  continue with **PR 2** (C# research account view and bounded analytics),
-  which remains the next implementation phase.
+  A distilled evidence fixture with no market data — one row per month carrying
+  the source file name/hash/size, canonical first/last timestamps, counts and
+  the ordered source/delivered digests — is tracked at
+  `fixtures\full-history-sweep-evidence.json`, and a test recomputes both
+  aggregate hashes and the sequence/boundary properties from it, so the
+  full-history claim is verifiable from the repository without the external
+  records or the raw source. Only after the data path is exercised on the full
+  history does the plan continue with **PR 2** (C# research account view and
+  bounded analytics), which remains the next implementation phase.

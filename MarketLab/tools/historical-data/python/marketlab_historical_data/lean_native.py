@@ -1,11 +1,19 @@
 """Native LEAN quote-tick file layout and writing.
 
-The actual LEAN engine in this checkout reads quote ticks for
-``Symbol.Create("XAUUSD", SecurityType.Cfd, Market.Oanda)`` from:
+The actual LEAN engine in this checkout reads quote ticks for a CFD
+subscription from:
 
-    <data-folder>/cfd/oanda/tick/xauusd/YYYYMMDD_quote.zip
+    <data-folder>/cfd/<market>/tick/xauusd/YYYYMMDD_quote.zip
     member: YYYYMMDD_xauusd_tick_quote.csv
     line:   <milliseconds since DataTimeZone-local midnight>,<bid>,<ask>
+
+The qualified identities are the engine fixture
+``Symbol.Create("XAUUSD", SecurityType.Cfd, Market.Oanda)`` (path
+``cfd/oanda/tick/xauusd``) and the Dukascopy source identity
+``Symbol.Create("XAUUSD", SecurityType.Cfd, "dukascopy")`` (path
+``cfd/dukascopy/tick/xauusd``) prepared by ``identity.py``. The layout is
+parameterised by symbol/market/security type; the path always follows the
+resolved identity.
 
 The partition date and the millisecond value are in the subscription's
 ``DataTimeZone`` (resolved from the runtime market-hours database), not the

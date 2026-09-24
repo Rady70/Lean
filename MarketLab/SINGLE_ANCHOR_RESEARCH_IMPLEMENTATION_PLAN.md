@@ -714,7 +714,15 @@ identity of the entire results JSON is not required.
 
 ## 4. After PR 3: freeze before historical research
 
-After PR 1-3 pass review, freeze the backtester before parameter research.
+After PR 1-3 pass review, freeze the backtester before parameter research. The
+freeze includes the qualified data identity: the authoritative historical runs
+use the `XAUUSD/dukascopy/Cfd` subscription prepared by
+`MarketLab\tools\historical-data` (`single-anchor-symbol XAUUSD`,
+`single-anchor-market dukascopy`, `single-anchor-security-type Cfd`). The
+in-code defaults (`XAUUSD/oanda/Cfd`, the shipped 2014 fixture dates) are
+software-use fixtures only; a real historical baseline that omits
+`single-anchor-market dukascopy` is not a valid run under this plan (section 6
+and section 7).
 
 The resulting architecture is:
 
@@ -753,7 +761,12 @@ The qualification report should make long gaps and coverage anomalies visible
 by day/month and must preserve the local source identity/hash.
 
 Only a PASS under the declared replay contract may proceed to the baseline
-strategy run.
+strategy run. The baseline strategy run reads that qualified data folder under
+the same identity it was qualified with: `single-anchor-symbol XAUUSD`,
+`single-anchor-market dukascopy`, `single-anchor-security-type Cfd`. Running
+the baseline against the Oanda fixture default in a qualified Dukascopy data
+folder would resolve a different subscription identity and is not a valid
+baseline.
 
 The historical files themselves remain outside Git.
 
@@ -768,6 +781,12 @@ HardBreakevenCeilingPercent = 4.478
 
 Freeze one complete immutable baseline configuration including at least:
 
+- data identity: `single-anchor-symbol = XAUUSD`, `single-anchor-market =
+  dukascopy`, `single-anchor-security-type = Cfd`, with the qualified
+  `XAUUSD/dukascopy/Cfd` data folder (the Oanda fixture default is not a
+  research configuration);
+- the qualified start/end dates and, when used, the source-derived
+  `single-anchor-session-map`;
 - StepPercent;
 - BaseLot;
 - NormalTradeCount = 4;

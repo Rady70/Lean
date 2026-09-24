@@ -27,6 +27,7 @@ from .replay import (
     require_probe_structure,
     require_runtime_binaries_structure,
 )
+from .summary import FullHistorySummaryError, build_full_history_summary
 from .transactions import OutputTransaction, OutputTransactionError
 
 __all__ = ["main"]
@@ -93,6 +94,24 @@ def _prepare_identity_parser(subparsers) -> None:
         help="replace derived identity databases whose bytes differ from the required derivation",
     )
     parser.add_argument("--json", action="store_true", help="print the provenance JSON to stdout")
+
+
+def _summarize_history_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "summarize-history",
+        help="validate and aggregate a contiguous sequence of per-file PR-1 month records",
+    )
+    parser.add_argument(
+        "--months-root",
+        required=True,
+        help="directory containing one subdirectory per month, each holding "
+        "data\\marketlab-qualification\\qualification-record.json (the per-file sweep layout)",
+    )
+    parser.add_argument(
+        "--output",
+        help="summary path (default: <months-root>\\full-history-summary.json)",
+    )
+    parser.add_argument("--json", action="store_true", help="print the summary JSON to stdout")
 
 
 def _verify_parser(subparsers) -> None:
@@ -211,6 +230,53 @@ def _run_prepare_identity(args) -> int:
     )
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def _run_summarize_history(args) -> int:
+    try:
+        summary = build_full_history_summary(Path(args.months_root))
+    except FullHistorySummaryError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
+    output = (
+        Path(args.output)
+        if args.output
+        else Path(args.months_root) / "full-history-summary.json"
+    )
+    try:
+        with OutputTransaction(allow_overwrite=True) as transaction:
+            transaction.stage_text(output, dump_json(summary))
+            transaction.commit()
+    except OutputTransactionError as error:
+        print(f"ERROR: summary not written: {error}", file=sys.stderr)
+        return 2
+
+    totals = summary["totals"]
+    print(
+        f"months: {summary['month_count']} (pass {summary['months_pass']}, "
+        f"fail {summary['months_fail']})"
+    )
+    print(
+        f"accepted: {totals['accepted_row_count']}; converted: "
+        f"{totals['converted_row_count']}; delivered: "
+        f"{totals['lean_delivered_row_count']}; probe processed: "
+        f"{totals['probe_processed_row_count']}"
+    )
+    print(f"source file set: {summary['source_file_set_sha256']}")
+    print(f"month digest chain: {summary['ordered_month_digest_chain_sha256']}")
+    print(f"summary: {output}")
+    if args.json:
+        print(dump_json(summary))
+    if summary["errors"]:
+        for error in summary["errors"]:
+            print(f"FAIL: {error}", file=sys.stderr)
+        print("summarize-history: FAIL", file=sys.stderr)
+        return 1
+    if summary["month_count"] == 0:
+        print("ERROR: no month records were aggregated", file=sys.stderr)
+        return 2
+    print("summarize-history: PASS")
     return 0
 
 
@@ -383,6 +449,7 @@ def main(argv=None) -> int:
     _prepare_identity_parser(subparsers)
     _qualify_parser(subparsers)
     _verify_parser(subparsers)
+    _summarize_history_parser(subparsers)
     args = parser.parse_args(argv)
     if args.command == "prepare-identity":
         return _run_prepare_identity(args)
@@ -390,6 +457,8 @@ def main(argv=None) -> int:
         return _run_qualify(args)
     if args.command == "verify":
         return _run_verify(args)
+    if args.command == "summarize-history":
+        return _run_summarize_history(args)
     parser.error(f"unknown command {args.command!r}")
     return 2
 

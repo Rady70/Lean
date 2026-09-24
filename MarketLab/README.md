@@ -507,7 +507,11 @@ complete**, and **PR 7** (source-derived session maps and the five-minute
 quote-only trading availability described above) is merged. The replay identity
 for the real Dukascopy/JForex source is resolved: the source is replayed under
 the derived always-open `XAUUSD/dukascopy/Cfd` identity, so LEAN's session
-filter removes no legitimate source quote. The known 2023-03 case delivers
+filter removes no legitimate source quote. A real historical strategy run must
+be launched with `single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,
+single-anchor-security-type:Cfd` against the qualified data folder; the
+in-code `Market.Oanda` default and the 2014 sample dates are the shipped
+fixture only. The known 2023-03 case delivers
 every accepted row (4,465,226 delivered, 4,465,226 probe-processed, source
 digest reproduced exactly); under the Oanda fixture identity it previously
 clipped 6,798 rows. The full 90-month sweep (2019-01..2026-06) completed with

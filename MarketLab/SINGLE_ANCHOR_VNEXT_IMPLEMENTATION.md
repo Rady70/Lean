@@ -721,6 +721,18 @@ per-month ordered digest equal, under the single derived identity
 per-month records and the aggregate `full-history-summary.json` stay outside
 Git under
 `D:\quant_research_workspace\work\lean\pr1-xauusd-full-history-dukascopy\`; the
-tools README carries the details. The replay-identity blocker recorded here is
-resolved; the next project step is the plan's first frozen full-history
-strategy baseline after PR 2 (C# research account and bounded analytics).
+tools README carries the details, and the tracked `summarize-history` command
+re-validates the ordered 90-file set, month boundaries, singleton identity and
+aggregate hashes. This is a 90-month decomposed exact-replay sweep (one PR-1
+run per monthly file), not a single-stream ordinal digest.
+
+Any real historical strategy run must use the qualified identity:
+`single-anchor-symbol: XAUUSD`, `single-anchor-market: dukascopy`,
+`single-anchor-security-type: Cfd`, with dates inside the qualified data
+folder. The in-code `Market.Oanda` default and the 2014 sample dates are the
+shipped fixture only; a baseline run that leaves them in place bypasses the
+qualified identity and is not a valid baseline. The replay-identity blocker
+recorded here is resolved; the next project step is the plan's sequence
+PR 2 (C# research account and bounded analytics), PR 3 (target-account margin
+survival), the baseline configuration freeze, and only then the first
+full-history strategy baseline.

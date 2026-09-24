@@ -4,8 +4,10 @@ The runtime market-hours database is the actual file the LEAN engine loads:
 ``<data-folder>/market-hours/market-hours-database.json`` (LEAN resolves it
 through ``MarketHoursDatabase.FromDataFolder()``; there is no configuration key
 for a different file). This module loads that file, records its SHA-256, and
-resolves the XAUUSD/Oanda CFD entry exactly as LEAN does (exact key first, then
-the ``[*]`` wildcard).
+resolves the subscription's CFD entry exactly as LEAN does (exact key first,
+then the ``[*]`` wildcard, including the engine's file-order calendar merge).
+It serves both qualified identities: the fixture ``XAUUSD/oanda/Cfd`` and the
+Dukascopy source identity ``XAUUSD/dukascopy/Cfd`` built by ``identity.py``.
 
 The session evaluator is a diagnostic view used to explain delivery
 differences in the qualification report. It is *not* the authority: the actual
@@ -31,6 +33,7 @@ __all__ = [
     "SessionEvaluator",
     "load_market_hours",
     "parse_market_hours_timespan",
+    "resolve_market_hours_entries",
 ]
 
 _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -175,30 +178,22 @@ def _parse_late_opens(entry: dict) -> dict:
     }
 
 
-def load_market_hours(
-    data_folder: Path, security_type: str, market: str, symbol: str
+def resolve_market_hours_entries(
+    entries: dict,
+    security_type: str,
+    market: str,
+    symbol: str,
+    *,
+    database_path: str = "",
+    database_sha256: str = "",
 ) -> tuple[ResolvedMarketHours, dict]:
-    """Loads and resolves the runtime market-hours entry for one subscription."""
-    database_path = Path(data_folder) / "market-hours" / "market-hours-database.json"
-    if not database_path.is_file():
-        raise MarketHoursDatabaseError(
-            f"runtime market-hours database not found: {database_path} (the data folder the "
-            "LEAN run uses must contain market-hours/market-hours-database.json)"
-        )
-    payload = database_path.read_bytes()
-    database_sha256 = hashlib.sha256(payload).hexdigest()
-    try:
-        parsed = json.loads(payload.decode("utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise MarketHoursDatabaseError(
-            f"runtime market-hours database is not readable JSON: {database_path}: {error}"
-        ) from error
-    entries = parsed.get("entries") if isinstance(parsed, dict) else None
-    if not isinstance(entries, dict):
-        raise MarketHoursDatabaseError(
-            f"runtime market-hours database has no 'entries' object: {database_path}"
-        )
+    """Resolves one subscription against a parsed ``entries`` object.
 
+    This is the payload-level resolver ``load_market_hours`` wraps and
+    ``identity.prepare_runtime_identity`` uses to validate a derived database
+    before publishing it. It applies the same exact/wildcard lookup and the
+    engine's file-order calendar merge as LEAN.
+    """
     type_key = _SECURITY_TYPE_KEYS.get(security_type.strip().lower(), security_type)
     market_key = market.strip().lower()
     exact_key = f"{type_key}-{market_key}-{symbol}"
@@ -219,6 +214,10 @@ def load_market_hours(
     if entry is None:
         raise MarketHoursDatabaseError(
             f"no market-hours entry for {exact_key!r} or {wildcard_key!r} in {database_path}"
+        )
+    if not isinstance(entry, dict):
+        raise MarketHoursDatabaseError(
+            f"market-hours entry {resolved_key} is not a JSON object in {database_path}"
         )
 
     try:
@@ -298,6 +297,39 @@ def load_market_hours(
         merged_calendar_key=merged_calendar_key,
     )
     return resolved, entry
+
+
+def load_market_hours(
+    data_folder: Path, security_type: str, market: str, symbol: str
+) -> tuple[ResolvedMarketHours, dict]:
+    """Loads and resolves the runtime market-hours entry for one subscription."""
+    database_path = Path(data_folder) / "market-hours" / "market-hours-database.json"
+    if not database_path.is_file():
+        raise MarketHoursDatabaseError(
+            f"runtime market-hours database not found: {database_path} (the data folder the "
+            "LEAN run uses must contain market-hours/market-hours-database.json)"
+        )
+    payload = database_path.read_bytes()
+    database_sha256 = hashlib.sha256(payload).hexdigest()
+    try:
+        parsed = json.loads(payload.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise MarketHoursDatabaseError(
+            f"runtime market-hours database is not readable JSON: {database_path}: {error}"
+        ) from error
+    entries = parsed.get("entries") if isinstance(parsed, dict) else None
+    if not isinstance(entries, dict):
+        raise MarketHoursDatabaseError(
+            f"runtime market-hours database has no 'entries' object: {database_path}"
+        )
+    return resolve_market_hours_entries(
+        entries,
+        security_type,
+        market,
+        symbol,
+        database_path=str(database_path),
+        database_sha256=database_sha256,
+    )
 
 
 def _adjust_segments(

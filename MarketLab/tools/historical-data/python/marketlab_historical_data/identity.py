@@ -29,10 +29,11 @@ import os
 import stat
 from pathlib import Path
 
-from .market_hours import MarketHoursDatabaseError, load_market_hours
+from .market_hours import MarketHoursDatabaseError, resolve_market_hours_entries
 from .transactions import OutputTransaction, OutputTransactionError
 
 __all__ = [
+    "QUALIFIED_IDENTITY",
     "RUNTIME_IDENTITY_CONTRACT",
     "RUNTIME_IDENTITY_NAME",
     "RuntimeIdentityError",
@@ -41,11 +42,16 @@ __all__ = [
     "derive_symbol_properties_text",
     "load_runtime_identity",
     "prepare_runtime_identity",
+    "require_qualified_identity",
     "runtime_identity_path",
 ]
 
 RUNTIME_IDENTITY_CONTRACT = "marketlab-runtime-identity-v1"
 RUNTIME_IDENTITY_NAME = "runtime-identity.json"
+
+# The only identity this command is qualified to synthesize: the symbol-
+# properties row and the always-open session definition are XAUUSD-specific.
+QUALIFIED_IDENTITY = ("XAUUSD", "dukascopy", "Cfd")
 
 MARKET_HOURS_DIRECTORY = "market-hours"
 MARKET_HOURS_DATABASE_NAME = "market-hours-database.json"
@@ -66,6 +72,27 @@ _DERIVATION_RULE = (
 
 class RuntimeIdentityError(Exception):
     """The runtime identity cannot be prepared, verified or trusted."""
+
+
+def require_qualified_identity(symbol: str, market: str, security_type: str) -> None:
+    """Refuses to synthesize an identity beyond the qualified contract.
+
+    Only ``XAUUSD/dukascopy/Cfd`` is qualified. The symbol-properties row and
+    the always-open session definition are specific to that source; another
+    identity needs its own source-appropriate definition and qualification
+    instead of fabricated metadata.
+    """
+    if (
+        symbol.strip().upper() != QUALIFIED_IDENTITY[0]
+        or market.strip().lower() != QUALIFIED_IDENTITY[1].lower()
+        or security_type.strip().lower() != QUALIFIED_IDENTITY[2].lower()
+    ):
+        raise RuntimeIdentityError(
+            "prepare-identity only supports the qualified "
+            f"{QUALIFIED_IDENTITY[0]}/{QUALIFIED_IDENTITY[1]}/{QUALIFIED_IDENTITY[2]} source "
+            f"identity (got {symbol}/{market}/{security_type}); another identity needs its own "
+            "source-appropriate session definition and a separate qualification"
+        )
 
 
 def runtime_identity_path(data_folder: Path) -> Path:
@@ -266,6 +293,7 @@ def prepare_runtime_identity(
     """
     data_folder = Path(data_folder).resolve()
     source_data_folder = Path(source_data_folder).resolve()
+    require_qualified_identity(symbol, market, security_type)
     if not data_folder.is_dir():
         raise RuntimeIdentityError(f"data folder not found: {data_folder}")
     if not source_data_folder.is_dir():
@@ -315,6 +343,40 @@ def prepare_runtime_identity(
     row = symbol_properties_row(symbol, market, security_type)
     symbol_properties_text = derive_symbol_properties_text(source_symbol_properties_text, row)
     symbol_properties_bytes = symbol_properties_text.encode("utf-8")
+
+    # Resolve the exact derived payload with the engine semantics *before*
+    # publishing anything, so a rejected identity leaves no artifacts behind.
+    # The merge check matters: a market wildcard that precedes the inserted
+    # exact entry can narrow the always-open definition, and the derived
+    # identity must be refused in that case.
+    try:
+        resolved, _ = resolve_market_hours_entries(
+            derived_market_hours["entries"],
+            security_type,
+            market,
+            symbol,
+            database_path="<derived>",
+            database_sha256=_sha256_bytes(market_hours_bytes),
+        )
+    except MarketHoursDatabaseError as error:
+        raise RuntimeIdentityError(
+            f"the derived runtime identity cannot be resolved by LEAN: {error}"
+        ) from error
+    if not resolved.always_open:
+        raise RuntimeIdentityError(
+            f"the derived runtime identity entry {resolved.entry_key} is not always open "
+            "(the auxiliary database's calendar narrows it, for example a market wildcard); "
+            "no derived database was published"
+        )
+    if (
+        resolved.data_time_zone != ALWAYS_OPEN_DATA_TIME_ZONE
+        or resolved.exchange_time_zone != ALWAYS_OPEN_EXCHANGE_TIME_ZONE
+    ):
+        raise RuntimeIdentityError(
+            f"the derived runtime identity entry {resolved.entry_key} has unexpected time zones "
+            f"({resolved.data_time_zone}/{resolved.exchange_time_zone}); no derived database "
+            "was published"
+        )
 
     market_hours_target = data_folder / MARKET_HOURS_DIRECTORY / MARKET_HOURS_DATABASE_NAME
     symbol_properties_target = (
@@ -393,22 +455,4 @@ def prepare_runtime_identity(
     except (OutputTransactionError, OSError) as error:
         raise RuntimeIdentityError(f"the runtime identity could not be published: {error}") from error
 
-    try:
-        hours, _ = load_market_hours(data_folder, security_type, market, symbol)
-    except MarketHoursDatabaseError as error:
-        raise RuntimeIdentityError(
-            f"the published runtime identity cannot be resolved by LEAN: {error}"
-        ) from error
-    if not hours.always_open:
-        raise RuntimeIdentityError(
-            f"the published runtime identity entry {hours.entry_key} is not always open"
-        )
-    if (
-        hours.data_time_zone != ALWAYS_OPEN_DATA_TIME_ZONE
-        or hours.exchange_time_zone != ALWAYS_OPEN_EXCHANGE_TIME_ZONE
-    ):
-        raise RuntimeIdentityError(
-            f"the published runtime identity entry {hours.entry_key} has unexpected time zones "
-            f"({hours.data_time_zone}/{hours.exchange_time_zone})"
-        )
     return payload

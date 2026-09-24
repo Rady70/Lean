@@ -4,9 +4,12 @@ This package is offline preparation tooling only. It reads a historical bid/ask
 CSV source, applies the authoritative SingleAnchor qualification contract
 (``Bid > 0``, ``Ask > 0``, ``Ask >= Bid``, valid non-decreasing timestamps,
 source order preserved), and - only after the source passes - writes native
-LEAN quote-tick files for the XAUUSD/Oanda CFD subscription together with a
+LEAN quote-tick files for the qualified subscription: the engine-fixture
+``XAUUSD/oanda/Cfd`` identity or the Dukascopy source identity
+``XAUUSD/dukascopy/Cfd`` prepared by ``identity.py``. It also writes a
 deterministic qualification manifest and the replay expectation consumed by the
-MarketLab LEAN replay probe.
+MarketLab LEAN replay probe, and can aggregate a sequence of per-file records
+with ``summary.py``.
 
 Python never participates in the per-tick strategy runtime: the converted files
 are read by the unchanged LEAN engine, and the C# probe verifies the stream
@@ -20,9 +23,11 @@ authoritative plan.
 __all__ = [
     "canonical",
     "csv_source",
+    "identity",
     "lean_native",
     "market_hours",
     "qualification",
     "replay",
+    "summary",
     "transactions",
 ]

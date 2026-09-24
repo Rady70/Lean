@@ -234,6 +234,36 @@ class PrepareRuntimeIdentityTests(unittest.TestCase):
         with self.assertRaises(RuntimeIdentityError):
             self.prepare(data_folder=LEAN_ROOT)
 
+    def test_prepare_refuses_an_unqualified_identity(self):
+        with self.assertRaises(RuntimeIdentityError):
+            self.prepare(symbol="EURUSD")
+        with self.assertRaises(RuntimeIdentityError):
+            self.prepare(market="oanda")
+        with self.assertRaises(RuntimeIdentityError):
+            self.prepare(security_type="Forex")
+        self.assertFalse((self.data / "market-hours").exists())
+        self.assertFalse((self.data / "symbol-properties").exists())
+        self.assertFalse(runtime_identity_path(self.data).exists())
+
+    def test_prepare_refuses_a_wildcard_calendar_before_publishing(self):
+        # A market wildcard that precedes the inserted exact entry is merged by
+        # LEAN and would make the derived identity not always open. The command
+        # must reject it before publishing anything.
+        database = self.source / "market-hours" / "market-hours-database.json"
+        payload = json.loads(database.read_text(encoding="utf-8"))
+        payload["entries"]["Cfd-dukascopy-[*]"] = {
+            "dataTimeZone": "UTC",
+            "exchangeTimeZone": "UTC",
+            "monday": [{"start": "00:00:00", "end": "1.00:00:00", "state": "market"}],
+            "holidays": ["1/1/2024"],
+        }
+        database.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaises(RuntimeIdentityError):
+            self.prepare()
+        self.assertFalse((self.data / "market-hours").exists())
+        self.assertFalse((self.data / "symbol-properties").exists())
+        self.assertFalse(runtime_identity_path(self.data).exists())
+
 
 class RecordedIdentityTests(unittest.TestCase):
     def setUp(self):

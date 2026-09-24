@@ -341,6 +341,25 @@ class PrepareIdentityCliTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("already exists and differs", result.stderr)
 
+    def test_prepare_identity_refuses_an_unqualified_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, data = self.make_folders(Path(directory))
+            result = self.run_cli(
+                [
+                    "prepare-identity",
+                    "--data-folder",
+                    str(data),
+                    "--source-data-folder",
+                    str(source),
+                    "--symbol",
+                    "EURUSD",
+                ]
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("only supports the qualified", result.stderr)
+            self.assertFalse((data / "market-hours").exists())
+            self.assertFalse((data / "symbol-properties").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
