@@ -8,16 +8,19 @@ and merged, and PR 7 implements the source-derived trading availability for the
 historical replay (source-derived sessions, the five-minute quote-only buffers
 at session ends, and delivered-versus-eligible accounting; see
 SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 8) and is merged with this note.
-PR 7 changes no strategy formula and no PR 1 qualification semantics. The
-full historical dataset has not yet completed qualification or achieved a PR 1 PASS, and the PR 1
-replay-identity gate (section 3.6) remains unresolved: the runtime session
-identity/hours currently clip legitimate source rows before the strategy (the
-2023-03 exercise measured 6,798 accepted rows not delivered), so a full-history
-PR 1 PASS is still blocked. Resolving that identity is the next separate
-prerequisite before full historical strategy research; the next non-blocking
-measurement is qualification speed/memory on a representative large slice, and
-PR 2 remains the next implementation phase after the data path has been
-exercised on real data.
+PR 7 changes no strategy formula and no PR 1 qualification semantics. The PR 1
+replay-identity gate (section 3.6) is now resolved: the real Dukascopy/JForex
+source replays under a MarketLab-derived always-open `XAUUSD/dukascopy/Cfd`
+runtime identity, so LEAN's session filter removes no legitimate source quote.
+The known 2023-03 case now delivers every accepted row: 4,465,226 accepted =
+converted = delivered = probe-processed, source and delivered semantic digests
+equal, zero session drops (the Oanda fixture identity previously clipped 6,798
+rows). The full historical dataset has not yet completed the 90-month sweep
+(section 5); the tooling qualifies one source file per run, and the full-history
+result is recorded in
+`tools/historical-data/README.md` when run. PR 2 remains the next
+implementation phase after the data path has been exercised on the full
+history.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
@@ -304,6 +307,16 @@ must hold for a normal exact-replay PASS.
 
 If it does not hold, stop and investigate the differences before historical
 strategy research.
+
+Resolution note (implementation record): the gate is satisfied for the real
+source by the source-appropriate `XAUUSD/dukascopy/Cfd` replay identity with a
+MarketLab-derived always-open, holiday-free runtime identity prepared from the
+engine fixtures and recorded with source/derived SHA-256 provenance. The source
+stream then defines the sessions; LEAN requests every calendar day, and days
+with no accepted source rows are recorded as `source_absent_days` evidence
+rather than failures. Session-bounded identities (the Oanda engine fixture)
+keep the original `SourceCoverageGap` failure path, which the end-to-end test
+still exercises. See `tools/historical-data/README.md` sections 5-6.
 
 #### 3.7 Provenance and manifest
 

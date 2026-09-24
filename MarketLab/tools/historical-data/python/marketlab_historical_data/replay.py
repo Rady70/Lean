@@ -327,6 +327,40 @@ def build_record(
     if qualification.get("native_conversion") != "PASS":
         failures.append("NativeLeanConversionFailed")
 
+    lean = manifest.get("lean", {})
+    market_hours_section = lean.get("market_hours_database")
+    market_hours = market_hours_section if isinstance(market_hours_section, dict) else {}
+    always_open = market_hours.get("always_open") is True
+    if always_open:
+        runtime_identity = lean.get("runtime_identity")
+        if not isinstance(runtime_identity, dict):
+            failures.append("RuntimeIdentityProvenanceMissing")
+        else:
+            derived_market_hours_section = runtime_identity.get("derived_market_hours_database")
+            derived_market_hours = (
+                derived_market_hours_section.get("sha256")
+                if isinstance(derived_market_hours_section, dict)
+                else None
+            )
+            if derived_market_hours != market_hours.get("database_sha256"):
+                failures.append("RuntimeIdentityProvenanceMismatch")
+            derived_symbol_properties_section = runtime_identity.get(
+                "derived_symbol_properties_database"
+            )
+            derived_symbol_properties = (
+                derived_symbol_properties_section.get("sha256")
+                if isinstance(derived_symbol_properties_section, dict)
+                else None
+            )
+            symbol_properties_section = lean.get("symbol_properties_database")
+            recorded_symbol_properties = (
+                symbol_properties_section.get("sha256")
+                if isinstance(symbol_properties_section, dict)
+                else None
+            )
+            if derived_symbol_properties != recorded_symbol_properties:
+                failures.append("RuntimeIdentityProvenanceMismatch")
+
     native_layout = manifest.get("native", {}).get("layout", {})
     tick_relative_directory = native_layout.get("zip_directory", "cfd/oanda/tick/xauusd")
     partition_failures, unrelated_failures = classify_failed_data_requests(
@@ -343,17 +377,22 @@ def build_record(
     window_end = accepted_days[-1].replace("-", "") if accepted_days else ""
     missing_partitions = []
     coverage_gap_days = []
+    source_absent_days = []
     out_of_window_failures = []
     for path in partition_failures:
         day = Path(path).name[:8]
         if day in partition_rows_by_day:
             missing_partitions.append(day)
         elif window_start <= day <= window_end:
-            coverage_gap_days.append(day)
+            if always_open:
+                source_absent_days.append(day)
+            else:
+                coverage_gap_days.append(day)
         else:
             out_of_window_failures.append(path)
     missing_partitions = sorted(set(missing_partitions))
     coverage_gap_days = sorted(set(coverage_gap_days))
+    source_absent_days = sorted(set(source_absent_days))
 
     conversion_passed = qualification.get("native_conversion") == "PASS"
     stale_partitions: list[str] = []
@@ -545,6 +584,7 @@ def build_record(
                 partition_rows_by_day.get(day, 0) for day in missing_partitions
             ),
             "source_coverage_gap_days": coverage_gap_days,
+            "source_absent_days": source_absent_days,
             "native_partition_failed_data_requests": partition_failures,
             "out_of_window_failed_data_requests": out_of_window_failures,
             "unrelated_failed_data_requests": unrelated_failures,

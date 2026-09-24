@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 
 from .csv_source import CsvSourceConfig
+from .identity import (
+    RuntimeIdentityError,
+    prepare_runtime_identity,
+)
 from .qualification import (
     artifacts_directory,
     dump_json,
@@ -61,6 +65,34 @@ def _qualify_parser(subparsers) -> None:
         help="replace existing native partitions, manifest and expectation atomically",
     )
     parser.add_argument("--json", action="store_true", help="print the manifest JSON to stdout")
+
+
+def _prepare_identity_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "prepare-identity",
+        help="derive the always-open runtime identity databases for a replay subscription",
+    )
+    parser.add_argument(
+        "--data-folder",
+        required=True,
+        help="runtime LEAN data folder the derived market-hours/symbol-properties databases "
+        "are written into",
+    )
+    parser.add_argument(
+        "--source-data-folder",
+        required=True,
+        help="data folder holding the unchanged auxiliary databases the derived identity is "
+        "built from (the engine fixtures, typically <LeanRoot>\\Data)",
+    )
+    parser.add_argument("--symbol", default="XAUUSD")
+    parser.add_argument("--market", default="dukascopy")
+    parser.add_argument("--security-type", default="Cfd")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="replace derived identity databases whose bytes differ from the required derivation",
+    )
+    parser.add_argument("--json", action="store_true", help="print the provenance JSON to stdout")
 
 
 def _verify_parser(subparsers) -> None:
@@ -122,6 +154,12 @@ def _print_manifest_summary(manifest: dict) -> None:
         print(f"ordered source semantic digest: {manifest['semantic']['ordered_source_semantic_digest']}")
     else:
         print(f"ordered source semantic digest: not evaluated ({manifest['semantic']['digest_status']})")
+    runtime_identity = manifest.get("lean", {}).get("runtime_identity")
+    if isinstance(runtime_identity, dict):
+        source_database = runtime_identity.get("source_market_hours_database")
+        source_path = source_database.get("path") if isinstance(source_database, dict) else None
+        print(f"runtime identity: {runtime_identity.get('entry_key')} "
+              f"(prepared from {source_path})")
     print(f"converted rows: {counts['converted_row_count']} across "
           f"{len(manifest['native']['partitions'])} native partitions")
     if qualification.get("conversion_error"):
@@ -137,6 +175,9 @@ def _print_record_summary(record: dict) -> None:
     print(f"ordered source semantic digest: {replay['ordered_source_semantic_digest']}")
     print(f"ordered delivered semantic digest: {replay['ordered_lean_delivered_semantic_digest']}")
     print(f"session/delivery difference: {replay['session_delivery_difference']}")
+    if replay.get("source_absent_days"):
+        print(f"source-absent tradable days (no source rows, expected under an always-open "
+              f"identity): {len(replay['source_absent_days'])}")
     if replay["unrelated_failed_data_requests"]:
         print(f"unrelated failed data requests (not tick partitions): "
               f"{len(replay['unrelated_failed_data_requests'])}")
@@ -147,6 +188,30 @@ def _print_record_summary(record: dict) -> None:
     print(f"overall qualification: {record['overall_qualification']}")
     if record["failure_reasons"]:
         print(f"failure reasons: {record['failure_reasons']}")
+
+
+def _run_prepare_identity(args) -> int:
+    try:
+        payload = prepare_runtime_identity(
+            data_folder=Path(args.data_folder),
+            source_data_folder=Path(args.source_data_folder),
+            symbol=args.symbol,
+            market=args.market,
+            security_type=args.security_type,
+            force=args.force,
+        )
+    except RuntimeIdentityError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
+    print(
+        f"runtime identity: {payload['entry_key']} "
+        f"({payload['data_time_zone']}/{payload['exchange_time_zone']}, always open); "
+        f"market-hours {payload['derived_market_hours_database']['sha256'][:12]}, "
+        f"symbol-properties {payload['derived_symbol_properties_database']['sha256'][:12]}"
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
 
 
 def _run_qualify(args) -> int:
@@ -315,9 +380,12 @@ def main(argv=None) -> int:
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    _prepare_identity_parser(subparsers)
     _qualify_parser(subparsers)
     _verify_parser(subparsers)
     args = parser.parse_args(argv)
+    if args.command == "prepare-identity":
+        return _run_prepare_identity(args)
     if args.command == "qualify":
         return _run_qualify(args)
     if args.command == "verify":

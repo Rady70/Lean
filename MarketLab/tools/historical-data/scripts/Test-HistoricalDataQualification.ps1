@@ -11,12 +11,19 @@ asserts the observable outcome:
 
   replay-pass          strict PASS: accepted = converted = LEAN-delivered,
                        equal semantic digests, zero session difference
-  session-filter-gap   LEAN session filtering removes one accepted quote:
-                       the record must FAIL with a delivery difference
+  dukascopy-identity   the same session-gap source under the derived
+                       always-open Dukascopy identity: PASS with every quote
+                       delivered (the Oanda fixture identity filters one)
+  session-filter-gap   LEAN session filtering removes one accepted quote under
+                       the Oanda fixture identity: the record must FAIL with a
+                       delivery difference
   sub-millisecond      meaningful sub-millisecond source precision:
                        qualification FAIL before any native file exists
   crossed-quote        a crossed quote: strict source qualification FAIL,
                        no cleaning, no conversion
+  unsupported-identity a non-qualified subscription identity is refused
+                       (exit 2) before any Python or LEAN work
+  in-worktree folder   a data folder inside the checkout is refused (exit 2)
 
 Requires the built LEAN Launcher (MarketLab\scripts\build.ps1) and the built
 replay probe. The auxiliary runtime data paths are linked by the driver from
@@ -99,9 +106,11 @@ function Remove-Junctions([string]$Root) {
 $scratch = Join-Path $env:TEMP ("marketlab-historical-data-tests-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 $dataPass = $null
+$dataDukascopy = $null
 $dataGap = $null
 $dataPrecision = $null
 $dataCrossed = $null
+$dataUnsupported = $null
 Write-Host "Test-HistoricalDataQualification scratch: $scratch"
 
 try {
@@ -145,7 +154,59 @@ try {
     Assert-True ($runtimeBinaryNames -contains 'QuantConnect.Lean.Launcher.dll') 'runtime binaries include the Launcher assembly'
     Assert-True ($recordPass.helper_exit_code -eq 0) 'the record carries the clean helper exit code 0'
 
-    Write-Host 'case 2: session-filter-gap (expected FAIL with a delivery difference)'
+    Write-Host 'case 2: dukascopy identity resolves the same source with no session filter (expected PASS)'
+    $dataDukascopy = Join-Path $scratch 'case-dukascopy'
+    New-Item -ItemType Directory -Force -Path $dataDukascopy | Out-Null
+    $dukascopyLog = Invoke-Driver $driver @{
+        SourceCsv = Join-Path $fixtures 'session-filter-gap.csv'
+        DataFolder = $dataDukascopy
+        Market = 'dukascopy'
+        TimestampColumn = 'timestamp'
+        BidColumn = 'bid'
+        AskColumn = 'ask'
+        SourceTimezone = 'UTC'
+        LeanRoot = $LeanRoot
+        PythonExe = $PythonExe
+        OutputRoot = Join-Path $scratch 'output'
+    }
+    Set-Content -LiteralPath (Join-Path $scratch 'case-dukascopy.log') -Value $dukascopyLog -Encoding UTF8
+    $exitDukascopy = $script:driverExit
+    Assert-True ($exitDukascopy -eq 0) "driver exit code is 0 (was $exitDukascopy)"
+    Assert-True ($dukascopyLog -match 'prepare identity:') 'driver prepared the derived runtime identity'
+    $recordDukascopy = Read-Json (Join-Path $dataDukascopy 'marketlab-qualification\qualification-record.json')
+    Assert-True ($recordDukascopy.overall_qualification -eq 'PASS') 'dukascopy overall qualification is PASS'
+    Assert-True ($recordDukascopy.manifest.lean.market -eq 'dukascopy') 'manifest identity is dukascopy'
+    Assert-True ($recordDukascopy.manifest.lean.market_hours_database.always_open -eq $true) 'resolved entry is always open'
+    Assert-True ($recordDukascopy.manifest.lean.runtime_identity.contract -eq 'marketlab-runtime-identity-v1') 'runtime identity provenance is recorded'
+    Assert-True ($recordDukascopy.manifest.lean.runtime_identity.derived_market_hours_database.sha256 -eq $recordDukascopy.manifest.lean.market_hours_database.database_sha256) 'recorded provenance hash matches the resolved database'
+    Assert-True ($recordDukascopy.native_replay.accepted_row_count -eq 5) 'dukascopy accepted row count is 5'
+    Assert-True ($recordDukascopy.native_replay.lean_delivered_row_count -eq 5) 'dukascopy delivered all 5 accepted rows'
+    Assert-True ($recordDukascopy.native_replay.session_delivery_difference -eq 0) 'dukascopy session/delivery difference is 0'
+    Assert-True ($recordDukascopy.native_replay.ordered_source_semantic_digest -eq $recordDukascopy.native_replay.ordered_lean_delivered_semantic_digest) 'dukascopy source and delivered semantic digests are equal'
+    Assert-True ($recordDukascopy.manifest.session_preview.session_excluded_rows -eq 0) 'dukascopy offline session preview excludes no accepted row'
+    Assert-True (Test-Path -LiteralPath (Join-Path $dataDukascopy 'cfd\dukascopy\tick\xauusd\20140505_quote.zip')) 'dukascopy native partition exists under cfd\dukascopy'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $dataDukascopy 'cfd\oanda\tick\xauusd'))) 'no Oanda-path partition was written for the Dukascopy identity'
+
+    $dukascopyForceLog = Invoke-Driver $driver @{
+        SourceCsv = Join-Path $fixtures 'session-filter-gap.csv'
+        DataFolder = $dataDukascopy
+        Market = 'dukascopy'
+        TimestampColumn = 'timestamp'
+        BidColumn = 'bid'
+        AskColumn = 'ask'
+        SourceTimezone = 'UTC'
+        LeanRoot = $LeanRoot
+        PythonExe = $PythonExe
+        OutputRoot = Join-Path $scratch 'output'
+        Force = $true
+    }
+    Set-Content -LiteralPath (Join-Path $scratch 'case-dukascopy-force.log') -Value $dukascopyForceLog -Encoding UTF8
+    Assert-True ($script:driverExit -eq 0) "forced dukascopy rerun exit code is 0 (was $($script:driverExit))"
+    $recordDukascopyForce = Read-Json (Join-Path $dataDukascopy 'marketlab-qualification\qualification-record.json')
+    Assert-True ($recordDukascopyForce.overall_qualification -eq 'PASS') 'forced dukascopy rerun is still PASS'
+    Assert-True ($recordDukascopyForce.native_replay.lean_delivered_row_count -eq 5) 'forced dukascopy rerun still delivers all 5 quote rows'
+
+    Write-Host 'case 3: session-filter-gap under the Oanda fixture identity (expected FAIL with a delivery difference)'
     $dataGap = Join-Path $scratch 'case-gap'
     New-Item -ItemType Directory -Force -Path $dataGap | Out-Null
     $gapLog = Invoke-Driver $driver @{
@@ -172,7 +233,7 @@ try {
     Assert-True ($recordGap.failure_reasons -contains 'LeanDeliveredCountDiffersFromAcceptedCount') 'failure reasons name the delivered-count difference'
     Assert-True (@($recordGap.failure_reasons) -join ',' -match 'ExpectedAndDeliveredCountsDiffer|DeliveredSemanticDigestMismatches') 'failure reasons name the probe mismatch'
 
-    Write-Host 'case 3: sub-millisecond (expected strict FAIL before conversion)'
+    Write-Host 'case 4: sub-millisecond (expected strict FAIL before conversion)'
     $dataPrecision = Join-Path $scratch 'case-precision'
     New-Item -ItemType Directory -Force -Path $dataPrecision | Out-Null
     $precisionLog = Invoke-Driver $driver @{
@@ -196,7 +257,7 @@ try {
     Assert-True ($manifestPrecision.qualification.native_conversion -eq 'NOT_RUN') 'conversion did not run'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $dataPrecision 'cfd\oanda\tick\xauusd')) -or @(Get-ChildItem -LiteralPath (Join-Path $dataPrecision 'cfd\oanda\tick\xauusd') -Filter '*_quote.zip' -ErrorAction SilentlyContinue).Count -eq 0) 'no native partition was written'
 
-    Write-Host 'case 4: crossed-quote (expected strict source FAIL, no cleaning)'
+    Write-Host 'case 5: crossed-quote (expected strict source FAIL, no cleaning)'
     $dataCrossed = Join-Path $scratch 'case-crossed'
     New-Item -ItemType Directory -Force -Path $dataCrossed | Out-Null
     $crossedLog = Invoke-Driver $driver @{
@@ -220,7 +281,28 @@ try {
     Assert-True ($manifestCrossed.counts.converted_row_count -eq 0) 'nothing was converted'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $dataCrossed 'cfd\oanda\tick\xauusd')) -or @(Get-ChildItem -LiteralPath (Join-Path $dataCrossed 'cfd\oanda\tick\xauusd') -Filter '*_quote.zip' -ErrorAction SilentlyContinue).Count -eq 0) 'no native partition was written'
 
-    Write-Host 'case 5: data folder inside the LEAN worktree (expected exit 2 before any junction)'
+    Write-Host 'case 6: unsupported identity (expected exit 2 before any Python or LEAN work)'
+    $dataUnsupported = Join-Path $scratch 'case-unsupported'
+    New-Item -ItemType Directory -Force -Path $dataUnsupported | Out-Null
+    $unsupportedLog = Invoke-Driver $driver @{
+        SourceCsv = Join-Path $fixtures 'replay-pass.csv'
+        DataFolder = $dataUnsupported
+        Market = 'fxcm'
+        TimestampColumn = 'timestamp'
+        BidColumn = 'bid'
+        AskColumn = 'ask'
+        SourceTimezone = 'UTC'
+        LeanRoot = $LeanRoot
+        PythonExe = $PythonExe
+        OutputRoot = Join-Path $scratch 'output'
+    }
+    Set-Content -LiteralPath (Join-Path $scratch 'case-unsupported.log') -Value $unsupportedLog -Encoding UTF8
+    $exitUnsupported = $script:driverExit
+    Assert-True ($exitUnsupported -eq 2) "driver exit code is 2 for an unsupported identity (was $exitUnsupported)"
+    Assert-True ($unsupportedLog -match 'only the qualified') 'driver names the qualified identity scope'
+    Assert-True (@(Get-ChildItem -LiteralPath $dataUnsupported -ErrorAction SilentlyContinue).Count -eq 0) 'the refused identity wrote nothing into the data folder'
+
+    Write-Host 'case 7: data folder inside the LEAN worktree (expected exit 2 before any junction)'
     $worktreeFolder = Join-Path $LeanRoot 'MarketLab'
     $worktreeLog = Invoke-Driver $driver @{
         SourceCsv = Join-Path $fixtures 'replay-pass.csv'
@@ -244,7 +326,7 @@ finally {
         Write-Host "kept scratch: $scratch"
     }
     else {
-        foreach ($caseDirectory in @($dataPass, $dataGap, $dataPrecision, $dataCrossed)) {
+        foreach ($caseDirectory in @($dataPass, $dataDukascopy, $dataGap, $dataPrecision, $dataCrossed, $dataUnsupported)) {
             if ($caseDirectory) { Remove-Junctions $caseDirectory }
         }
         Remove-Item -Recurse -Force -LiteralPath $scratch -ErrorAction SilentlyContinue

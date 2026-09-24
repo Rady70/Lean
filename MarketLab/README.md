@@ -499,18 +499,20 @@ its coverage, or the run ends with exit code 3 (section 10).
 A historical CSV source is qualified and converted offline before it reaches
 that run: `MarketLab\tools\historical-data\` strictly validates the source
 against the strategy's quote contract, writes native
-`cfd\oanda\tick\xauusd` partitions into a research data folder outside Git, and
-verifies the quotes the unchanged LEAN engine actually delivers with a separate
-replay probe. See [its README](tools/historical-data/README.md). **PR 1 of the
-[research implementation plan](SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md) is
+`cfd\<market>\tick\xauusd` partitions into a research data folder outside Git,
+and verifies the quotes the unchanged LEAN engine actually delivers with a
+separate replay probe. See [its README](tools/historical-data/README.md).
+**PR 1 of the [research implementation plan](SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md) is
 complete**, and **PR 7** (source-derived session maps and the five-minute
-quote-only trading availability described above) is merged. The full historical dataset has not yet completed qualification or achieved a PR 1 PASS, and the plan's replay-identity
-gate is still unresolved: the runtime session identity/hours currently clip
-legitimate source rows before the strategy (section 8.7 of the implementation
-note), so a full-history PR 1 PASS is blocked. Resolving that identity is the
-next separate prerequisite before full historical strategy research; the next
-implementation phase (**PR 2**, C# research account and bounded analytics)
-starts after the data path has been exercised on real data.
+quote-only trading availability described above) is merged. The replay identity
+for the real Dukascopy/JForex source is resolved: the source is replayed under
+the derived always-open `XAUUSD/dukascopy/Cfd` identity, so LEAN's session
+filter removes no legitimate source quote. The known 2023-03 case now delivers
+every accepted row (4,465,226 delivered, 4,465,226 probe-processed, source
+digest reproduced exactly); under the Oanda fixture identity it previously
+clipped 6,798 rows. The full 90-month sweep is the remaining qualification step;
+**PR 2** (C# research account and bounded analytics) remains the next
+implementation phase after the data path is exercised on the full history.
 
 ## 10. When required data is missing
 

@@ -66,6 +66,8 @@ class ResolvedMarketHours:
     early_closes: dict
     late_opens: dict
     preview_exact: bool
+    always_open: bool
+    merged_calendar_key: str | None
 
     def describe(self) -> dict:
         return {
@@ -75,6 +77,8 @@ class ResolvedMarketHours:
             "entry_source": self.entry_source,
             "data_time_zone": self.data_time_zone,
             "exchange_time_zone": self.exchange_time_zone,
+            "always_open": self.always_open,
+            "merged_calendar_key": self.merged_calendar_key,
             "holidays": sorted(day.isoformat() for day in self.holidays),
             "early_closes": {
                 day.isoformat(): seconds for day, seconds in sorted(self.early_closes.items())
@@ -116,6 +120,59 @@ def _parse_market_hours_date(text: str, field: str) -> date:
         except ValueError:
             continue
     raise MarketHoursDatabaseError(f"market-hours {field} is not a parseable date: {text!r}")
+
+
+def _is_always_open(
+    weekly_segments: dict,
+    holidays: frozenset,
+    early_closes: dict,
+    late_opens: dict,
+) -> bool:
+    """True when the entry excludes no instant: every day open 00:00-24:00 with no calendar.
+
+    This is the resolved-identity property the Dukascopy source replay relies on:
+    LEAN's ``SecurityExchangeHours.IsOpen`` is then true for every tick, so the
+    session filter removes nothing and the source stream itself defines the
+    sessions.
+    """
+    if holidays or early_closes or late_opens:
+        return False
+    for index in range(7):
+        segments = weekly_segments.get(index, ())
+        if len(segments) != 1:
+            return False
+        segment = segments[0]
+        if (
+            segment.start_seconds != 0
+            or segment.end_seconds != 86400
+            or segment.state.strip().lower() != "market"
+        ):
+            return False
+    return True
+
+
+def _parse_holidays(entry: dict) -> frozenset:
+    return frozenset(
+        _parse_market_hours_date(value, "holiday") for value in entry.get("holidays", []) or []
+    )
+
+
+def _parse_early_closes(entry: dict) -> dict:
+    return {
+        _parse_market_hours_date(key, "earlyCloses"): parse_market_hours_timespan(
+            value, "earlyCloses"
+        )
+        for key, value in (entry.get("earlyCloses") or {}).items()
+    }
+
+
+def _parse_late_opens(entry: dict) -> dict:
+    return {
+        _parse_market_hours_date(key, "lateOpens"): parse_market_hours_timespan(
+            value, "lateOpens"
+        )
+        for key, value in (entry.get("lateOpens") or {}).items()
+    }
 
 
 def load_market_hours(
@@ -190,17 +247,40 @@ def load_market_hours(
             )
         weekly_segments[index] = tuple(segments)
 
-    holidays = frozenset(
-        _parse_market_hours_date(value, "holiday") for value in entry.get("holidays", []) or []
-    )
-    early_closes = {
-        _parse_market_hours_date(key, "earlyCloses"): parse_market_hours_timespan(value, "earlyCloses")
-        for key, value in (entry.get("earlyCloses") or {}).items()
-    }
-    late_opens = {
-        _parse_market_hours_date(key, "lateOpens"): parse_market_hours_timespan(value, "lateOpens")
-        for key, value in (entry.get("lateOpens") or {}).items()
-    }
+    holidays = _parse_holidays(entry)
+    early_closes = _parse_early_closes(entry)
+    late_opens = _parse_late_opens(entry)
+    merged_calendar_key = None
+
+    # LEAN merges the market wildcard's holidays and early closes/late opens
+    # into an exact entry only when the wildcard was already resolved when the
+    # exact entry is processed (MarketHoursDatabaseJsonConverter.Convert:
+    # TryGetValue on the common key). SecurityDatabaseKey maps a null/empty
+    # symbol to '[*]', so the converter's sort key is constant and entries keep
+    # their JSON file order; the merge therefore applies only when the wildcard
+    # entry precedes the exact entry in the file (verified against the engine
+    # binary). The exact entry's weekly segments are never merged.
+    if entry_source == "exact" and wildcard_match is not None:
+        ordered_keys = list(entries)
+        merge_order = (
+            wildcard_match in ordered_keys
+            and exact_match in ordered_keys
+            and ordered_keys.index(wildcard_match) < ordered_keys.index(exact_match)
+        )
+        if merge_order:
+            wildcard_entry = entries[wildcard_match]
+            wildcard_holidays = _parse_holidays(wildcard_entry)
+            wildcard_early = _parse_early_closes(wildcard_entry)
+            wildcard_late = _parse_late_opens(wildcard_entry)
+            if wildcard_holidays or wildcard_early or wildcard_late:
+                merged_calendar_key = wildcard_match
+                holidays = holidays | wildcard_holidays
+                merged_early = dict(wildcard_early)
+                merged_early.update(early_closes)
+                early_closes = merged_early
+                merged_late = dict(wildcard_late)
+                merged_late.update(late_opens)
+                late_opens = merged_late
 
     resolved = ResolvedMarketHours(
         database_path=str(database_path),
@@ -214,6 +294,8 @@ def load_market_hours(
         early_closes=early_closes,
         late_opens=late_opens,
         preview_exact=not early_closes and not late_opens,
+        always_open=_is_always_open(weekly_segments, holidays, early_closes, late_opens),
+        merged_calendar_key=merged_calendar_key,
     )
     return resolved, entry
 
