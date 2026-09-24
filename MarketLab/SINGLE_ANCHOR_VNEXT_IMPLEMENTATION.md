@@ -671,7 +671,7 @@ fixture and proves the host path (map loading, quote-clock conversion, feed wiri
 as a unit: `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1` (12 checks,
 exit 0). On its five-quote fixture the identical delivered count (5) yields one BUY without the
 map and no position with it (4 quote-only, 1 eligible), and the results carry the configured map
-value and the source row count. The strategy unit tests are 174 (see section 7 plus the new
+value and the source row count. The strategy unit tests are 175 (see section 7 plus the new
 availability, coverage-end, provenance, junction-consistency, grid/reversal-buffer and
 out-of-coverage failure tests, and the generator symbol/quote-contract tests).
 
