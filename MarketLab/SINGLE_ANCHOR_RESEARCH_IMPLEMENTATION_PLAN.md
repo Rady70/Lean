@@ -9,7 +9,7 @@ historical replay (source-derived sessions, the five-minute quote-only buffers
 at session ends, and delivered-versus-eligible accounting; see
 SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 8) and is merged with this note.
 PR 7 changes no strategy formula and no PR 1 qualification semantics. The
-user's real historical dataset has not been qualified yet, and the PR 1
+full historical dataset has not yet completed qualification or achieved a PR 1 PASS, and the PR 1
 replay-identity gate (section 3.6) remains unresolved: the runtime session
 identity/hours currently clip legitimate source rows before the strategy (the
 2023-03 exercise measured 6,798 accepted rows not delivered), so a full-history
