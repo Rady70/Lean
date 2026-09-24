@@ -384,7 +384,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (189 tests)
+# Python offline tool (198 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -442,19 +442,31 @@ material only; nothing here is a runtime dependency on them.
   probe and LEAN assemblies it launches (`runtime_binaries` in the record), and
   the probe adds an in-process `runtime.assemblies` list as supplemental
   evidence (byte-loaded assemblies may not expose a file `Location`).
-- The full historical dataset has **not yet completed a full 90-month
-  qualification**. The replay-identity blocker is resolved: the 2023-03
-  real-data month (4,465,226 accepted rows) now replays under the derived
-  always-open XAUUSD/dukascopy/Cfd identity with delivered = accepted =
-  probe-processed = 4,465,226, zero session drops and the source semantic
-  digest reproduced exactly
-  (`sha256:d221240d8e33070eb0a49a3c5b6764278be37c196930c11ce9695e6666e12be4`);
-  the Oanda fixture identity previously clipped 6,798 of those rows. The
-  always-open identity records the days LEAN requests that carry no source rows
-  as `source_absent_days` evidence; the count/digest equality and
-  partition/hash checks are unchanged. The remaining work is the full-history
-  sweep over the 90 monthly source files (the CLI qualifies one source file per
-  run; see `SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md` section 5). Only
-  after the data path is exercised on the full history does the plan continue
-  with **PR 2** (C# research account view and bounded analytics), which remains
-  the next implementation phase.
+- The full historical dataset completed a **90-month qualification sweep**
+  (2019-01..2026-06, 90 source files, 22.35 GiB) on 2026-09-24: **90/90 months
+  PASS, 0 failures**, with accepted = converted = LEAN-delivered =
+  probe-processed = **413,750,130** rows, 0 rejected rows, 0 session drops,
+  every per-partition count and semantic digest equal and every per-month
+  source/delivered digest equal. The source file-set SHA-256 is
+  `8ce98dd27c2df3166a0dc3ec30c6be4756887f323934a6a0ca1c348592c6f1fd`; the
+  aggregate chain over the 90 ordered per-month digests (an aggregate, not a
+  single-run PR-1 digest) is
+  `9d29c36bcd5ada21cdbf6f8e8a7ea3601efd5bab65e2acf7b4c3ee0f8b41f769`. All
+  months resolved the identical derived identity (market-hours SHA-256
+  `325a7abc8214216c9107d45bb4e0a7fd291d2a5d771d3ebed6828d02da72518e`,
+  symbol-properties SHA-256 `7d52262f53fbec169b6e03c7acb220a73ea4ff95f48c198e4977e2280407d5ed`,
+  converter source aggregate `1642c5c2ab7cd0422290859ad685138fedfb2c7ece9ea0d98f46d40bd40957bf`,
+  converted from clean HEAD `ab7754af8c7175fe7f9837cf17541956a094927b`). First
+  delivered timestamp `2019-01-01T23:00:07.151Z`, last
+  `2026-06-30T23:59:59.678Z`. The always-open identity recorded 376
+  source-absent days (weekends and source holidays LEAN requested with no
+  accepted rows) as evidence; no coverage gap and no missing accepted
+  partition. Exactly one unrelated failed request per month
+  (`cfd/dukascopy/hour/xauusd.zip`, the benchmark hour file). The sweep ran
+  the CLI once per monthly source file (the tooling takes one source file per
+  run) in 6.83 h of driver wall time; the per-month records and the aggregate
+  `full-history-summary.json` stay outside Git under
+  `D:\quant_research_workspace\work\lean\pr1-xauusd-full-history-dukascopy\`.
+  Only after the data path is exercised on the full history does the plan
+  continue with **PR 2** (C# research account view and bounded analytics),
+  which remains the next implementation phase.

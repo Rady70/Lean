@@ -15,12 +15,13 @@ runtime identity, so LEAN's session filter removes no legitimate source quote.
 The known 2023-03 case now delivers every accepted row: 4,465,226 accepted =
 converted = delivered = probe-processed, source and delivered semantic digests
 equal, zero session drops (the Oanda fixture identity previously clipped 6,798
-rows). The full historical dataset has not yet completed the 90-month sweep
-(section 5); the tooling qualifies one source file per run, and the full-history
-result is recorded in
-`tools/historical-data/README.md` when run. PR 2 remains the next
-implementation phase after the data path has been exercised on the full
-history.
+rows). The full historical dataset completed the 90-month qualification sweep
+(2019-01..2026-06) on 2026-09-24: 90/90 months PASS, accepted = converted =
+delivered = probe-processed = 413,750,130 rows, 0 rejected rows, 0 session
+drops, every per-partition count/digest and per-month ordered digest equal. The
+tooling qualifies one source file per run; the per-month records and the
+aggregate summary stay outside Git, and the result is recorded in
+`tools/historical-data/README.md`. PR 2 is the next implementation phase.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy

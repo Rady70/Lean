@@ -507,12 +507,15 @@ complete**, and **PR 7** (source-derived session maps and the five-minute
 quote-only trading availability described above) is merged. The replay identity
 for the real Dukascopy/JForex source is resolved: the source is replayed under
 the derived always-open `XAUUSD/dukascopy/Cfd` identity, so LEAN's session
-filter removes no legitimate source quote. The known 2023-03 case now delivers
+filter removes no legitimate source quote. The known 2023-03 case delivers
 every accepted row (4,465,226 delivered, 4,465,226 probe-processed, source
 digest reproduced exactly); under the Oanda fixture identity it previously
-clipped 6,798 rows. The full 90-month sweep is the remaining qualification step;
+clipped 6,798 rows. The full 90-month sweep (2019-01..2026-06) completed with
+90/90 PASS: accepted = converted = delivered = probe-processed =
+413,750,130 rows, 0 rejected rows, 0 session drops, every count and ordered
+semantic digest equal; the evidence stays outside Git (see the tools README).
 **PR 2** (C# research account and bounded analytics) remains the next
-implementation phase after the data path is exercised on the full history.
+implementation phase.
 
 ## 10. When required data is missing
 

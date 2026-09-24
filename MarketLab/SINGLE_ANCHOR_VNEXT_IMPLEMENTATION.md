@@ -335,9 +335,9 @@ culture; `true`/`false` for booleans.
   resolved: the real source replays under the derived always-open
   `XAUUSD/dukascopy/Cfd` identity, which removes no legitimate quote, and the
   2023-03 case delivers every accepted row (4,465,226 = 4,465,226 = 4,465,226;
-  digests equal; zero session drops). The full 90-month sweep is the remaining
-  qualification step (one source file per tooling run), and PR 2 remains the
-  next implementation phase after that data-path exercise.
+  digests equal; zero session drops). The full 90-month sweep also completed
+  with 90/90 PASS and 413,750,130 rows equal at every stage (section 8.7), and
+  PR 2 remains the next implementation phase.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants
   (a partial tail fill must not be able to break the hard-BE requirement; a
@@ -712,7 +712,15 @@ evidence (not failures). A failed request for a day that carries accepted rows r
 `NativePartitionMissing`. The Oanda fixture identity is unchanged and the committed end-to-end
 test still proves that a session-clipped replay fails under it.
 
-What remains: the full 90-month sweep over the January 2019-June 2026 source (the tooling
-qualifies one source file per run; see `SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md` section
-5). The replay-identity blocker recorded here is resolved; the tools README carries the exact
-commands and evidence format.
+The full 90-month sweep (2019-01..2026-06) completed on 2026-09-24 with 90/90
+PASS: accepted = converted = delivered = probe-processed = 413,750,130 rows,
+0 rejected rows, 0 session drops, every per-partition count/digest and every
+per-month ordered digest equal, under the single derived identity
+(market-hours SHA-256
+`325a7abc8214216c9107d45bb4e0a7fd291d2a5d771d3ebed6828d02da72518e`). The
+per-month records and the aggregate `full-history-summary.json` stay outside
+Git under
+`D:\quant_research_workspace\work\lean\pr1-xauusd-full-history-dukascopy\`; the
+tools README carries the details. The replay-identity blocker recorded here is
+resolved; the next project step is the plan's first frozen full-history
+strategy baseline after PR 2 (C# research account and bounded analytics).
