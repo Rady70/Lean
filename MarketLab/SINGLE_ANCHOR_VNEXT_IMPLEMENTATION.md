@@ -1005,8 +1005,8 @@ the parity comparison in section 9.7 is produced.
 - Allocations and per-quote cost (committed probe,
   [tools/research-account-probe](tools/research-account-probe), 3,000,000
   deterministic quotes per run, five repeated phases with the
-  account/no-account order alternated across phases so load, JIT and thermal
-  drift cannot bias one direction): the engine alone took a median 630.2
+  account/no-account order alternated across phases to mitigate directional load, JIT and
+  thermal-drift bias): the engine alone took a median 630.2
   ns/quote and 44.0 MB; the engine with the account a median 699.7 ns/quote and
   49.85 MB. The paired per-phase deltas were 67-77 ns/quote in four phases and
   within noise (-58 ns) in one, after the raw-profit reuse; the same probe
