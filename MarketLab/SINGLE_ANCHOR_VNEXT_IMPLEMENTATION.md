@@ -1032,7 +1032,6 @@ the parity comparison in section 9.7 is produced.
   repositories is recorded in
   [src/SingleAnchor/PROVENANCE.md](src/SingleAnchor/PROVENANCE.md).
 
-
 ## 10. Approved PR 3 account contract (design freeze; not yet implemented)
 
 The PR 3 research target was frozen on 2026-09-26 before implementation. It is
@@ -1089,7 +1088,13 @@ add EURUSD history, USD/EUR conversion, a second position/account ledger, or a
 generic multi-broker margin framework.
 
 Evidence used for the research contract: the user-supplied MT5 XAUUSD symbol
-specification (XMGlobal-MT5 8, Ultra Low Standard) plus the XM Global margin/
-stop-out and MetaTrader 5 CFD-leverage/hedging documentation reviewed on
-2026-09-26. The USD denomination is an approved modeling simplification and
-must remain explicit in result interpretation.
+specification (XMGlobal-MT5 8, Ultra Low Standard), XM's published Gold hedging
+and margin guidance, the XM Global Client Agreement, and MetaTrader 5's
+CFD-leverage/hedging margin documentation, reviewed on 2026-09-26:
+
+- https://www.xm.com/help-center/trading-conditions/faq-why-are-rollover-rates-tripled
+- https://www.xm.com/assets/pdf/new/terms/XMGlobal-Client-Agreement-Terms-and-Conditions-of-Business.pdf
+- https://www.metatrader5.com/en/terminal/help/trading_advanced/margin_forex
+
+The USD denomination is an approved modeling simplification and must remain
+explicit in result interpretation.
