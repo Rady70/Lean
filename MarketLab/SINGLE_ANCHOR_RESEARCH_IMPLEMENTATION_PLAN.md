@@ -609,7 +609,8 @@ Freeze these rules for the first PR 3 implementation:
 
 - account, XAUUSD profit and XAUUSD margin currency: USD;
 - hedging position accounting;
-- selected leverage: 1:500;
+- selected leverage: fixed 1:500 for PR 3; do not add dynamic/equity-based
+  leverage tiers in this phase;
 - XAUUSD calculation mode: CFD Leverage;
 - XAUUSD contract size: 100 oz per lot;
 - broker volume limits: minimum 0.01 lot, step 0.01 lot, maximum 50 lots;
@@ -637,7 +638,9 @@ Freeze these rules for the first PR 3 implementation:
 The broker-style rules above are the approved research contract, based on the
 user-supplied MT5 XAUUSD specification and the XM/MetaTrader documentation
 reviewed on 2026-09-26. Keep the implementation narrow to this contract rather
-than building a generic multi-broker or multi-currency margin framework.
+than building a generic multi-broker or multi-currency margin framework. These
+are authoritative research-configuration values; do not change unrelated
+SingleAnchor engine defaults merely to encode this broker profile.
 
 #### 3.17 One account authority
 
@@ -878,7 +881,7 @@ Freeze one complete immutable baseline configuration including at least:
 - fixed TP settings;
 - trailing settings;
 - ProjectedSpread;
-- CommissionPerLot;
+- CommissionPerLot = 0 for the approved XM-style baseline;
 - Slippage;
 - PointValuePerLot = 100 for the USD XAUUSD research account;
 - research account currency = USD (no historical EURUSD conversion stream);
@@ -888,14 +891,13 @@ Freeze one complete immutable baseline configuration including at least:
 - MaximumVolume = 50;
 - margin enabled/disabled;
 - ContractSize = 100;
-- selected Leverage = 500;
+- selected Leverage = fixed 500 for PR 3 (no dynamic/equity-based leverage tiers);
 - hedged-margin rule = zero margin on matched Gold volume, ordinary margin on
   uncovered volume;
 - margin-call threshold = 50%;
 - stop-out threshold = 20%, plus terminal negative-equity handling for a hedged
   account with open positions;
-- BUY/SELL swap = 0 for the Islamic baseline;
-- CommissionPerLot = 0 for the approved XM-style baseline.
+- BUY/SELL swap = 0 for the Islamic baseline.
 
 Do not promote fixture-only values to research defaults. In particular, the
 representative fixture's projected spread and its example step percent/base lot
