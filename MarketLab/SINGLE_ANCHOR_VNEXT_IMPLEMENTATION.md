@@ -1046,7 +1046,7 @@ The approved starting contract is:
 ~~~text
 account / profit / margin currency    USD
 position accounting                   hedging
-selected leverage                     1:500
+selected leverage                     fixed 1:500
 XAUUSD calculation                    CFD Leverage
 contract size                         100 oz / lot
 volume min / step / max               0.01 / 0.01 / 50 lots
@@ -1082,9 +1082,11 @@ post-stop-out ticket liquidation; stop-out already means the intact
 SingleAnchor path failed the survival test.
 
 `InitialBalance` remains configurable until the complete baseline is frozen.
-Risk-disabled PR 3 must preserve the current strategy path exactly. The
-implementation must not add EURUSD history, USD/EUR conversion, a second
-position/account ledger, or a generic multi-broker margin framework.
+The approved PR 3 model keeps the selected 1:500 leverage fixed and does not
+attempt to reconstruct dynamic/equity-based leverage tiers. Risk-disabled PR 3
+must preserve the current strategy path exactly. The implementation must not
+add EURUSD history, USD/EUR conversion, a second position/account ledger, or a
+generic multi-broker margin framework.
 
 Evidence used for the research contract: the user-supplied MT5 XAUUSD symbol
 specification (XMGlobal-MT5 8, Ultra Low Standard) plus the XM Global margin/
