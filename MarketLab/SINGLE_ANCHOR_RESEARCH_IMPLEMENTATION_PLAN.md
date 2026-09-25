@@ -21,7 +21,24 @@ delivered = probe-processed = 413,750,130 rows, 0 rejected rows, 0 session
 drops, every per-partition count/digest and per-month ordered digest equal. The
 tooling qualifies one source file per run; the per-month records and the
 aggregate summary stay outside Git, and the result is recorded in
-`tools/historical-data/README.md`. PR 2 is the next implementation phase.
+`tools/historical-data/README.md`.
+
+Implementation note (PR 2 record): PR 2 (C# research account view and bounded
+analytics) is implemented and merged (GitHub PR #9), following this plan's
+section 3.10-3.15: a read-only `IResearchObserver` observation contract on
+`SingleAnchorEngine`, a derived `SingleAnchorResearchAccount` (balance,
+executable floating P/L, equity, run-level extrema, one compact research record
+per closed basket and a compact research snapshot for a basket still open at
+end of data or at a run-ending strategy fault) and the
+`researchAccount`/`researchBaskets`/`researchOpenBasket` results blocks,
+with the observation timing (exit tick before the close, post-entry tick, close
+tick, end-of-data mark), bounded retention, the enabled/disabled strategy-path
+parity evidence and the before/after benchmark recorded in
+SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 9. `Basket`/`BasketLeg` remain the
+position truth and the engine's realized result remains the only realized-P/L
+authority. PR 2 changes no strategy formula and no PR 1 or PR 7 semantics.
+PR 3, parameter research, the composed full-history data folder and the frozen
+full-history baseline remain unimplemented.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
@@ -396,7 +413,7 @@ PR 1 is complete when:
 10. tests pass on Windows/local;
 11. no hosted CI or upstream LEAN modification is introduced.
 
-PR 1 is implemented and merged (see the implementation note at the top); PR 2 is the next implementation phase.
+PR 1 is implemented and merged (see the implementation note at the top); PR 2 is implemented and merged (see the PR 2 implementation note at the top); PR 3 is the next implementation phase.
 
 ### PR 2 -- C# research account view and bounded analytics
 

@@ -43,11 +43,14 @@ namespace MarketLab.SingleAnchor.Tests
     {
         public static readonly DateTime T0 = new DateTime(2024, 1, 2, 10, 0, 0);
 
-        public Harness(SingleAnchorParameters? parameters = null, HistoricalTradingAvailability? tradingAvailability = null)
+        public Harness(SingleAnchorParameters? parameters = null, HistoricalTradingAvailability? tradingAvailability = null, decimal? researchInitialBalance = null)
         {
             Parameters = parameters ?? Defaults();
             Executor = new SyntheticExecutor(Parameters);
-            Engine = new SingleAnchorEngine(Parameters, Executor, tradingAvailability);
+            ResearchAccount = researchInitialBalance.HasValue
+                ? new SingleAnchorResearchAccount(Parameters, researchInitialBalance.Value)
+                : null;
+            Engine = new SingleAnchorEngine(Parameters, Executor, tradingAvailability, ResearchAccount);
             Engine.AnchorCreated += e => AnchorsCreated.Add(e);
             Engine.FirstEntrySkipped += e => SkippedFirstEntries.Add(e);
             Engine.EntryOpened += e => EntriesOpened.Add(e);
@@ -61,6 +64,9 @@ namespace MarketLab.SingleAnchor.Tests
         public SingleAnchorParameters Parameters { get; }
         public SyntheticExecutor Executor { get; }
         public SingleAnchorEngine Engine { get; }
+
+        /// <summary>The research account attached to the engine, or null when the harness runs without one.</summary>
+        public SingleAnchorResearchAccount? ResearchAccount { get; }
         public List<AnchorCreatedEvent> AnchorsCreated { get; } = new List<AnchorCreatedEvent>();
         public List<FirstEntrySkippedEvent> SkippedFirstEntries { get; } = new List<FirstEntrySkippedEvent>();
         public List<EntryOpenedEvent> EntriesOpened { get; } = new List<EntryOpenedEvent>();

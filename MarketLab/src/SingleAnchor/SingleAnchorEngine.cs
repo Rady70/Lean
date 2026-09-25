@@ -45,6 +45,7 @@ namespace MarketLab.SingleAnchor
         private readonly SingleAnchorParameters _p;
         private readonly IBasketExecutor _executor;
         private readonly HistoricalTradingAvailability? _availability;
+        private readonly IResearchObserver? _research;
         private readonly List<BasketCloseRecord> _closedBaskets = new List<BasketCloseRecord>();
         private Basket? _basket;
         private int _basketSequence;
@@ -66,14 +67,22 @@ namespace MarketLab.SingleAnchor
         /// validated and counted (<see cref="QuoteOnlyQuotes"/>) but changes no strategy state;
         /// every other quote behaves exactly as without it.
         /// </summary>
+        /// <param name="researchObserver">
+        /// Optional read-only research instrumentation (approved roadmap PR 2). It observes the
+        /// engine's own basket and realized profit at the fixed points documented on
+        /// <see cref="IResearchObserver"/>; it never decides, never mutates the ledger and
+        /// changes no strategy outcome. A run without it is the pre-PR-2 strategy path.
+        /// </param>
         public SingleAnchorEngine(
             SingleAnchorParameters parameters,
             IBasketExecutor executor,
-            HistoricalTradingAvailability? tradingAvailability)
+            HistoricalTradingAvailability? tradingAvailability,
+            IResearchObserver? researchObserver = null)
         {
             _p = parameters ?? throw new ArgumentNullException(nameof(parameters));
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
             _availability = tradingAvailability;
+            _research = researchObserver;
             _p.Validate();
         }
 
@@ -234,8 +243,10 @@ namespace MarketLab.SingleAnchor
                 // The quote is in a source-session buffer: it exists, it was validated and it is
                 // counted, but the strategy may not anchor, exit, enter, trail, reject, close or
                 // change any ledger on it. The next tradable quote is evaluated from its own
-                // values; nothing crossed during the buffer is queued.
+                // values; nothing crossed during the buffer is queued. The research observer still
+                // sees the market mark of the unchanged basket on the delivered quote.
                 QuoteOnlyQuotes++;
+                _research?.ObserveQuote(quote, _basket, RealizedProfit, null);
                 return;
             }
 
@@ -249,6 +260,14 @@ namespace MarketLab.SingleAnchor
             if (basket.OpenPositions > 0)
             {
                 var rawProfit = BasketEconomics.RawProfit(basket, quote, _p);
+
+                // Research observation before any exit can remove the basket (roadmap section
+                // 3.14): the incoming quote's executable valuation of the still-open basket is
+                // not lost, including on the tick that is about to close it. The raw profit the
+                // exit evaluation needs anyway is passed on, so the observer does not recompute
+                // it.
+                _research?.ObserveQuote(quote, basket, RealizedProfit, rawProfit);
+
                 var exitProfit = rawProfit - _p.CommissionBuffer;
                 var stepMoney = BasketEconomics.StepMoney(basket, _p);
                 var (reason, threshold) = EvaluateExits(basket, exitProfit, stepMoney, quote);
@@ -271,6 +290,12 @@ namespace MarketLab.SingleAnchor
                     // replacement basket and no new leg on the same quote.
                     return;
                 }
+            }
+            else
+            {
+                // No open leg: the incoming quote is observed before the entry evaluation, but
+                // there is no raw basket profit to pass.
+                _research?.ObserveQuote(quote, basket, RealizedProfit, null);
             }
 
             EvaluateEntry(basket, quote);
@@ -442,6 +467,14 @@ namespace MarketLab.SingleAnchor
             var leg = new BasketLeg(tradeNumber, side, lots, execution.FillPrice, quote.Time, regime, QuotesProcessed, quote) { Sizing = sizing, RawRequestedLots = rawRequested };
             basket.AddLeg(leg);
 
+            // Research observation immediately after the new leg is in the ledger (roadmap
+            // section 3.14): the post-entry valuation includes the new leg's immediate execution
+            // costs. It is taken before the post-fill verification and before any event, so a
+            // hard-BE invariant fault or a throwing event handler cannot lose it, and the
+            // post-mortem ledger state (which keeps the faulting leg) is observed. The raw profit
+            // of the updated basket is computed for the observer here (entry ticks only).
+            _research?.ObserveQuote(quote, basket, RealizedProfit, BasketEconomics.RawProfit(basket, quote, _p));
+
             if (sizing.HasValue)
             {
                 // The hard-BE requirement is re-verified with the actual fill before the entry is
@@ -527,6 +560,12 @@ namespace MarketLab.SingleAnchor
             _closedBaskets.Add(record);
             RealizedProfit += realized;
             BasketsClosed++;
+
+            // The research account records the realized change and seals the basket's research
+            // record after the close is final and before observers are notified, so a throwing
+            // event handler cannot lose the realized account update.
+            _research?.ObserveClose(record, RealizedProfit);
+
             BasketClosed.Raise(new BasketClosedEvent(basket, record, order.Quote));
         }
 
