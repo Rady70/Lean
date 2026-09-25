@@ -23,6 +23,8 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `config\backtesting.json` | complete LEAN configuration for `--config`; backtesting only |
 | `scripts\build.ps1` | runs the two Batch A build commands verbatim |
 | `scripts\run-backtest.ps1` | pre-flight checks, direct Launcher invocation, post-run data check |
+| `scripts\Get-SingleAnchorStrategyProjection.ps1` | hashes the strategy-facing projection of results files (the research-account parity check) |
+| `scripts\Measure-SingleAnchorResearchOverhead.ps1` | rotated before/after fixture benchmark with the variance-derived acceptance rule for the research account |
 | `tests\Test-MarketLabBacktesting.ps1` | self-contained assertions for the above |
 | `tests\Test-TradingAvailabilityEndToEnd.ps1` | end-to-end check of the SingleAnchor session map through the real LEAN helper on a native tick fixture |
 | `SINGLE_ANCHOR_VNEXT_STRATEGY.md` | the SingleAnchor vNext strategy specification (authoritative behaviour) |
@@ -31,6 +33,7 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
 | `tools\historical-data\` | offline source qualification, exact-decimal native LEAN tick conversion and the actual LEAN replay probe (PR 1); see its [README](tools/historical-data/README.md) and [provenance](tools/historical-data/PROVENANCE.md) |
+| `tools\research-account-probe\` | paired per-quote throughput and allocation probe for the PR 2 research account |
 | `.gitignore` | ignores `output\` (generated runs) |
 
 All scripts run on Windows PowerShell 5.1 and PowerShell 7 and use `exit`
@@ -540,9 +543,14 @@ the engine can feed a read-only `IResearchObserver`, and
 `Equity`, the run-level peak/drawdown/exposure/floating extrema and one compact
 research record per closed basket. It owns no positions; `Basket`/`BasketLeg`
 remain the position truth. `single-anchor-research-account` (default true)
-toggles it, and the results carry `researchAccount` and `researchBaskets`
-(section 9 of the implementation note, including the validation record and the
-removed-repository provenance in `src\SingleAnchor\PROVENANCE.md`). **PR 3**
+toggles it, and the results carry `researchAccount`, `researchBaskets` and
+`researchOpenBasket` (the final unresolved or faulting basket keeps a compact
+research snapshot; section 9 of the implementation note, including the
+validation record and the retired-repository provenance in
+`src\SingleAnchor\PROVENANCE.md`). The parity hash and the acceptance benchmark
+are reproducible with `scripts\Get-SingleAnchorStrategyProjection.ps1` and
+`scripts\Measure-SingleAnchorResearchOverhead.ps1`, and the paired per-quote
+cost with `tools\research-account-probe\`. **PR 3**
 (target-account margin survival) remains unimplemented, and the full-history
 composition, the baseline freeze and the first full-history baseline are still
 later steps.

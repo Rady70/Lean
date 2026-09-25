@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    MarketLab-owned research-account probe: reproduces the PR 2 throughput and allocation
+    evidence outside the LEAN host. It drives the strategy engine directly over a deterministic
+    quote stream, with and without the attached SingleAnchorResearchAccount, and prints the
+    per-quote cost, the managed allocations and the strategy counters so the analytics
+    overhead can be measured without LEAN start-up noise. See
+    MarketLab\SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 9.7 for the exact build and run
+    commands and the recorded measurement. No upstream LEAN file is changed.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MarketLab.ResearchAccountProbe</RootNamespace>
+    <AssemblyName>MarketLab.ResearchAccountProbe</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SingleAnchor\MarketLab.SingleAnchor.csproj" />
+  </ItemGroup>
+</Project>

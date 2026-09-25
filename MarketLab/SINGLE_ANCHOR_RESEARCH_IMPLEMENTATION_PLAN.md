@@ -29,7 +29,9 @@ and proposed as a pull request against `master`, following this plan's section
 3.10-3.15: a read-only `IResearchObserver` observation contract on
 `SingleAnchorEngine`, a derived `SingleAnchorResearchAccount` (balance,
 executable floating P/L, equity, run-level extrema, one compact research record
-per closed basket) and the `researchAccount`/`researchBaskets` results blocks,
+per closed basket and a compact research snapshot for a basket still open at
+end of data or at a run-ending strategy fault) and the
+`researchAccount`/`researchBaskets`/`researchOpenBasket` results blocks,
 with the observation timing (exit tick before the close, post-entry tick, close
 tick, end-of-data mark), bounded retention, the enabled/disabled strategy-path
 parity evidence and the before/after benchmark recorded in
