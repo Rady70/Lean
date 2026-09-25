@@ -533,8 +533,19 @@ The sweep is a decomposed per-file acceptance that produced 90 separate native
 data folders; composing the already-qualified daily partitions into one
 continuous research data folder under the same identity is required after
 PR 2/PR 3 and before the frozen baseline, and is deliberately not implemented
-in PR 1. **PR 2** (C# research account and bounded analytics) remains the next
-implementation phase.
+in PR 1. **PR 2** (C# research account and bounded analytics) is implemented:
+the engine can feed a read-only `IResearchObserver`, and
+`SingleAnchorResearchAccount` (`src\SingleAnchor\ResearchAccount.cs`) derives
+`Balance = InitialBalance + RealizedProfit`, the executable floating P/L,
+`Equity`, the run-level peak/drawdown/exposure/floating extrema and one compact
+research record per closed basket. It owns no positions; `Basket`/`BasketLeg`
+remain the position truth. `single-anchor-research-account` (default true)
+toggles it, and the results carry `researchAccount` and `researchBaskets`
+(section 9 of the implementation note, including the validation record and the
+removed-repository provenance in `src\SingleAnchor\PROVENANCE.md`). **PR 3**
+(target-account margin survival) remains unimplemented, and the full-history
+composition, the baseline freeze and the first full-history baseline are still
+later steps.
 
 ## 10. When required data is missing
 

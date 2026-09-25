@@ -56,6 +56,7 @@ basket, so LEAN's orders, equity, drawdown, fees and margin stay empty and are
 | `src\SingleAnchor\QuoteTickFeed.cs` | hands every LEAN quote tick of a slice to the engine in order; counts unused (non-quote) ticks; lets the engine's failures propagate |
 | `tools\session-map\` | the `MarketLab.SessionMapTool` generator that derives a session map from the immutable Dukascopy/JForex XAUUSD CSV history and counts the quote-only rows (section 8) |
 | `src\SingleAnchor\SingleAnchorVNextAlgorithm.cs`, `ParameterParsing.cs` | the `QCAlgorithm` host: XAUUSD CFD quote ticks, LEAN parameters, event logging, end-of-data mark to market, results file |
+| `src\SingleAnchor\ResearchAccount.cs` | the derived research account and bounded analytics (PR 2): `IResearchObserver`, the observation points the engine calls, and `SingleAnchorResearchAccount` with the run-level account values and one compact research record per closed basket; section 9 |
 | `tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj` | NUnit tests on deterministic synthetic quotes (same NUnit / test SDK versions as upstream's `Tests` project) |
 | `tests\Test-TradingAvailabilityEndToEnd.ps1` | end-to-end check through the real LEAN helper: a synthetic native tick fixture where a quote-only buffer quote is suppressed with the session map and trades without it (section 8.6) |
 
@@ -121,7 +122,8 @@ culture; `true`/`false` for booleans.
 | `single-anchor-projected-spread` | W: the spread assumed at the hard boundary to reconstruct the opposite quote side of the projected simultaneous basket valuation (section 6); it never shifts the boundary itself | none, must be supplied; 0 is allowed |
 | `single-anchor-buy-swap-per-lot-per-day`, `-sell-swap-per-lot-per-day` | financing (sections 7, 9, 17); must both be 0 in a strategy-qualified run | 0, 0 |
 | `single-anchor-symbol`, `-market`, `-security-type` | host instrument; the host is XAUUSD-focused, another ticker is accepted only with its own explicit point value | `XAUUSD`, `oanda`, `Cfd` (`Forex` accepted) |
-| `single-anchor-start-date`, `-end-date`, `-cash` | host run settings (`cash` only satisfies LEAN's setup; the strategy sizes in lots) | `2014-05-02`, `2014-05-14` (the shipped sample), 100000 |
+| `single-anchor-start-date`, `-end-date`, `-cash` | host run settings (`cash` only satisfies LEAN's setup; the strategy sizes in lots). `-cash` is also the research account's `InitialBalance` | `2014-05-02`, `2014-05-14` (the shipped sample), 100000 |
+| `single-anchor-research-account` | PR 2 research account and bounded analytics (section 9); `false` runs the pre-PR-2 strategy path with no derived account state | true |
 
 ## 4. Implementation choices and constraints
 
@@ -336,8 +338,8 @@ culture; `true`/`false` for booleans.
   `XAUUSD/dukascopy/Cfd` identity, which removes no legitimate quote, and the
   2023-03 case delivers every accepted row (4,465,226 = 4,465,226 = 4,465,226;
   digests equal; zero session drops). The full 90-month sweep also completed
-  with 90/90 PASS and 413,750,130 rows equal at every stage (section 8.7), and
-  PR 2 remains the next implementation phase.
+  with 90/90 PASS and 413,750,130 rows equal at every stage (section 8.7).
+  PR 2 is implemented (section 9); PR 3 remains the next implementation phase.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants
   (a partial tail fill must not be able to break the hard-BE requirement; a
@@ -346,9 +348,11 @@ culture; `true`/`false` for booleans.
   single-anchor engine currently rejects non-zero swap configurations instead
   of allowing the hard ceiling to drift after a tail entry.
 - Replay, optimization, UI, charting, live trading, broker connectivity.
-- A full performance report (equity curve, drawdown, per-basket statistics)
-  and the Python/MT5 parity comparison from the strategy's own results; the
-  results file below, with its per-leg trace, rejection parity digest and
+- A full performance report (equity curve, basket-depth distribution, the
+  first full-history baseline tables) and the Python/MT5 parity comparison from
+  the strategy's own results; PR 2 adds the run-level account values and the
+  per-basket research records (section 9) that report will use, and the results
+  file below, with its per-leg trace, rejection parity digest and
   skipped-entry trace, is the input for both.
 - A continuous hard-BE guarantee under a target spread wider than the
   configured one (a specification decision; section 4).
@@ -401,6 +405,12 @@ own results are:
   attempt count and a parity digest over every skipped quote. Quote sequence
   numbers make same-timestamp ticks
   distinguishable; per-row times are in `quoteTimeZone`.
+- With the research account enabled (the default), the results also carry
+  `researchAccount` (the run-level snapshot of section 9.3) and
+  `researchBaskets` (one compact research record per closed basket, section
+  9.4). Both are null when `single-anchor-research-account=false`; the strategy
+  records (`closedBaskets`, `openBasket`, the counters and the realized profit)
+  are identical either way (section 9.7).
 
 ## 7. Validation record (2026-09-21, Windows, .NET SDK 10.0.401)
 
@@ -678,7 +688,7 @@ fixture and proves the host path (map loading, quote-clock conversion, feed wiri
 as a unit: `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1` (12 checks,
 exit 0). On its five-quote fixture the identical delivered count (5) yields one BUY without the
 map and no position with it (4 quote-only, 1 eligible), and the results carry the configured map
-value and the source row count. The strategy unit tests are 175 (see section 7 plus the new
+value and the source row count. The strategy unit tests were 175 at the time of this record (198 after PR 2; section 9.7) (see section 7 plus the new
 availability, coverage-end, provenance, junction-consistency, grid/reversal-buffer and
 out-of-coverage failure tests, and the generator symbol/quote-contract tests).
 
@@ -747,8 +757,191 @@ appropriate, but they are not the authoritative baseline. The in-code
 `Market.Oanda` default and the 2014 sample dates are the shipped fixture only;
 a baseline run that leaves them in place bypasses the qualified identity and is
 not a valid baseline. The replay-identity blocker recorded here is resolved;
-the next project step is the plan's sequence PR 2 (C# research account and
-bounded analytics), PR 3 (target-account margin survival), composing the
-already-qualified daily partitions into one continuous research data folder and
-re-proving its delivery, the baseline configuration freeze, and only then the
-first full-history strategy baseline.
+PR 2 (C# research account and bounded analytics) is implemented in section 9.
+The next project steps are the plan's sequence PR 3 (target-account margin
+survival), composing the already-qualified daily partitions into one continuous
+research data folder and re-proving its delivery, the baseline configuration
+freeze, and only then the first full-history strategy baseline.
+
+## 9. Research account and bounded analytics (PR 2)
+
+The approved roadmap's PR 2 adds the C# research account and bounded analytics
+needed to characterize SingleAnchor historical runs without changing the
+strategy path. `Basket`/`BasketLeg` remain the authoritative position state and
+`SingleAnchorEngine.RealizedProfit` remains the only realized-P/L authority; the
+account is a read-only derived observer of the engine's own state. Nothing
+outside `MarketLab\` is modified. No PR 3 margin/survival functionality, no
+parameter optimization and no full-history data composition is part of this
+phase.
+
+### 9.1 Account definitions
+
+With `InitialBalance` = the host's `single-anchor-cash`:
+
+```text
+Balance    = InitialBalance + SingleAnchorEngine.RealizedProfit
+FloatingPL = current executable basket mark-to-market under the configured
+             execution economics (close-side slippage and the round-trip
+             CommissionPerLot included)
+Equity     = Balance + FloatingPL
+```
+
+The optional `CommissionBuffer` remains an exit-decision threshold only: it is
+never subtracted from the balance, the floating P/L or the equity. With no open
+leg the executable floating P/L is 0, so a flat account's equity is its balance.
+When a needed executable close price is not positive the executable mark is not
+defined at that quote, so that observation is skipped rather than fabricated
+(the same condition under which the end-of-data `openBasket` snapshot reports
+no executable value).
+
+### 9.2 Observation timing
+
+`SingleAnchorEngine` calls the optional `IResearchObserver` at fixed points
+(plan section 3.14); the calls are read-only and change no strategy state:
+
+1. every processed quote (including a quote-only quote inside a source-session
+   buffer) is observed **before** the exit evaluation, so the incoming quote's
+   valuation of a still-open basket - including the tick that is about to close
+   it - is never lost;
+2. after a leg is in the ledger - before the post-fill hard-BE verification
+   and before any event - the same quote is observed again, so the post-entry
+   valuation with its immediate execution costs is captured even on the
+   hard-BE-violated fault path;
+3. after a basket closes and its realized result is final, the account records
+   the realized change and seals the basket's research record; the close-tick
+   balance is therefore observed even when the run ends there;
+4. the host observes the end-of-data mark with the last processed quote before
+   writing the results (the same state the `openBasket` snapshot reports).
+
+No observation mutates the basket, raises a strategy event or reorders the
+engine's exit-before-entry priority.
+
+### 9.3 Run-level analytics
+
+`researchAccount` carries: initial balance; current (at end of run, final)
+balance, equity and executable floating P/L; realized P/L; peak balance;
+maximum balance drawdown; peak equity; maximum equity drawdown; current and
+maximum open positions; current and maximum gross lots; current and maximum
+absolute net lots; the maximum executable floating profit and the maximum
+executable floating loss (the most positive and most adverse signed values
+observed while a leg was open); and the number of closed-basket research
+records. Peak and drawdown update on strict improvement, seeded at the initial
+balance; the floating extrema are initialized by the first open-leg
+observation and update only while a leg is open. A `floatingObservable` flag is
+false when the last observation could not produce an executable mark (a needed
+executable close price was not positive), so the floating P/L and equity are
+not then current; it is true otherwise, including for a flat account.
+
+### 9.4 Per-basket research record
+
+One `researchBaskets` record is kept per closed basket: basket id, anchor time,
+first-entry time, close time, duration from first entry (exact decimal seconds),
+first side, entry count, deepest trade number (the deepest trade number reached
+by a placed leg or a rejected attempt, so a required but infeasible tail is
+visible even when no leg was opened), maximum open positions, maximum gross
+lots, maximum absolute net lots, maximum individual placed lot, maximum
+executable floating profit/loss, close reason, realized executable P/L, hard-BE
+activation and first hard-BE trade number (the first trade number that can run
+in hard-BE mode, `NormalTradeCount + 1`, when the mode activated), the largest
+exact required tail lot (Q_BE), the largest normalized required tail lot and
+the largest placed tail lot; hard-BE rejected attempts and hard-BE rejection
+episodes; and rejection counts grouped by reason and hard-BE outcome, each with
+its episode count and attempt count.
+
+The lot concepts stay separate: `ExactRequiredLot`, `NormalizedRequiredLot`
+and `PlacedLot` are never collapsed, and a repeated rejected attempt and a
+compact rejection episode remain distinct metrics (both derived from the
+engine's existing rejection trace, whose per-attempt parity digest is
+unchanged). Tail-lot maxima include the requirements recorded by hard-BE
+episodes, including a feasible hard-BE sizing whose execution failed: a
+requirement that was never placed is still reported. The hard-BE rejected
+attempt and episode counts cover the hard-BE infeasibility episodes; an
+execution failure is counted by its reason in the rejection counts while still
+contributing its requirement to the maxima. The path extrema (maximum open
+positions, maximum gross lots, maximum absolute net lots, maximum executable
+floating profit/loss) come from the account's observations while the basket
+was open; the remaining fields come from the engine's own `BasketCloseRecord`,
+so no second ledger exists.
+
+### 9.5 Bounded retention and per-quote work
+
+The account keeps fixed-size run scalars, one small active-basket accumulator
+(six values) and one compact record per closed basket; there is no per-quote
+object, no per-tick row, no equity-curve history and no second position
+registry. The per-quote valuation uses the basket's existing aggregates and
+`BasketEconomics` (constant time), never a loop over legs. A repeated rejection
+folds into the existing engine episode; 100,000 repeated attempts stay one row
+and one attempt count (`tests\SingleAnchor\ResearchAccountTests.cs`).
+
+### 9.6 Host configuration
+
+`single-anchor-research-account` (default true) enables the account; `false`
+runs the pre-PR-2 strategy path with both results blocks null, which is how the
+parity comparison in section 9.7 is produced.
+
+### 9.7 Validation record (2026-09-25, Windows, .NET SDK 10.0.401)
+
+- `dotnet build MarketLab\src\SingleAnchor\MarketLab.SingleAnchor.csproj --configuration Release`:
+  0 errors (upstream project warnings only, as before).
+- `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`:
+  198 passed, 0 failed, 0 skipped (175 before PR 2; the 23 new tests cover the
+  account definitions, observation timing, per-basket record, run aggregates,
+  bounded retention and allocation-free observation, strategy parity with and
+  without a session map, and the edge cases below).
+- `pwsh -File MarketLab\tests\Test-MarketLabBacktesting.ps1` (fast mode):
+  150 passed, 0 failed.
+- `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1`:
+  12 passed, 0 failed.
+- Fixture run (same command as section 7, account enabled): 1,688,736 quote
+  ticks, 21 legs, 11 baskets closed by trailing/escape, 0 rejections, realized
+  17.752. `researchAccount`: balance 100017.752, equity 99974.585 (floating
+  -43.167, `floatingObservable` true), peak balance 100017.752, max balance
+  drawdown 0, peak equity 100018.636, max equity drawdown 65.272, max 7 open
+  positions / 0.17 gross / 0.02 |net| lots, max executable floating loss
+  -64.388, max executable floating profit 7.832, 11 closed-basket records.
+  These are derived values, not strategy results.
+- Strategy parity, unit level: one deterministic 3,000-quote stream through two
+  engines (account enabled vs disabled) produces identical quote counters,
+  anchors, leg records, rejection records (including attempts, normalized
+  requirements and parity digests), close records, realized strategy P/L and
+  end-of-data basket state (a serialized projection compares equal). The stream
+  exercises entries, closes, rejected attempts and the ambiguous first-entry
+  skip; a second run of the same stream with a source-derived session map
+  exercises quote-only quotes and again produces identical projections.
+- Strategy parity, real fixture: the strategy projection (quote counts, skipped
+  first-entry quotes, legs, rejected entries and attempts, baskets closed,
+  realized profit, `closedBaskets`, `openBasket`, `lastProcessedQuote`,
+  parameters; compact canonical JSON, SHA-256) hashes to
+  `32baa915d7e444a4b4dc13358bb608dc9ec2c52f77c804043e03e19b59e3c89e` for all
+  three of: the pre-change build (worktree at the PR #8 merge commit
+  `2ee8a3260`), the new build with `single-anchor-research-account=false`, and
+  the new build with the account enabled. Enabling the account changed no
+  strategy path dimension; the results JSON gains the two research blocks.
+- Benchmark (shipped 2014 XAUUSD fixture, Release, helper wall clock, one
+  warm-up per configuration and 5 measured runs per configuration in a rotated
+  round-robin order, measured in one session while the host also ran unrelated
+  interactive applications, which raised the absolute times against section 7's
+  record but affected every configuration alike): pre-change median 21.885 s
+  (min 20.926, max 22.468), 77,164 ticks/s; new build, account disabled, median
+  21.466 s (20.075, 21.689), 78,670 ticks/s; new build, account enabled, median
+  22.153 s (21.790, 23.569), 76,231 ticks/s. The within-configuration
+  half-spread was about +-3.5% to +-4.0%; the enabled median is +1.2% against
+  the pre-change median and +3.2% against the disabled build, inside the
+  measured run-to-run band, and the difference is the attributable cost of the
+  required per-quote executable marking. No numerical acceptance threshold was
+  invented before the measurement; no unexplained slowdown remains.
+- Allocations: the steady-state observation path allocates 0 managed bytes per
+  observation, including the skipped-observation branch (1,000,000 observations
+  after a 1,000,000-observation warm-up, on a dedicated thread). On a
+  trigger-heavy synthetic stream (3,000,000 quotes per run, 12,264 closed
+  baskets, 24,529 entries, 2,039,273 rejected attempts, five repeated phases)
+  the engine alone allocated 43,990,464-43,999,824 bytes and the engine with
+  the account 49,551,344-49,557,328 bytes: a stable +5.55-5.56 MB, i.e. about
+  453 bytes per closed basket, not per quote, with identical strategy counters
+  in every phase. Absolute ns/quote on that stream varied with host load across
+  sessions and within the five phases, so it is not a stable metric; the stable
+  attributable evidence is the allocation and the closed-basket count.
+- Provenance of the account/analytics semantics adapted from the retired
+  repositories is recorded in
+  [src/SingleAnchor/PROVENANCE.md](src/SingleAnchor/PROVENANCE.md).
+
