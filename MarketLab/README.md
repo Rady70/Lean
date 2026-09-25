@@ -554,7 +554,7 @@ are reproducible with `scripts\Get-SingleAnchorStrategyProjection.ps1` and
 cost with `tools\research-account-probe\`. **PR 3**
 (target-account margin survival) remains unimplemented, but its research
 account contract is now frozen: USD-denominated XM Global Ultra Low
-Standard-style XAUUSD, hedging, selected leverage 1:500, 100 oz/lot,
+Standard-style XAUUSD, hedging, fixed selected leverage 1:500, 100 oz/lot,
 0.01/0.01/50 lot min/step/max, zero margin on matched Gold volume, 50% Margin
 Call, 20% terminal stop-out, and zero swap/commission for the Islamic baseline.
 The user's live account is EUR-denominated; historical EURUSD conversion is
