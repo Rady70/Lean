@@ -34,7 +34,12 @@ namespace MarketLab.SingleAnchor
     /// next to the delivered <c>quoteTicksProcessed</c> and the <c>strategyEligibleQuotes</c>.
     /// This gate removes no delivered quote; quotes LEAN itself filtered out before the strategy
     /// (session identity/hours) are a separate data-path concern. Without the parameter, every
-    /// delivered quote is strategy-eligible, the pre-existing behaviour. A strategy invariant
+    /// delivered quote is strategy-eligible, the pre-existing behaviour. The optional research
+    /// account (<c>single-anchor-research-account</c>, default true) is a derived, read-only view
+    /// of the engine's own basket and realized profit (balance, executable floating P/L, equity,
+    /// run-level extrema, one compact record per closed basket); it owns no positions and changes
+    /// no strategy decision, and the results carry it as <c>researchAccount</c> and
+    /// <c>researchBaskets</c> (implementation note section 9). A strategy invariant
     /// failure (<see cref="StrategyInvariantException"/>), a data-quality failure
     /// (<see cref="DataQualityException"/>) or a session-map coverage mismatch
     /// (<see cref="SessionMapException"/>) writes the results with the failure recorded and then
@@ -87,9 +92,13 @@ namespace MarketLab.SingleAnchor
         [Parameter("single-anchor-buy-swap-per-lot-per-day")] private decimal _buySwapPerLotPerDay = 0m;
         [Parameter("single-anchor-sell-swap-per-lot-per-day")] private decimal _sellSwapPerLotPerDay = 0m;
 
+        // ---- Research account / bounded analytics (approved roadmap PR 2) ----
+        [Parameter("single-anchor-research-account")] private bool _researchAccountEnabled = true;
+
         private Symbol _symbol = null!;
         private SingleAnchorEngine _engine = null!;
         private SingleAnchorParameters _parameters = null!;
+        private SingleAnchorResearchAccount? _researchAccount;
         private SessionMapRunInfo? _sessionMapInfo;
         private readonly QuoteTickFeed _feed = new QuoteTickFeed();
 
@@ -164,8 +173,13 @@ namespace MarketLab.SingleAnchor
             }
 
             var availability = ResolveTradingAvailability(security);
-            _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters), availability);
+            _researchAccount = _researchAccountEnabled ? new SingleAnchorResearchAccount(_parameters, _cash) : null;
+            _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters), availability, _researchAccount);
             WireEvents();
+
+            Log(_researchAccount != null
+                ? $"SingleAnchor research account enabled: initial balance {F(_cash)}; derived Balance/FloatingPL/Equity and the run/basket analytics are written in the results (the strategy path is unchanged)."
+                : "SingleAnchor research account disabled (single-anchor-research-account=false): the run is the pre-PR-2 strategy path with no derived account state.");
 
             var verification = _engine.HardBreakevenStatus;
             Log($"SingleAnchor hard-BE verification: strategyDefinitionResolved={verification.StrategyDefinitionResolved}; hardBEVerifiedUnderConfiguredExecutionModel={verification.HardBEVerifiedUnderConfiguredExecutionModel}; scope: {verification.Scope} Assumptions: {string.Join("; ", verification.Assumptions)}. Not covered: {string.Join("; ", verification.NotCovered)}.");
@@ -310,6 +324,18 @@ namespace MarketLab.SingleAnchor
                 }
             }
 
+            if (_researchAccount != null)
+            {
+                if (_engine.LastProcessedQuote.HasValue)
+                {
+                    // The end-of-data mark is observed with the same engine state the openBasket
+                    // snapshot reports, so the final equity and the run extrema include it.
+                    _researchAccount.ObserveEndOfRun(_engine.LastProcessedQuote.Value, _engine.Basket, _engine.RealizedProfit);
+                }
+                var a = _researchAccount.Summary;
+                Log($"SingleAnchor research account: balance {F(a.Balance)}, equity {F(a.Equity)} (floating {F(a.FloatingProfit)}, realized {F(a.RealizedProfit)}), peak balance {F(a.PeakBalance)}, max balance drawdown {F(a.MaxBalanceDrawdown)}, peak equity {F(a.PeakEquity)}, max equity drawdown {F(a.MaxEquityDrawdown)}; exposure max {a.MaxOpenPositions} positions / {F(a.MaxGrossLots)} gross / {F(a.MaxAbsoluteNetLots)} |net| lots (final {a.CurrentOpenPositions} / {F(a.CurrentGrossLots)} / {F(a.CurrentAbsoluteNetLots)}); max executable floating loss {FNullable(a.MaxExecutableFloatingLoss)}, max executable floating profit {FNullable(a.MaxExecutableFloatingProfit)}; {a.ClosedBasketsObserved} closed-basket research record(s).");
+            }
+
             WriteResults(null);
         }
 
@@ -345,6 +371,8 @@ namespace MarketLab.SingleAnchor
                 ["rejectedEntryAttempts"] = _engine.RejectedEntryAttempts,
                 ["basketsClosed"] = _engine.BasketsClosed,
                 ["realizedProfit"] = _engine.RealizedProfit,
+                ["researchAccount"] = _researchAccount?.Summary,
+                ["researchBaskets"] = _researchAccount?.BasketRecords,
                 ["closedBaskets"] = _engine.ClosedBaskets,
                 ["openBasket"] = CurrentBasketSnapshot()
             };
@@ -374,6 +402,11 @@ namespace MarketLab.SingleAnchor
         private static string F(decimal value)
         {
             return value.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static string FNullable(decimal? value)
+        {
+            return value.HasValue ? F(value.Value) : "n/a";
         }
     }
 }

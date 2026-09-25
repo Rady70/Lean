@@ -10,9 +10,9 @@ namespace MarketLab.SingleAnchor.Tests
     /// </summary>
     internal static class TwoLegs
     {
-        public static Harness Build(SingleAnchorParameters? parameters = null)
+        public static Harness Build(SingleAnchorParameters? parameters = null, decimal? researchInitialBalance = null)
         {
-            var h = new Harness(parameters);
+            var h = new Harness(parameters, null, researchInitialBalance);
             h.Anchor();
             h.AtUpper();
             h.AtLower();
