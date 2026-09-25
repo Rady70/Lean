@@ -38,7 +38,14 @@ namespace MarketLab.SingleAnchor
         /// more after a newly filled leg; an implementation must be O(1) and allocate nothing on
         /// the per-quote path.
         /// </summary>
-        void ObserveQuote(in Quote quote, Basket? basket, decimal realizedProfit);
+        /// <param name="rawProfit">
+        /// The engine's raw basket profit at this observation state
+        /// (<see cref="BasketEconomics.RawProfit"/>), when the engine has already computed it for
+        /// this quote and basket state, so the observer does not have to duplicate that work.
+        /// Null when the engine has no such value (no open leg, a quote-only quote, or the
+        /// explicit end-of-run observation); the observer derives what it needs in that case.
+        /// </param>
+        void ObserveQuote(in Quote quote, Basket? basket, decimal realizedProfit, decimal? rawProfit);
 
         /// <summary>
         /// Observes a basket that has just closed, with the engine's realized profit after the
@@ -72,6 +79,8 @@ namespace MarketLab.SingleAnchor
     public sealed class SingleAnchorResearchAccount : IResearchObserver
     {
         private readonly SingleAnchorParameters _parameters;
+        private readonly decimal _slippage;
+        private readonly decimal _costPerLot;
         private readonly List<BasketResearchRecord> _basketRecords = new List<BasketResearchRecord>();
         private ActiveBasket? _active;
         private decimal _observedRealizedProfit;
@@ -107,6 +116,10 @@ namespace MarketLab.SingleAnchor
         public SingleAnchorResearchAccount(SingleAnchorParameters parameters, decimal initialBalance)
         {
             _parameters = parameters ?? throw new ArgumentNullException(nameof(parameters));
+            _slippage = parameters.Slippage;
+            // The executable mark of a raw profit is raw - (slippage * point value + round-trip
+            // commission) * gross lots; the coefficient is constant for the run.
+            _costPerLot = parameters.Slippage * parameters.PointValuePerLot + parameters.CommissionPerLot;
             InitialBalance = initialBalance;
             _balance = initialBalance;
             _peakBalance = initialBalance;
@@ -260,9 +273,18 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <inheritdoc />
+        public void ObserveQuote(in Quote quote, Basket? basket, decimal realizedProfit, decimal? rawProfit)
+        {
+            Observe(quote, basket, realizedProfit, rawProfit);
+        }
+
+        /// <summary>
+        /// Observes one processed quote when the caller has no precomputed raw profit; the
+        /// account derives it. Equivalent to passing a null <c>rawProfit</c>.
+        /// </summary>
         public void ObserveQuote(in Quote quote, Basket? basket, decimal realizedProfit)
         {
-            Observe(quote, basket, realizedProfit);
+            Observe(quote, basket, realizedProfit, null);
         }
 
         /// <summary>
@@ -284,7 +306,7 @@ namespace MarketLab.SingleAnchor
             {
                 return;
             }
-            Observe(quote, basket, realizedProfit);
+            Observe(quote, basket, realizedProfit, null);
         }
 
         /// <inheritdoc />
@@ -298,10 +320,10 @@ namespace MarketLab.SingleAnchor
             // The basket is closed: floating P/L returns to zero and the realized result reaches
             // the balance on this observation, so a realized loss/gain is not lost when no later
             // quote is delivered.
-            Observe(default, null, realizedProfit);
+            Observe(default, null, realizedProfit, null);
         }
 
-        private void Observe(in Quote quote, Basket? basket, decimal realizedProfit)
+        private void Observe(in Quote quote, Basket? basket, decimal realizedProfit, decimal? rawProfit)
         {
             // Remember the exact observation state so ObserveEndOfRun can recognise a repeat
             // (the engine already observes every processed quote).
@@ -360,10 +382,17 @@ namespace MarketLab.SingleAnchor
             var observable = true;
             if (openPositions > 0)
             {
-                var (buyClose, sellClose) = BasketEconomics.ExecutableClosePrices(quote, _parameters);
-                if (BasketEconomics.ArePricesUsable(basket!, buyClose, sellClose, null))
+                // The executable mark is the raw price P/L of the basket at this quote (the engine
+                // already computed it on this quote's path when available) less the configured
+                // per-lot cost of the simultaneous close: slippage converted to account currency
+                // plus the round-trip commission, applied to the gross volume. This is the exact
+                // rearrangement of BasketEconomics.ExecutableProfit at the executable close
+                // prices, and the equivalence is pinned by tests.
+                var raw = rawProfit ?? BasketEconomics.RawProfit(basket!, quote, _parameters);
+                if ((basket!.BuyLots == 0m || quote.Bid - _slippage > 0m)
+                    && (basket.SellLots == 0m || quote.Ask + _slippage > 0m))
                 {
-                    floating = BasketEconomics.ExecutableProfit(basket!, buyClose, sellClose, _parameters);
+                    floating = raw - _costPerLot * _grossLots;
                 }
                 else
                 {

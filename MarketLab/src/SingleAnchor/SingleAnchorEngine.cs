@@ -246,7 +246,7 @@ namespace MarketLab.SingleAnchor
                 // values; nothing crossed during the buffer is queued. The research observer still
                 // sees the market mark of the unchanged basket on the delivered quote.
                 QuoteOnlyQuotes++;
-                _research?.ObserveQuote(quote, _basket, RealizedProfit);
+                _research?.ObserveQuote(quote, _basket, RealizedProfit, null);
                 return;
             }
 
@@ -257,14 +257,17 @@ namespace MarketLab.SingleAnchor
             }
             var basket = _basket;
 
-            // Research observation before any exit can remove the basket (roadmap section 3.14):
-            // the incoming quote's executable valuation of the still-open basket is not lost,
-            // including on the tick that is about to close it.
-            _research?.ObserveQuote(quote, basket, RealizedProfit);
-
             if (basket.OpenPositions > 0)
             {
                 var rawProfit = BasketEconomics.RawProfit(basket, quote, _p);
+
+                // Research observation before any exit can remove the basket (roadmap section
+                // 3.14): the incoming quote's executable valuation of the still-open basket is
+                // not lost, including on the tick that is about to close it. The raw profit the
+                // exit evaluation needs anyway is passed on, so the observer does not recompute
+                // it.
+                _research?.ObserveQuote(quote, basket, RealizedProfit, rawProfit);
+
                 var exitProfit = rawProfit - _p.CommissionBuffer;
                 var stepMoney = BasketEconomics.StepMoney(basket, _p);
                 var (reason, threshold) = EvaluateExits(basket, exitProfit, stepMoney, quote);
@@ -287,6 +290,12 @@ namespace MarketLab.SingleAnchor
                     // replacement basket and no new leg on the same quote.
                     return;
                 }
+            }
+            else
+            {
+                // No open leg: the incoming quote is observed before the entry evaluation, but
+                // there is no raw basket profit to pass.
+                _research?.ObserveQuote(quote, basket, RealizedProfit, null);
             }
 
             EvaluateEntry(basket, quote);
@@ -462,8 +471,9 @@ namespace MarketLab.SingleAnchor
             // section 3.14): the post-entry valuation includes the new leg's immediate execution
             // costs. It is taken before the post-fill verification and before any event, so a
             // hard-BE invariant fault or a throwing event handler cannot lose it, and the
-            // post-mortem ledger state (which keeps the faulting leg) is observed.
-            _research?.ObserveQuote(quote, basket, RealizedProfit);
+            // post-mortem ledger state (which keeps the faulting leg) is observed. The raw profit
+            // of the updated basket is computed for the observer here (entry ticks only).
+            _research?.ObserveQuote(quote, basket, RealizedProfit, BasketEconomics.RawProfit(basket, quote, _p));
 
             if (sizing.HasValue)
             {

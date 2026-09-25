@@ -55,6 +55,40 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void ExecutableMarkEqualsTheEconomicsModelAcrossParameters()
+        {
+            var random = new Random(20240925);
+            for (var i = 0; i < 500; i++)
+            {
+                var p = Harness.Defaults() with
+                {
+                    CommissionPerLot = random.Next(0, 2000) / 10m,
+                    Slippage = random.Next(0, 100) / 100m,
+                    PointValuePerLot = random.Next(1, 1000000) / 10m
+                };
+                var account = new SingleAnchorResearchAccount(p, 1000m);
+                var basket = new Basket(1, new Quote(Harness.T0, 1999.9m, 2000.1m), p);
+                basket.AddLeg(new BasketLeg(1, TradeSide.Buy, 0.01m, 2020m, Harness.T0, SizingRegime.Arithmetic));
+                basket.AddLeg(new BasketLeg(2, TradeSide.Sell, 0.02m + i % 3 * 0.01m, 1980m, Harness.T0, SizingRegime.Arithmetic));
+                var bid = 1900m + random.Next(0, 20000) / 100m;
+                var ask = bid + random.Next(0, 500) / 100m;
+                var quote = new Quote(Harness.T0.AddSeconds(1), bid, ask);
+
+                account.ObserveQuote(quote, basket, 0m, null);
+                var (buyClose, sellClose) = BasketEconomics.ExecutableClosePrices(quote, p);
+                var expected = BasketEconomics.ExecutableProfit(basket, buyClose, sellClose, p);
+                if (BasketEconomics.ArePricesUsable(basket, buyClose, sellClose, null))
+                {
+                    Assert.That(account.FloatingProfit, Is.EqualTo(expected), $"draw {i} with {p}");
+                }
+                else
+                {
+                    Assert.That(account.FloatingObservable, Is.False, $"draw {i} with {p}");
+                }
+            }
+        }
+
+        [Test]
         public void FloatingIncludesCloseSlippageAndRoundTripCommission()
         {
             var p = Harness.Defaults() with { CommissionPerLot = 5m, Slippage = 0.1m };
