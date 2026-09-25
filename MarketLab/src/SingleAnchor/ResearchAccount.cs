@@ -92,6 +92,13 @@ namespace MarketLab.SingleAnchor
         private decimal? _maxExecutableFloatingLoss;
         private bool _floatingObservable = true;
         private long _floatingObservationsSkipped;
+        private bool _hasObservation;
+        private DateTime _lastQuoteTime;
+        private decimal _lastQuoteBid;
+        private decimal _lastQuoteAsk;
+        private int _lastBasketSequence = -1;
+        private int _lastOpenPositions = -1;
+        private decimal _lastRealizedProfit;
 
         /// <summary>
         /// Creates an account for a validated parameter set and the run's initial balance
@@ -224,7 +231,6 @@ namespace MarketLab.SingleAnchor
                 legs,
                 basket.Rejections,
                 active,
-                _parameters.NormalTradeCount,
                 basket.OpenPositions,
                 basket.GrossLots,
                 Math.Abs(basket.NetLots));
@@ -260,13 +266,24 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// Observes the end-of-data mark with the last processed quote. It is the same
-        /// observation as a processed quote; when that quote was already observed with the same
-        /// basket and realized profit it changes no aggregate (maximum/minimum updates are
-        /// strict), so calling the account once more before writing results is safe.
+        /// Observes the end-of-data mark with the last processed quote. It is genuinely
+        /// idempotent: when the quote, the basket state and the realized profit are exactly the
+        /// last observed ones, nothing happens, so the host's final call cannot double-count a
+        /// skipped executable mark (the engine has already observed every processed quote). Any
+        /// other state (a later quote, a new leg or a realized change) is observed normally.
         /// </summary>
         public void ObserveEndOfRun(in Quote quote, Basket? basket, decimal realizedProfit)
         {
+            if (_hasObservation
+                && quote.Time == _lastQuoteTime
+                && quote.Bid == _lastQuoteBid
+                && quote.Ask == _lastQuoteAsk
+                && (basket?.Sequence ?? -1) == _lastBasketSequence
+                && (basket?.OpenPositions ?? -1) == _lastOpenPositions
+                && realizedProfit == _lastRealizedProfit)
+            {
+                return;
+            }
             Observe(quote, basket, realizedProfit);
         }
 
@@ -286,6 +303,16 @@ namespace MarketLab.SingleAnchor
 
         private void Observe(in Quote quote, Basket? basket, decimal realizedProfit)
         {
+            // Remember the exact observation state so ObserveEndOfRun can recognise a repeat
+            // (the engine already observes every processed quote).
+            _hasObservation = true;
+            _lastQuoteTime = quote.Time;
+            _lastQuoteBid = quote.Bid;
+            _lastQuoteAsk = quote.Ask;
+            _lastBasketSequence = basket?.Sequence ?? -1;
+            _lastOpenPositions = basket?.OpenPositions ?? -1;
+            _lastRealizedProfit = realizedProfit;
+
             // Realized profit changes only when a basket closes, so the balance and its drawdown
             // are recomputed only then; every other quote reuses the cached balance.
             if (realizedProfit != _observedRealizedProfit)
@@ -382,7 +409,6 @@ namespace MarketLab.SingleAnchor
                 record.LegTrace,
                 record.RejectionTrace,
                 activeExtrema,
-                _parameters.NormalTradeCount,
                 record.Legs,
                 record.GrossLots,
                 Math.Abs(record.NetLots));
@@ -428,7 +454,6 @@ namespace MarketLab.SingleAnchor
             IReadOnlyList<LegRecord> legs,
             IReadOnlyList<EntryRejectionRecord> rejectionRows,
             ActiveBasket? activeExtrema,
-            int normalTradeCount,
             int fallbackOpenPositions,
             decimal fallbackGrossLots,
             decimal fallbackAbsoluteNetLots)

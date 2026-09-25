@@ -112,6 +112,25 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void EndOfRunObservationIsIdempotentForAnUnobservableFinalMark()
+        {
+            var p = Harness.Defaults() with { Slippage = 2500m };
+            var h = new Harness(p, null, 1000m);
+            h.Anchor();
+            var last = h.AtUpper(); // the post-entry mark is unavailable: bid - slippage is not positive
+            var account = h.ResearchAccount!;
+
+            Assert.That(account.FloatingObservationsSkipped, Is.EqualTo(1), "the engine's own observation counts the skip once");
+
+            account.ObserveEndOfRun(last, h.Engine.Basket, h.Engine.RealizedProfit);
+            Assert.That(account.FloatingObservationsSkipped, Is.EqualTo(1), "the host's end-of-run call must not count it again");
+            Assert.That(account.FloatingObservable, Is.False);
+
+            var active = account.SnapshotActiveBasket(h.Engine.Basket)!;
+            Assert.That(active.FloatingObservationsSkipped, Is.EqualTo(1), "the basket snapshot is not double-counted either");
+        }
+
+        [Test]
         public void PostEntryObservationSurvivesAHardBreakevenViolation()
         {
             var h = new Harness(Harness.NoExits(), null, 1000m);
