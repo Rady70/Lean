@@ -37,8 +37,8 @@ namespace MarketLab.ResearchAccountProbe
             var mismatches = 0;
             for (var phase = 0; phase < Phases; phase++)
             {
-                // Alternate the order so a thermal, JIT or load drift cannot bias the
-                // with/without comparison in one direction.
+                // Alternate the order so thermal, JIT or load drift is less likely to bias
+                // the with/without comparison in one direction.
                 var accountFirst = (phase % 2) == 1;
                 var first = Measure(parameters, withAccount: accountFirst, MeasuredQuotes);
                 var second = Measure(parameters, withAccount: !accountFirst, MeasuredQuotes);

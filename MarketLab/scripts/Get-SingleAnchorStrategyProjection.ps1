@@ -18,7 +18,8 @@ The values are re-serialized as compact canonical JSON in a fixed key order
 the same shell, because hosts may format JSON numbers slightly differently.
 
 When more than one file is given, the script also compares the hashes and exits 1 with an
-error naming the mismatching files, so it can serve as the parity check directly.
+error that prints each differing projection and the result files that belong to it, so the
+mismatching inputs can be identified directly.
 
 .EXAMPLE
 pwsh -File MarketLab\scripts\Get-SingleAnchorStrategyProjection.ps1 `
@@ -65,7 +66,15 @@ foreach ($path in $Results) {
 if ($hashes.Count -gt 1) {
     $distinct = @($hashes | Group-Object Hash)
     if ($distinct.Count -gt 1) {
-        [Console]::Error.WriteLine("ERROR: strategy projections differ: " + (($distinct | ForEach-Object { "$($_.Name) x$($_.Count)" }) -join ', '))
+        [Console]::Error.WriteLine("ERROR: strategy projections differ; each projection below lists the files that produced it:")
+        foreach ($group in $distinct) {
+            $header = "  {0} ({1} file(s)):" -f $group.Name, $group.Count
+            [Console]::Error.WriteLine($header)
+            foreach ($entry in $group.Group) {
+                $file = "    {0}" -f $entry.Path
+                [Console]::Error.WriteLine($file)
+            }
+        }
         exit 1
     }
 }

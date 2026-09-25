@@ -339,7 +339,8 @@ culture; `true`/`false` for booleans.
   2023-03 case delivers every accepted row (4,465,226 = 4,465,226 = 4,465,226;
   digests equal; zero session drops). The full 90-month sweep also completed
   with 90/90 PASS and 413,750,130 rows equal at every stage (section 8.7).
-  PR 2 is implemented (section 9); PR 3 remains the next implementation phase.
+  PR 2 is implemented and merged (section 9); PR 3 remains the next
+  implementation phase.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants
   (a partial tail fill must not be able to break the hard-BE requirement; a
@@ -691,7 +692,7 @@ fixture and proves the host path (map loading, quote-clock conversion, feed wiri
 as a unit: `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1` (12 checks,
 exit 0). On its five-quote fixture the identical delivered count (5) yields one BUY without the
 map and no position with it (4 quote-only, 1 eligible), and the results carry the configured map
-value and the source row count. The strategy unit tests were 175 at the time of this record (198 after PR 2; section 9.7) (see section 7 plus the new
+value and the source row count. The strategy unit tests were 175 at the time of this record (202 after PR 2; section 9.7) (see section 7 plus the new
 availability, coverage-end, provenance, junction-consistency, grid/reversal-buffer and
 out-of-coverage failure tests, and the generator symbol/quote-contract tests).
 
@@ -760,15 +761,16 @@ appropriate, but they are not the authoritative baseline. The in-code
 `Market.Oanda` default and the 2014 sample dates are the shipped fixture only;
 a baseline run that leaves them in place bypasses the qualified identity and is
 not a valid baseline. The replay-identity blocker recorded here is resolved;
-PR 2 (C# research account and bounded analytics) is implemented in section 9.
-The next project steps are the plan's sequence PR 3 (target-account margin
+PR 2 (C# research account and bounded analytics) is implemented and merged
+(section 9). The next project steps are the plan's sequence PR 3 (target-account margin
 survival), composing the already-qualified daily partitions into one continuous
 research data folder and re-proving its delivery, the baseline configuration
 freeze, and only then the first full-history strategy baseline.
 
 ## 9. Research account and bounded analytics (PR 2)
 
-The approved roadmap's PR 2 adds the C# research account and bounded analytics
+Roadmap PR 2 is implemented and merged as GitHub PR #9. The approved roadmap's
+PR 2 adds the C# research account and bounded analytics
 needed to characterize SingleAnchor historical runs without changing the
 strategy path. `Basket`/`BasketLeg` remain the authoritative position state and
 `SingleAnchorEngine.RealizedProfit` remains the only realized-P/L authority; the

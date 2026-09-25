@@ -536,7 +536,8 @@ The sweep is a decomposed per-file acceptance that produced 90 separate native
 data folders; composing the already-qualified daily partitions into one
 continuous research data folder under the same identity is required after
 PR 2/PR 3 and before the frozen baseline, and is deliberately not implemented
-in PR 1. **PR 2** (C# research account and bounded analytics) is implemented:
+in PR 1. **PR 2** (C# research account and bounded analytics) is implemented
+and merged (GitHub PR #9):
 the engine can feed a read-only `IResearchObserver`, and
 `SingleAnchorResearchAccount` (`src\SingleAnchor\ResearchAccount.cs`) derives
 `Balance = InitialBalance + RealizedProfit`, the executable floating P/L,

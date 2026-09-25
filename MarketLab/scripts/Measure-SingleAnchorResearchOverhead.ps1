@@ -28,7 +28,8 @@ than letting a wide bound, or a wide band, certify the result. Exit codes: 0 PAS
 2 INCONCLUSIVE; a run that itself fails aborts the script with an error.
 
 The absolute times depend on the host (start-up, caches, other applications). Compare the
-three configurations within one session; the rotated order removes ordering bias.
+three configurations within one session; rotating the order across rounds mitigates ordering
+bias (it does not eliminate it).
 
 .PARAMETER PreChangeDll
 Path to the MarketLab.SingleAnchor.dll built from the base revision (before the research
@@ -54,7 +55,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if ($Rounds -lt 3) { throw 'Rounds must be at least 3 (the roadmap asks for 3-5 measured runs).' }
+if ($Rounds -lt 3 -or $Rounds -gt 5) { throw 'Rounds must be between 3 and 5 (the roadmap asks for 3-5 measured runs).' }
 foreach ($dll in @($PreChangeDll, $CurrentDll)) {
     if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { throw "algorithm DLL not found: $dll" }
 }
