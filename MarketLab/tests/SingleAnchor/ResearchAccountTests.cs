@@ -128,6 +128,34 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(account.FloatingProfit, Is.EqualTo(expected));
             Assert.That(account.MaxExecutableFloatingLoss, Is.EqualTo(expected));
             Assert.That(account.FloatingObservable, Is.True);
+
+            var active = account.SnapshotActiveBasket(basket);
+            Assert.That(active, Is.Not.Null, "the run-ended basket keeps a compact research snapshot");
+            Assert.That(active!.EntryCount, Is.EqualTo(5));
+            Assert.That(active.MaxExecutableFloatingLoss, Is.EqualTo(expected));
+            Assert.That(active.FloatingObservationsSkipped, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void UnobservableMarkIsCountedEvenAfterARecovery()
+        {
+            var p = Harness.Defaults() with { Slippage = 2500m };
+            var h = new Harness(p, null, 1000m);
+            h.Anchor();
+            h.AtUpper();                          // the post-entry mark is skipped: bid - slippage is not positive
+            var quote = h.Feed(3000m, 3000.2m);   // bid - slippage = 500: observable again
+
+            var account = h.ResearchAccount!;
+            var expected = BasketEconomics.ExecutableProfit(h.Engine.Basket!, quote.Bid - 2500m, quote.Ask + 2500m, p);
+            Assert.That(expected, Is.EqualTo(-4020m), "(500 - 4520) * 0.01 * 100");
+            Assert.That(account.FloatingObservable, Is.True, "the last mark is observable again");
+            Assert.That(account.FloatingObservationsSkipped, Is.EqualTo(1), "the earlier skip stays visible in the run");
+            Assert.That(account.FloatingProfit, Is.EqualTo(expected));
+            Assert.That(account.MaxExecutableFloatingLoss, Is.EqualTo(expected), "the extrema cover the observable marks");
+
+            var active = account.SnapshotActiveBasket(h.Engine.Basket)!;
+            Assert.That(active.FloatingObservationsSkipped, Is.EqualTo(1), "the active basket flags its own incomplete extrema");
+            Assert.That(active.MaxExecutableFloatingLoss, Is.EqualTo(expected));
         }
 
         [Test]
@@ -197,7 +225,9 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.ResearchAccount.MaxExecutableFloatingLoss, Is.Null);
             Assert.That(h.ResearchAccount.FloatingProfit, Is.EqualTo(0m), "no fabricated executable mark");
             Assert.That(h.ResearchAccount.FloatingObservable, Is.False, "the unobservable mark is explicit, not presented as current");
+            Assert.That(h.ResearchAccount.FloatingObservationsSkipped, Is.EqualTo(1), "the skipped mark is counted permanently");
             Assert.That(h.ResearchAccount.Summary.FloatingObservable, Is.False);
+            Assert.That(h.ResearchAccount.Summary.FloatingObservationsSkipped, Is.EqualTo(1));
             Assert.That(h.ResearchAccount.Equity, Is.EqualTo(1000m));
         }
     }
@@ -229,7 +259,8 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(record.DurationFromFirstEntrySeconds, Is.EqualTo(5m));
             Assert.That(record.FirstSide, Is.EqualTo(TradeSide.Buy));
             Assert.That(record.EntryCount, Is.EqualTo(5));
-            Assert.That(record.DeepestTradeNumber, Is.EqualTo(5));
+            Assert.That(record.DeepestTradeNumber, Is.EqualTo(5), "the placed basket depth");
+            Assert.That(record.DeepestAttemptedTradeNumber, Is.EqualTo(5));
             Assert.That(record.MaxOpenPositions, Is.EqualTo(5));
             Assert.That(record.MaxGrossLots, Is.EqualTo(0.16m));
             Assert.That(record.MaxAbsoluteNetLots, Is.EqualTo(0.04m));
@@ -243,8 +274,9 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(record.LargestExactRequiredTailLot, Is.EqualTo(380.32m / 6956m));
             Assert.That(record.LargestNormalizedRequiredTailLot, Is.EqualTo(0.06m));
             Assert.That(record.LargestPlacedTailLot, Is.EqualTo(0.06m));
-            Assert.That(record.HardBreakevenRejectedAttempts, Is.EqualTo(0));
-            Assert.That(record.HardBreakevenRejectionEpisodes, Is.EqualTo(0));
+            Assert.That(record.HardBreakevenInfeasibleAttempts, Is.EqualTo(0));
+            Assert.That(record.HardBreakevenInfeasibleEpisodes, Is.EqualTo(0));
+            Assert.That(record.FloatingObservationsSkipped, Is.EqualTo(0));
             Assert.That(record.Rejections, Is.Empty);
         }
 
@@ -262,11 +294,12 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.BasketsClosed, Has.Count.EqualTo(1));
             var record = h.ResearchAccount!.BasketRecords[0];
             Assert.That(record.EntryCount, Is.EqualTo(4));
-            Assert.That(record.DeepestTradeNumber, Is.EqualTo(5), "the infeasible trade 5 was attempted even though no leg was placed");
+            Assert.That(record.DeepestTradeNumber, Is.EqualTo(4), "the placed basket depth stays 4");
+            Assert.That(record.DeepestAttemptedTradeNumber, Is.EqualTo(5), "the infeasible trade 5 was attempted even though no leg was placed");
             Assert.That(record.HardBreakevenModeActivated, Is.True);
             Assert.That(record.FirstHardBreakevenTradeNumber, Is.EqualTo(5));
-            Assert.That(record.HardBreakevenRejectedAttempts, Is.EqualTo(3), "every attempt is counted");
-            Assert.That(record.HardBreakevenRejectionEpisodes, Is.EqualTo(1), "the repeats fold into one episode");
+            Assert.That(record.HardBreakevenInfeasibleAttempts, Is.EqualTo(3), "every infeasible attempt is counted");
+            Assert.That(record.HardBreakevenInfeasibleEpisodes, Is.EqualTo(1), "the repeats fold into one episode");
             Assert.That(record.LargestExactRequiredTailLot, Is.EqualTo(380.32m / 2936m), "the entry ask 2060.2 makes one lot worth 2936 at the boundary");
             Assert.That(record.LargestNormalizedRequiredTailLot, Is.EqualTo(0.13m));
             Assert.That(record.LargestPlacedTailLot, Is.Null, "no tail leg was ever placed");
@@ -291,15 +324,46 @@ namespace MarketLab.SingleAnchor.Tests
 
             var record = h.ResearchAccount!.BasketRecords[0];
             Assert.That(record.EntryCount, Is.EqualTo(4));
-            Assert.That(record.DeepestTradeNumber, Is.EqualTo(5), "the failed tail attempt is the deepest trade number");
+            Assert.That(record.DeepestTradeNumber, Is.EqualTo(4), "no tail leg was placed");
+            Assert.That(record.DeepestAttemptedTradeNumber, Is.EqualTo(5), "the failed tail attempt is the deepest attempted trade number");
             Assert.That(record.LargestPlacedTailLot, Is.Null, "no tail leg was placed, so the maxima can only come from the rejection row");
             Assert.That(record.Rejections, Has.Count.EqualTo(1));
             Assert.That(record.Rejections[0].Reason, Is.EqualTo(EntryRejectionReason.ExecutionFailed));
             Assert.That(record.Rejections[0].Outcome, Is.EqualTo(HardBreakevenOutcome.Feasible));
-            Assert.That(record.HardBreakevenRejectedAttempts, Is.EqualTo(0), "an execution failure is counted by its reason, not as hard-BE infeasibility");
-            Assert.That(record.HardBreakevenRejectionEpisodes, Is.EqualTo(0));
+            Assert.That(record.HardBreakevenInfeasibleAttempts, Is.EqualTo(0), "an execution failure is counted by its reason, not as hard-BE infeasibility");
+            Assert.That(record.HardBreakevenInfeasibleEpisodes, Is.EqualTo(0));
             Assert.That(record.LargestExactRequiredTailLot, Is.EqualTo(380.32m / 6956m));
             Assert.That(record.LargestNormalizedRequiredTailLot, Is.EqualTo(0.06m));
+        }
+
+        [Test]
+        public void OpenBasketKeepsAnActiveResearchSnapshot()
+        {
+            var h = TwoLegs.Build(Harness.Defaults(), 1000m);
+            var account = h.ResearchAccount!;
+            h.Feed(2000m, 2000.3m); // current executable floating -60.6
+
+            var active = account.SnapshotActiveBasket(h.Engine.Basket);
+            Assert.That(active, Is.Not.Null);
+            Assert.That(active!.Basket, Is.EqualTo(h.Engine.Basket!.Sequence));
+            Assert.That(active.AnchorTime, Is.EqualTo(Harness.T0));
+            Assert.That(active.FirstEntryTime, Is.EqualTo(Harness.T0.AddSeconds(1)));
+            Assert.That(active.FirstSide, Is.EqualTo(TradeSide.Buy));
+            Assert.That(active.EntryCount, Is.EqualTo(2));
+            Assert.That(active.DeepestTradeNumber, Is.EqualTo(2));
+            Assert.That(active.DeepestAttemptedTradeNumber, Is.EqualTo(2));
+            Assert.That(active.MaxOpenPositions, Is.EqualTo(2));
+            Assert.That(active.MaxGrossLots, Is.EqualTo(0.03m));
+            Assert.That(active.MaxAbsoluteNetLots, Is.EqualTo(0.01m));
+            Assert.That(active.MaxIndividualPlacedLot, Is.EqualTo(0.02m));
+            Assert.That(active.MaxExecutableFloatingLoss, Is.EqualTo(-60.6m));
+            Assert.That(active.MaxExecutableFloatingProfit, Is.EqualTo(-0.2m), "the first leg's post-entry mark is the least negative");
+            Assert.That(active.FloatingObservationsSkipped, Is.EqualTo(0));
+            Assert.That(active.HardBreakevenModeActivated, Is.False);
+            Assert.That(active.FirstHardBreakevenTradeNumber, Is.Null);
+            Assert.That(active.Rejections, Is.Empty);
+
+            Assert.That(account.SnapshotActiveBasket(null), Is.Null);
         }
 
         [Test]
@@ -318,8 +382,8 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(record.MaxIndividualPlacedLot, Is.EqualTo(60m));
             Assert.That(record.HardBreakevenModeActivated, Is.False);
             Assert.That(record.FirstHardBreakevenTradeNumber, Is.Null);
-            Assert.That(record.HardBreakevenRejectedAttempts, Is.EqualTo(0));
-            Assert.That(record.HardBreakevenRejectionEpisodes, Is.EqualTo(0));
+            Assert.That(record.HardBreakevenInfeasibleAttempts, Is.EqualTo(0));
+            Assert.That(record.HardBreakevenInfeasibleEpisodes, Is.EqualTo(0));
             Assert.That(record.Rejections, Has.Count.EqualTo(1));
             Assert.That(record.Rejections[0].Reason, Is.EqualTo(EntryRejectionReason.VolumeExceedsMaximum));
             Assert.That(record.Rejections[0].Outcome, Is.Null);
@@ -439,8 +503,8 @@ namespace MarketLab.SingleAnchor.Tests
 
             h.Feed(1898.4m, 1898.6m);
             var record = h.ResearchAccount!.BasketRecords[0];
-            Assert.That(record.HardBreakevenRejectedAttempts, Is.EqualTo(100_000));
-            Assert.That(record.HardBreakevenRejectionEpisodes, Is.EqualTo(1));
+            Assert.That(record.HardBreakevenInfeasibleAttempts, Is.EqualTo(100_000));
+            Assert.That(record.HardBreakevenInfeasibleEpisodes, Is.EqualTo(1));
             Assert.That(record.Rejections, Has.Count.EqualTo(1));
             Assert.That(record.Rejections[0].Attempts, Is.EqualTo(100_000));
         }

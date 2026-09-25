@@ -26,7 +26,9 @@ namespace MarketLab.SingleAnchor
     /// Every processed quote is already observed, so the host's explicit
     /// <see cref="SingleAnchorResearchAccount.ObserveEndOfRun"/> call with the last processed
     /// quote before writing the results is an idempotent final observation that marks the
-    /// account snapshot explicitly at the end-of-data quote.
+    /// account snapshot explicitly at the end-of-data quote. A basket still open at that point
+    /// is not pretended to be closed; its compact path state is exposed separately through
+    /// <see cref="SingleAnchorResearchAccount.SnapshotActiveBasket"/>.
     /// </remarks>
     public interface IResearchObserver
     {
@@ -59,15 +61,21 @@ namespace MarketLab.SingleAnchor
     /// <remarks>
     /// Run-level values are constant-time accumulators; the only retained records are one
     /// compact record per closed basket (its path extrema plus the values derived from the
-    /// engine's existing leg and rejection traces). Nothing is retained per quote, and no
-    /// per-quote object, string or file is created.
+    /// engine's existing leg and rejection traces) and, on demand, a compact snapshot of a
+    /// basket still open. Nothing is retained per quote, and no per-quote object, string or file
+    /// is created. When a needed executable close price is not positive the executable mark is
+    /// not defined at that quote: the observation is skipped, the run and the active basket
+    /// count it (<see cref="FloatingObservationsSkipped"/>), and the floating/equity extrema are
+    /// explicitly not complete for a run or basket with a non-zero count, so a skipped worst
+    /// point can never make the remaining extrema look complete.
     /// </remarks>
     public sealed class SingleAnchorResearchAccount : IResearchObserver
     {
         private readonly SingleAnchorParameters _parameters;
         private readonly List<BasketResearchRecord> _basketRecords = new List<BasketResearchRecord>();
         private ActiveBasket? _active;
-        private decimal _realizedProfit;
+        private decimal _observedRealizedProfit;
+        private decimal _balance;
         private decimal _floatingProfit;
         private decimal _equity;
         private decimal _peakBalance;
@@ -83,6 +91,7 @@ namespace MarketLab.SingleAnchor
         private decimal? _maxExecutableFloatingProfit;
         private decimal? _maxExecutableFloatingLoss;
         private bool _floatingObservable = true;
+        private long _floatingObservationsSkipped;
 
         /// <summary>
         /// Creates an account for a validated parameter set and the run's initial balance
@@ -92,6 +101,7 @@ namespace MarketLab.SingleAnchor
         {
             _parameters = parameters ?? throw new ArgumentNullException(nameof(parameters));
             InitialBalance = initialBalance;
+            _balance = initialBalance;
             _peakBalance = initialBalance;
             _peakEquity = initialBalance;
             _equity = initialBalance;
@@ -101,10 +111,10 @@ namespace MarketLab.SingleAnchor
         public decimal InitialBalance { get; }
 
         /// <summary>The last observed engine realized profit; the account does not accumulate its own.</summary>
-        public decimal RealizedProfit => _realizedProfit;
+        public decimal RealizedProfit => _observedRealizedProfit;
 
         /// <summary>InitialBalance + RealizedProfit, the current (at end of run, final) balance.</summary>
-        public decimal Balance => InitialBalance + _realizedProfit;
+        public decimal Balance => _balance;
 
         /// <summary>
         /// The current executable floating P/L of the basket; 0 when no leg is open. It is not
@@ -120,6 +130,13 @@ namespace MarketLab.SingleAnchor
         /// positive, so the reported floating P/L and equity are not current.
         /// </summary>
         public bool FloatingObservable => _floatingObservable;
+
+        /// <summary>
+        /// Number of observations whose executable mark was skipped over the whole run. A
+        /// non-zero value means the equity and floating extrema may be incomplete: a skipped
+        /// point can be an unseen extreme (the last-observation flag alone cannot show this).
+        /// </summary>
+        public long FloatingObservationsSkipped => _floatingObservationsSkipped;
 
         /// <summary>Balance + FloatingProfit, the current (at end of run, final) equity.</summary>
         public decimal Equity => _equity;
@@ -170,6 +187,7 @@ namespace MarketLab.SingleAnchor
             Equity,
             FloatingProfit,
             FloatingObservable,
+            FloatingObservationsSkipped,
             RealizedProfit,
             PeakBalance,
             MaxBalanceDrawdown,
@@ -184,6 +202,56 @@ namespace MarketLab.SingleAnchor
             _maxExecutableFloatingProfit,
             _maxExecutableFloatingLoss,
             _basketRecords.Count);
+
+        /// <summary>
+        /// The compact research state of a basket that is still open (ordinary end of data or a
+        /// run-ending strategy fault), or null when no basket is open. It never pretends the
+        /// basket closed: there is no close reason or realized profit, only the basket's path
+        /// and sizing/rejection facts, including its own floating extrema and the number of
+        /// skipped executable marks. It is computed from the engine's live basket and the
+        /// account's observations; calling it more than once changes nothing.
+        /// </summary>
+        public ActiveBasketResearch? SnapshotActiveBasket(Basket? basket)
+        {
+            if (basket == null) return null;
+            var legs = new LegRecord[basket.Legs.Count];
+            for (var i = 0; i < legs.Length; i++)
+            {
+                legs[i] = LegRecord.From(basket.Sequence, basket.Legs[i]);
+            }
+            var active = _active != null && _active.Sequence == basket.Sequence ? _active : null;
+            var facts = ComputeFacts(
+                legs,
+                basket.Rejections,
+                active,
+                _parameters.NormalTradeCount,
+                basket.OpenPositions,
+                basket.GrossLots,
+                Math.Abs(basket.NetLots));
+            return new ActiveBasketResearch(
+                basket.Sequence,
+                basket.CreatedTime,
+                facts.FirstEntryTime,
+                facts.FirstSide,
+                facts.EntryCount,
+                facts.DeepestTradeNumber,
+                facts.DeepestAttemptedTradeNumber,
+                facts.MaxOpenPositions,
+                facts.MaxGrossLots,
+                facts.MaxAbsoluteNetLots,
+                facts.MaxIndividualPlacedLot,
+                facts.MaxFloatingProfit,
+                facts.MaxFloatingLoss,
+                facts.FloatingObservationsSkipped,
+                basket.HardBreakevenModeActive,
+                basket.HardBreakevenModeActive ? _parameters.NormalTradeCount + 1 : (int?)null,
+                facts.LargestExactRequiredTailLot,
+                facts.LargestNormalizedRequiredTailLot,
+                facts.LargestPlacedTailLot,
+                facts.HardBreakevenInfeasibleAttempts,
+                facts.HardBreakevenInfeasibleEpisodes,
+                facts.Rejections);
+        }
 
         /// <inheritdoc />
         public void ObserveQuote(in Quote quote, Basket? basket, decimal realizedProfit)
@@ -218,31 +286,47 @@ namespace MarketLab.SingleAnchor
 
         private void Observe(in Quote quote, Basket? basket, decimal realizedProfit)
         {
-            _realizedProfit = realizedProfit;
-            var balance = InitialBalance + realizedProfit;
-            if (balance > _peakBalance) _peakBalance = balance;
-            var balanceDrawdown = _peakBalance - balance;
-            if (balanceDrawdown > _maxBalanceDrawdown) _maxBalanceDrawdown = balanceDrawdown;
+            // Realized profit changes only when a basket closes, so the balance and its drawdown
+            // are recomputed only then; every other quote reuses the cached balance.
+            if (realizedProfit != _observedRealizedProfit)
+            {
+                _observedRealizedProfit = realizedProfit;
+                _balance = InitialBalance + realizedProfit;
+                if (_balance > _peakBalance) _peakBalance = _balance;
+                var balanceDrawdown = _peakBalance - _balance;
+                if (balanceDrawdown > _maxBalanceDrawdown) _maxBalanceDrawdown = balanceDrawdown;
+            }
 
+            // Within one basket the ledger is append-only, so the exposure values can change only
+            // when the basket changes or its open-position count changes. Everything else reuses
+            // the last observed values.
             var openPositions = basket?.OpenPositions ?? 0;
-            var grossLots = basket?.GrossLots ?? 0m;
-            var absoluteNetLots = basket == null ? 0m : Math.Abs(basket.NetLots);
-            _openPositions = openPositions;
-            _grossLots = grossLots;
-            _absoluteNetLots = absoluteNetLots;
-            if (openPositions > _maxOpenPositions) _maxOpenPositions = openPositions;
-            if (grossLots > _maxGrossLots) _maxGrossLots = grossLots;
-            if (absoluteNetLots > _maxAbsoluteNetLots) _maxAbsoluteNetLots = absoluteNetLots;
-
-            if (basket != null)
+            if (basket == null)
+            {
+                _openPositions = 0;
+                _grossLots = 0m;
+                _absoluteNetLots = 0m;
+            }
+            else
             {
                 var active = _active;
-                if (active == null || active.Sequence != basket.Sequence)
+                if (active == null || active.Sequence != basket.Sequence || openPositions != _openPositions)
                 {
-                    active = new ActiveBasket(basket.Sequence);
-                    _active = active;
+                    var grossLots = basket.GrossLots;
+                    var absoluteNetLots = Math.Abs(basket.NetLots);
+                    if (active == null || active.Sequence != basket.Sequence)
+                    {
+                        active = new ActiveBasket(basket.Sequence);
+                        _active = active;
+                    }
+                    _openPositions = openPositions;
+                    _grossLots = grossLots;
+                    _absoluteNetLots = absoluteNetLots;
+                    if (openPositions > _maxOpenPositions) _maxOpenPositions = openPositions;
+                    if (grossLots > _maxGrossLots) _maxGrossLots = grossLots;
+                    if (absoluteNetLots > _maxAbsoluteNetLots) _maxAbsoluteNetLots = absoluteNetLots;
+                    active.ObserveExposure(openPositions, grossLots, absoluteNetLots);
                 }
-                active.ObserveExposure(openPositions, grossLots, absoluteNetLots);
             }
 
             var floating = 0m;
@@ -257,7 +341,8 @@ namespace MarketLab.SingleAnchor
                 else
                 {
                     // The executable mark is not defined at this quote (a needed close price is
-                    // not positive); the observation is skipped rather than fabricated.
+                    // not positive). The observation is skipped rather than fabricated, and the
+                    // skip is counted permanently so the extrema can never look complete.
                     observable = false;
                 }
             }
@@ -265,12 +350,14 @@ namespace MarketLab.SingleAnchor
             if (!observable)
             {
                 _floatingObservable = false;
+                _floatingObservationsSkipped++;
+                _active?.ObserveSkippedFloating();
                 return;
             }
 
             _floatingObservable = true;
             _floatingProfit = floating;
-            _equity = balance + floating;
+            _equity = _balance + floating;
             if (_equity > _peakEquity) _peakEquity = _equity;
             var equityDrawdown = _peakEquity - _equity;
             if (equityDrawdown > _maxEquityDrawdown) _maxEquityDrawdown = equityDrawdown;
@@ -291,15 +378,64 @@ namespace MarketLab.SingleAnchor
 
         private BasketResearchRecord BuildRecord(BasketCloseRecord record, ActiveBasket? activeExtrema)
         {
-            var legs = record.LegTrace;
-            DateTime? firstEntryTime = legs.Count > 0 ? legs[0].Time : (DateTime?)null;
-            decimal? durationSeconds = firstEntryTime.HasValue
-                ? ((decimal)(record.ClosedTime - firstEntryTime.Value).Ticks) / TimeSpan.TicksPerSecond
+            var facts = ComputeFacts(
+                record.LegTrace,
+                record.RejectionTrace,
+                activeExtrema,
+                _parameters.NormalTradeCount,
+                record.Legs,
+                record.GrossLots,
+                Math.Abs(record.NetLots));
+            var durationSeconds = facts.FirstEntryTime.HasValue
+                ? ((decimal)(record.ClosedTime - facts.FirstEntryTime.Value).Ticks) / TimeSpan.TicksPerSecond
                 : (decimal?)null;
-            var maxOpenPositions = Math.Max(record.Legs, activeExtrema?.MaxOpenPositions ?? 0);
-            var maxGrossLots = Math.Max(record.GrossLots, activeExtrema?.MaxGrossLots ?? 0m);
-            var maxAbsoluteNetLots = Math.Max(Math.Abs(record.NetLots), activeExtrema?.MaxAbsoluteNetLots ?? 0m);
+            return new BasketResearchRecord(
+                record.Sequence,
+                record.CreatedTime,
+                facts.FirstEntryTime,
+                record.ClosedTime,
+                durationSeconds,
+                facts.FirstSide,
+                facts.EntryCount,
+                facts.DeepestTradeNumber,
+                facts.DeepestAttemptedTradeNumber,
+                facts.MaxOpenPositions,
+                facts.MaxGrossLots,
+                facts.MaxAbsoluteNetLots,
+                facts.MaxIndividualPlacedLot,
+                facts.MaxFloatingProfit,
+                facts.MaxFloatingLoss,
+                facts.FloatingObservationsSkipped,
+                record.Reason,
+                record.RealizedProfit,
+                record.HardBreakevenModeActive,
+                record.HardBreakevenModeActive ? _parameters.NormalTradeCount + 1 : (int?)null,
+                facts.LargestExactRequiredTailLot,
+                facts.LargestNormalizedRequiredTailLot,
+                facts.LargestPlacedTailLot,
+                facts.HardBreakevenInfeasibleAttempts,
+                facts.HardBreakevenInfeasibleEpisodes,
+                facts.Rejections);
+        }
 
+        /// <summary>
+        /// The shared per-basket facts derived from the engine's leg and rejection traces plus
+        /// the account's path observations. The <c>fallback*</c> arguments are the final live
+        /// exposure values used as lower bounds for the maxima when no observation recorded the
+        /// basket (they cannot exceed the true maxima under the append-only ledger).
+        /// </summary>
+        private static BasketFacts ComputeFacts(
+            IReadOnlyList<LegRecord> legs,
+            IReadOnlyList<EntryRejectionRecord> rejectionRows,
+            ActiveBasket? activeExtrema,
+            int normalTradeCount,
+            int fallbackOpenPositions,
+            decimal fallbackGrossLots,
+            decimal fallbackAbsoluteNetLots)
+        {
+            DateTime? firstEntryTime = legs.Count > 0 ? legs[0].Time : (DateTime?)null;
+            TradeSide? firstSide = legs.Count > 0 ? legs[0].Side : (TradeSide?)null;
+            var deepestTradeNumber = 0;
             decimal? maxPlaced = null;
             decimal? maxPlacedTail = null;
             decimal? maxExactTail = null;
@@ -307,6 +443,7 @@ namespace MarketLab.SingleAnchor
             for (var i = 0; i < legs.Count; i++)
             {
                 var leg = legs[i];
+                if (leg.TradeNumber > deepestTradeNumber) deepestTradeNumber = leg.TradeNumber;
                 if (maxPlaced == null || leg.PlacedLot > maxPlaced.Value) maxPlaced = leg.PlacedLot;
                 if (leg.Regime != SizingRegime.HardBreakeven) continue;
                 if (maxPlacedTail == null || leg.PlacedLot > maxPlacedTail.Value) maxPlacedTail = leg.PlacedLot;
@@ -320,14 +457,13 @@ namespace MarketLab.SingleAnchor
                 }
             }
 
-            var deepestTradeNumber = legs.Count > 0 ? legs[legs.Count - 1].TradeNumber : 0;
-            long hardBreakevenAttempts = 0;
-            long hardBreakevenEpisodes = 0;
-            var rejectionRows = record.RejectionTrace;
+            var deepestAttemptedTradeNumber = deepestTradeNumber;
+            long hardBreakevenInfeasibleAttempts = 0;
+            long hardBreakevenInfeasibleEpisodes = 0;
             for (var i = 0; i < rejectionRows.Count; i++)
             {
                 var row = rejectionRows[i];
-                if (row.TradeNumber > deepestTradeNumber) deepestTradeNumber = row.TradeNumber;
+                if (row.TradeNumber > deepestAttemptedTradeNumber) deepestAttemptedTradeNumber = row.TradeNumber;
                 if (row.Outcome.HasValue)
                 {
                     // A hard-BE sizing was attached, including a feasible sizing whose execution
@@ -343,40 +479,33 @@ namespace MarketLab.SingleAnchor
                     }
                 }
                 if (row.Reason != EntryRejectionReason.HardBreakevenInfeasible) continue;
-                hardBreakevenEpisodes++;
-                hardBreakevenAttempts += row.Attempts;
+                hardBreakevenInfeasibleEpisodes++;
+                hardBreakevenInfeasibleAttempts += row.Attempts;
             }
 
-            return new BasketResearchRecord(
-                record.Sequence,
-                record.CreatedTime,
+            return new BasketFacts(
                 firstEntryTime,
-                record.ClosedTime,
-                durationSeconds,
-                legs.Count > 0 ? legs[0].Side : (TradeSide?)null,
-                record.Legs,
+                firstSide,
+                legs.Count,
                 deepestTradeNumber,
-                maxOpenPositions,
-                maxGrossLots,
-                maxAbsoluteNetLots,
+                deepestAttemptedTradeNumber,
+                Math.Max(fallbackOpenPositions, activeExtrema?.MaxOpenPositions ?? 0),
+                Math.Max(fallbackGrossLots, activeExtrema?.MaxGrossLots ?? 0m),
+                Math.Max(fallbackAbsoluteNetLots, activeExtrema?.MaxAbsoluteNetLots ?? 0m),
                 maxPlaced,
                 activeExtrema?.MaxFloatingProfit,
                 activeExtrema?.MaxFloatingLoss,
-                record.Reason,
-                record.RealizedProfit,
-                record.HardBreakevenModeActive,
-                record.HardBreakevenModeActive ? _parameters.NormalTradeCount + 1 : (int?)null,
+                activeExtrema?.FloatingObservationsSkipped ?? 0,
                 maxExactTail,
                 maxNormalizedTail,
                 maxPlacedTail,
-                hardBreakevenAttempts,
-                hardBreakevenEpisodes,
-                SummarizeRejections(record));
+                hardBreakevenInfeasibleAttempts,
+                hardBreakevenInfeasibleEpisodes,
+                SummarizeRejections(rejectionRows));
         }
 
-        private static IReadOnlyList<ResearchRejectionCount> SummarizeRejections(BasketCloseRecord record)
+        private static IReadOnlyList<ResearchRejectionCount> SummarizeRejections(IReadOnlyList<EntryRejectionRecord> rows)
         {
-            var rows = record.RejectionTrace;
             if (rows.Count == 0) return Array.Empty<ResearchRejectionCount>();
             var groups = new List<ResearchRejectionCount>();
             for (var i = 0; i < rows.Count; i++)
@@ -413,7 +542,7 @@ namespace MarketLab.SingleAnchor
             return -1;
         }
 
-        /// <summary>The running path extrema of the one basket currently open.</summary>
+        /// <summary>The running path extrema and completeness state of the one basket currently open.</summary>
         private sealed class ActiveBasket
         {
             public ActiveBasket(int sequence)
@@ -427,6 +556,7 @@ namespace MarketLab.SingleAnchor
             public decimal MaxAbsoluteNetLots { get; private set; }
             public decimal? MaxFloatingProfit { get; private set; }
             public decimal? MaxFloatingLoss { get; private set; }
+            public long FloatingObservationsSkipped { get; private set; }
 
             public void ObserveExposure(int openPositions, decimal grossLots, decimal absoluteNetLots)
             {
@@ -440,6 +570,74 @@ namespace MarketLab.SingleAnchor
                 if (!MaxFloatingProfit.HasValue || floating > MaxFloatingProfit.Value) MaxFloatingProfit = floating;
                 if (!MaxFloatingLoss.HasValue || floating < MaxFloatingLoss.Value) MaxFloatingLoss = floating;
             }
+
+            public void ObserveSkippedFloating()
+            {
+                FloatingObservationsSkipped++;
+            }
+        }
+
+        /// <summary>The compact facts shared by the closed-basket and active-basket records.</summary>
+        private readonly struct BasketFacts
+        {
+            public BasketFacts(
+                DateTime? firstEntryTime,
+                TradeSide? firstSide,
+                int entryCount,
+                int deepestTradeNumber,
+                int deepestAttemptedTradeNumber,
+                int maxOpenPositions,
+                decimal maxGrossLots,
+                decimal maxAbsoluteNetLots,
+                decimal? maxIndividualPlacedLot,
+                decimal? maxFloatingProfit,
+                decimal? maxFloatingLoss,
+                long floatingObservationsSkipped,
+                decimal? largestExactRequiredTailLot,
+                decimal? largestNormalizedRequiredTailLot,
+                decimal? largestPlacedTailLot,
+                long hardBreakevenInfeasibleAttempts,
+                long hardBreakevenInfeasibleEpisodes,
+                IReadOnlyList<ResearchRejectionCount> rejections)
+            {
+                FirstEntryTime = firstEntryTime;
+                FirstSide = firstSide;
+                EntryCount = entryCount;
+                DeepestTradeNumber = deepestTradeNumber;
+                DeepestAttemptedTradeNumber = deepestAttemptedTradeNumber;
+                MaxOpenPositions = maxOpenPositions;
+                MaxGrossLots = maxGrossLots;
+                MaxAbsoluteNetLots = maxAbsoluteNetLots;
+                MaxIndividualPlacedLot = maxIndividualPlacedLot;
+                MaxFloatingProfit = maxFloatingProfit;
+                MaxFloatingLoss = maxFloatingLoss;
+                FloatingObservationsSkipped = floatingObservationsSkipped;
+                LargestExactRequiredTailLot = largestExactRequiredTailLot;
+                LargestNormalizedRequiredTailLot = largestNormalizedRequiredTailLot;
+                LargestPlacedTailLot = largestPlacedTailLot;
+                HardBreakevenInfeasibleAttempts = hardBreakevenInfeasibleAttempts;
+                HardBreakevenInfeasibleEpisodes = hardBreakevenInfeasibleEpisodes;
+                Rejections = rejections;
+            }
+
+            public DateTime? FirstEntryTime { get; }
+            public TradeSide? FirstSide { get; }
+            public int EntryCount { get; }
+            public int DeepestTradeNumber { get; }
+            public int DeepestAttemptedTradeNumber { get; }
+            public int MaxOpenPositions { get; }
+            public decimal MaxGrossLots { get; }
+            public decimal MaxAbsoluteNetLots { get; }
+            public decimal? MaxIndividualPlacedLot { get; }
+            public decimal? MaxFloatingProfit { get; }
+            public decimal? MaxFloatingLoss { get; }
+            public long FloatingObservationsSkipped { get; }
+            public decimal? LargestExactRequiredTailLot { get; }
+            public decimal? LargestNormalizedRequiredTailLot { get; }
+            public decimal? LargestPlacedTailLot { get; }
+            public long HardBreakevenInfeasibleAttempts { get; }
+            public long HardBreakevenInfeasibleEpisodes { get; }
+            public IReadOnlyList<ResearchRejectionCount> Rejections { get; }
         }
     }
 
@@ -447,7 +645,9 @@ namespace MarketLab.SingleAnchor
     /// The run-level research account values written to the results (roadmap section 3.12).
     /// The balance, equity and floating values are the current ones at the moment of the
     /// snapshot; the host takes the snapshot after the end-of-run observation, so they are the
-    /// run's final values.
+    /// run's final values. <see cref="FloatingObservable"/> describes only the last observation;
+    /// <see cref="FloatingObservationsSkipped"/> is the persistent completeness flag for the
+    /// whole run: when it is non-zero, the equity and floating extrema may be incomplete.
     /// </summary>
     public sealed record ResearchAccountSummary(
         decimal InitialBalance,
@@ -455,6 +655,7 @@ namespace MarketLab.SingleAnchor
         decimal Equity,
         decimal FloatingProfit,
         bool FloatingObservable,
+        long FloatingObservationsSkipped,
         decimal RealizedProfit,
         decimal PeakBalance,
         decimal MaxBalanceDrawdown,
@@ -477,13 +678,16 @@ namespace MarketLab.SingleAnchor
     /// separate: <see cref="LargestExactRequiredTailLot"/> (Q_BE),
     /// <see cref="LargestNormalizedRequiredTailLot"/> (the broker-normalized requirement) and
     /// <see cref="LargestPlacedTailLot"/> (what was actually opened).
-    /// <see cref="DeepestTradeNumber"/> is the deepest trade number reached by a placed leg or a
-    /// rejected attempt, so a required but infeasible tail is visible even when no leg was
-    /// opened; the tail-lot maxima include the requirements of hard-BE episodes, and
-    /// <see cref="HardBreakevenRejectedAttempts"/> / <see cref="HardBreakevenRejectionEpisodes"/>
-    /// count the hard-BE infeasibility episodes only (an execution failure with a feasible
-    /// hard-BE sizing is counted by its reason in <see cref="Rejections"/> and still contributes
-    /// its requirement to the maxima).
+    /// <see cref="DeepestTradeNumber"/> is the deepest <em>placed</em> trade number (the retired
+    /// repository's basket depth); <see cref="DeepestAttemptedTradeNumber"/> additionally covers
+    /// rejected attempts, so a required but infeasible tail is visible without overloading the
+    /// depth statistic. The tail-lot maxima include the requirements of hard-BE episodes, and
+    /// <see cref="HardBreakevenInfeasibleAttempts"/> /
+    /// <see cref="HardBreakevenInfeasibleEpisodes"/> count the hard-BE <em>infeasibility</em>
+    /// episodes only (an execution failure with a feasible hard-BE sizing is counted by its
+    /// reason in <see cref="Rejections"/> and still contributes its requirement to the maxima).
+    /// <see cref="FloatingObservationsSkipped"/> is the number of executable marks this basket
+    /// could not observe; when it is non-zero the floating extrema may be incomplete.
     /// </summary>
     public sealed record BasketResearchRecord(
         int Basket,
@@ -494,12 +698,14 @@ namespace MarketLab.SingleAnchor
         TradeSide? FirstSide,
         int EntryCount,
         int DeepestTradeNumber,
+        int DeepestAttemptedTradeNumber,
         int MaxOpenPositions,
         decimal MaxGrossLots,
         decimal MaxAbsoluteNetLots,
         decimal? MaxIndividualPlacedLot,
         decimal? MaxExecutableFloatingProfit,
         decimal? MaxExecutableFloatingLoss,
+        long FloatingObservationsSkipped,
         ExitReason CloseReason,
         decimal RealizedProfit,
         bool HardBreakevenModeActivated,
@@ -507,13 +713,46 @@ namespace MarketLab.SingleAnchor
         decimal? LargestExactRequiredTailLot,
         decimal? LargestNormalizedRequiredTailLot,
         decimal? LargestPlacedTailLot,
-        long HardBreakevenRejectedAttempts,
-        long HardBreakevenRejectionEpisodes,
+        long HardBreakevenInfeasibleAttempts,
+        long HardBreakevenInfeasibleEpisodes,
         IReadOnlyList<ResearchRejectionCount> Rejections);
 
     /// <summary>
-    /// One rejection count of a closed basket: the distinct rejection episodes and the total
-    /// attempts, keyed by reason and hard-BE outcome. The distinction between an individual
+    /// The compact research state of a basket that is still open at end of data or at a
+    /// run-ending strategy fault. It is deliberately not a <see cref="BasketResearchRecord"/>:
+    /// the basket did not close, so there is no close reason, realized profit or duration, and
+    /// nothing is fabricated. It carries the same path, lot and rejection facts (including the
+    /// basket's own floating extrema and its skipped-mark count) so the final unresolved
+    /// basket's history is not lost. <see cref="DeepestTradeNumber"/> is the deepest placed
+    /// trade and <see cref="DeepestAttemptedTradeNumber"/> includes rejected attempts.
+    /// </summary>
+    public sealed record ActiveBasketResearch(
+        int Basket,
+        DateTime AnchorTime,
+        DateTime? FirstEntryTime,
+        TradeSide? FirstSide,
+        int EntryCount,
+        int DeepestTradeNumber,
+        int DeepestAttemptedTradeNumber,
+        int MaxOpenPositions,
+        decimal MaxGrossLots,
+        decimal MaxAbsoluteNetLots,
+        decimal? MaxIndividualPlacedLot,
+        decimal? MaxExecutableFloatingProfit,
+        decimal? MaxExecutableFloatingLoss,
+        long FloatingObservationsSkipped,
+        bool HardBreakevenModeActivated,
+        int? FirstHardBreakevenTradeNumber,
+        decimal? LargestExactRequiredTailLot,
+        decimal? LargestNormalizedRequiredTailLot,
+        decimal? LargestPlacedTailLot,
+        long HardBreakevenInfeasibleAttempts,
+        long HardBreakevenInfeasibleEpisodes,
+        IReadOnlyList<ResearchRejectionCount> Rejections);
+
+    /// <summary>
+    /// One rejection count of a closed or active basket: the distinct rejection episodes and the
+    /// total attempts, keyed by reason and hard-BE outcome. The distinction between an individual
     /// rejected attempt and a compact rejection episode is preserved for both totals.
     /// </summary>
     public sealed record ResearchRejectionCount(
