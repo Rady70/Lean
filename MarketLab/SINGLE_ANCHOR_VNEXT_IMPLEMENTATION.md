@@ -326,17 +326,18 @@ culture; `true`/`false` for booleans.
   now exists and **PR 1 is implemented, merged and locally validated**
   (`MarketLab\tools\historical-data\README.md`): it strictly qualifies a
   historical bid/ask CSV against this strategy's quote contract, writes native
-  `cfd\oanda\tick\xauusd` partitions into a research data folder outside Git,
+  `cfd\<market>\tick\xauusd` partitions into a research data folder outside Git,
   and verifies the delivered stream through the unchanged LEAN engine; a
   research history still needs its own provenance, licensing and integrity
   record, and only a qualification PASS may precede a strategy run. The
   source-derived session map and the five-minute trading availability are
-  implemented (section 8), but the replay-identity gate (section 8.7) remains
-  unresolved: the runtime session identity/hours currently clip legitimate
-  source rows before the strategy, so a full-history PR 1 PASS is still blocked.
-  The full historical dataset has not yet completed qualification or achieved a PR 1 PASS; resolving that identity
-  is the next separate prerequisite, and PR 2 remains the next implementation
-  phase after that data-path exercise.
+  implemented (section 8), and the replay-identity gate (section 8.7) is now
+  resolved: the real source replays under the derived always-open
+  `XAUUSD/dukascopy/Cfd` identity, which removes no legitimate quote, and the
+  2023-03 case delivers every accepted row (4,465,226 = 4,465,226 = 4,465,226;
+  digests equal; zero session drops). The full 90-month sweep also completed
+  with 90/90 PASS and 413,750,130 rows equal at every stage (section 8.7), and
+  PR 2 remains the next implementation phase.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants
   (a partial tail fill must not be able to break the hard-BE requirement; a
@@ -479,9 +480,10 @@ the same thing:
 - **delivered**: LEAN read the quote from the native tick partition and handed it to the strategy
   (`QuoteTickFeed` -> `SingleAnchorEngine.OnQuote`). This gate changes nothing about delivery; it
   neither adds nor removes a delivered quote. Whether every legitimate source quote is delivered
-  is a separate data-path property, and on the current research data folder it is **not** yet true
-  (section 8.7); no claim in this document should be read as source-to-strategy completeness until
-  that blocker is resolved and PR-1 passes.
+  is a separate data-path property; the replay-identity resolution (section 8.7) makes it true for
+  the Dukascopy source, and the strategy-side availability below is the only remaining filter. A
+  claim of source-to-strategy completeness still depends on the PR-1 record for the specific
+  dataset.
 - **strategy-eligible**: the quote may drive the strategy (anchor, entries, exits, trailing,
   rejections, ledger, events). The first and last five minutes of every **complete** source-derived
   session are quote-only, and the final, dataset-end session has an opening buffer only (no
@@ -680,18 +682,73 @@ value and the source row count. The strategy unit tests are 175 (see section 7 p
 availability, coverage-end, provenance, junction-consistency, grid/reversal-buffer and
 out-of-coverage failure tests, and the generator symbol/quote-contract tests).
 
-### 8.7 Quote delivery on the current research data folder (separate blocker, not fixed here)
+### 8.7 Quote delivery on the real research data folder (replay identity, resolved)
 
 The strategy-side availability removes no delivered quote, but it cannot restore quotes the LEAN
-data path filtered out before the strategy. On the current research data folder the resolved
-runtime session identity/hours clip legitimate source ticks at both session edges (in the earlier
-real-data PR-1 exercise, 6,798 accepted rows in 2023-03 were never delivered because the resolved
-Oanda XAUUSD entry ends the New York day at 16:58 and reopens at 18:03). Until that identity is
-corrected, "every legitimate Dukascopy quote is in the strategy stream" is **not** true
-end-to-end, and PR-1 on the full history would not pass.
+data path filtered out before the strategy. On the original research data folder the resolved
+runtime session identity/hours clipped legitimate source ticks at both session edges (in the
+earlier real-data PR-1 exercise, 6,798 of 4,465,226 accepted rows in 2023-03 were never delivered
+because the resolved Oanda XAUUSD entry ends the New York day at 16:58 and reopens at 18:03).
 
-Resolving it is deliberately out of scope for this feature and for this branch: the replay's
-market/data identity and session definition must allow every legitimate source tick, and the
-proper source-appropriate LEAN identity for the Dukascopy history is a separate decision to be
-made and validated with the data owner. This section records the blocker; it prescribes no
-broker-specific calendar and no maintained holiday list.
+The identity is corrected, not worked around: the real source is qualified under the
+source-appropriate `XAUUSD/dukascopy/Cfd` identity with a MarketLab-derived runtime
+market-hours entry that is open `00:00:00`-`24:00:00` every day with no holidays, early closes
+or late opens (data/exchange time zone UTC, matching the source's native UTC timestamps). The
+converter and the LEAN engine then apply no session interpretation at all: the source stream
+itself defines the sessions. The derivation is reproducible: `prepare-identity` builds the
+derived databases from the unchanged engine fixtures and records the source and derived SHA-256s
+plus the exact entry and rule in `marketlab-qualification\runtime-identity.json`, which the
+qualification manifest binds and `verify` checks. No holiday list is maintained and no
+broker-specific calendar is authored.
+
+Measured result for 2023-03 (`XAUUSD_2023_03_DUKASCOPY_JFOREX_FULL.csv`, source SHA-256
+`d6539e3f69f9dbad0fb9f77b6bf15ecaea3fe0d9a9b0baee08dc65fba6dbfbe5`): 4,465,226 accepted =
+4,465,226 converted = 4,465,226 LEAN-delivered = 4,465,226 probe-processed, 0 rejected rows,
+0 session drops, source and delivered ordered semantic digests both
+`sha256:d221240d8e33070eb0a49a3c5b6764278be37c196930c11ce9695e6666e12be4`, overall
+qualification PASS. LEAN still requests a partition for every calendar day under an always-open
+identity; the four 2023-03 Saturdays have no source rows and are recorded as `source_absent_days`
+evidence (not failures). A failed request for a day that carries accepted rows remains
+`NativePartitionMissing`. The Oanda fixture identity is unchanged and the committed end-to-end
+test still proves that a session-clipped replay fails under it.
+
+The full 90-month sweep (2019-01..2026-06) completed on 2026-09-24 with 90/90
+PASS: accepted = converted = delivered = probe-processed = 413,750,130 rows,
+0 rejected rows, 0 session drops, every per-partition count/digest and every
+per-month ordered digest equal, under the single derived identity
+(market-hours SHA-256
+`325a7abc8214216c9107d45bb4e0a7fd291d2a5d771d3ebed6828d02da72518e`). The
+per-month records and the aggregate `full-history-summary.json` stay outside
+Git under
+`D:\quant_research_workspace\work\lean\pr1-xauusd-full-history-dukascopy\`; the
+tools README carries the details, and the tracked `summarize-history` command
+re-validates the ordered 90-file set against explicit `2019_01`/`2026_06`
+expected bounds, month boundaries, singleton identity and aggregate hashes.
+This is a 90-month decomposed exact-replay sweep (one PR-1 run per monthly
+file), not a single-stream ordinal digest. It also produced 90 separate native
+data folders, not one continuous LEAN data tree: after PR 2 and PR 3, and
+before the baseline configuration freeze, the already-qualified daily
+partitions must be composed into one continuous research data folder under the
+same derived identity, preserving each partition's hash and the qualification
+identity and re-proving the composed delivery with the replay probe against the
+concatenated per-month evidence. Running 90 independent monthly strategy runs
+is not the full-history baseline; the composition step is deliberately not
+implemented in PR 1.
+
+Any real historical strategy run must use the qualified identity:
+`single-anchor-symbol: XAUUSD`, `single-anchor-market: dukascopy`,
+`single-anchor-security-type: Cfd`, with dates inside the qualified data
+folder; the authoritative full-history Dukascopy baseline additionally
+requires the qualified source-derived session map (SHA-256
+`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`), because
+the approved PR 7 availability rule makes the session buffers quote-only.
+Fixture or backward-compatible runs may omit the runtime parameter where
+appropriate, but they are not the authoritative baseline. The in-code
+`Market.Oanda` default and the 2014 sample dates are the shipped fixture only;
+a baseline run that leaves them in place bypasses the qualified identity and is
+not a valid baseline. The replay-identity blocker recorded here is resolved;
+the next project step is the plan's sequence PR 2 (C# research account and
+bounded analytics), PR 3 (target-account margin survival), composing the
+already-qualified daily partitions into one continuous research data folder and
+re-proving its delivery, the baseline configuration freeze, and only then the
+first full-history strategy baseline.

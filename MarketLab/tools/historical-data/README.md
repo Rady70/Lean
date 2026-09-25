@@ -1,13 +1,17 @@
 # Historical dataset qualification and native-LEAN replay (PR 1)
 
-Status: **PR 1 is implemented and complete** (`Rady70/Lean` PR #6). The
+Status: **PR 1 is implemented and complete** (`Rady70/Lean` PR #6), and the
+replay identity for the real Dukascopy/JForex source is **resolved**: the
+source qualifies under the `XAUUSD/dukascopy/Cfd` identity with a
+MarketLab-derived always-open, holiday-free runtime identity (section 6), so
+LEAN's session filter removes no legitimate source quote. The
 qualification/conversion tooling is offline Python only; the normal per-tick
 SingleAnchor runtime remains C#, LEAN is unchanged, and every custom file stays
 under `MarketLab/`.
 
 This directory is the MarketLab-owned offline tooling that takes a historical
 bid/ask CSV source and establishes whether it can be represented and replayed
-through LEAN's native XAUUSD/Oanda CFD tick path without silently changing the
+through LEAN's native CFD quote-tick path without silently changing the
 strategy input stream:
 
 ```text
@@ -17,7 +21,7 @@ historical CSV
 strict qualification          MarketLab/tools/historical-data (Python, offline)
       |
       v
-native LEAN quote-tick files  <research data folder>/cfd/oanda/tick/xauusd
+native LEAN quote-tick files  <research data folder>/cfd/<market>/tick/xauusd
       |
       v
 actual LEAN data path         unchanged LEAN engine
@@ -28,6 +32,11 @@ QuoteTickFeed                 MarketLab replay probe (strategy feed path)
       v
 qualification record          explicit PASS/FAIL
 ```
+
+For the Dukascopy/JForex source the market is `dukascopy` and the runtime
+identity is prepared (always open, no holidays); for the committed fixture
+tests the market is the engine's `oanda` fixture identity. The path is derived
+from the identity, never assumed.
 
 The authoritative plan is
 [`../../SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md`](../../SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md)
@@ -90,23 +99,30 @@ published on failure.
   needs the IANA timezone database; on Windows install the `tzdata` package
   (`python -m pip install tzdata`) if `zoneinfo.ZoneInfo("America/New_York")`
   fails. No other package is required (no pandas, no PyArrow).
-- A runtime LEAN **research data folder outside Git**. It must contain
-  `market-hours\market-hours-database.json` and
-  `symbol-properties\symbol-properties-database.csv` (the same requirement as
-  `MarketLab\scripts\run-backtest.ps1`). The qualifier refuses any output
-  folder inside the LEAN Git worktree, because replacing a generation removes
-  native partitions. The driver links the remaining auxiliary runtime data
-  automatically (section 6).
+- A runtime LEAN **research data folder outside Git**. The qualifier and the
+  LEAN helper read `market-hours\market-hours-database.json` and
+  `symbol-properties\symbol-properties-database.csv` from it (the same
+  requirement as `MarketLab\scripts\run-backtest.ps1`). For the
+  `dukascopy` identity the driver does not link the engine fixtures here;
+  instead it derives these two databases into the folder with
+  `prepare-identity` (section 6), recording their provenance. The qualifier
+  refuses any output folder inside the LEAN Git worktree, because replacing a
+  generation removes native partitions. The driver links the remaining
+  auxiliary runtime data automatically (section 6).
 
 ## 3. Quick start
 
-The driver runs the whole path and returns the record's verdict:
+The driver runs the whole path and returns the record's verdict. The real
+Dukascopy/JForex source is qualified with `-Market dukascopy` (the
+source-appropriate identity with no session filtering); omitting the option
+keeps the committed-fixture `oanda` identity:
 
 ```powershell
 powershell -File MarketLab\tools\historical-data\scripts\Invoke-ReplayQualification.ps1 `
     -SourceCsv E:\research-data\xauusd-history.csv `
     -DataFolder E:\research-data\lean `
-    -TimestampColumn timestamp -BidColumn bid -AskColumn ask -SourceTimezone UTC
+    -Market dukascopy `
+    -TimestampColumn timestamp -BidColumn bid -AskColumn ask
 ```
 
 Useful source options (all explicit settings override deterministic
@@ -131,24 +147,32 @@ data folder. Without `-Force`, any existing generation is refused (exit 2)
 rather than mixed. Output folders inside the LEAN Git worktree are refused,
 because replacing a generation removes native partitions.
 
-### The three underlying steps
+### The four underlying steps
 
 ```powershell
 $env:PYTHONPATH = "MarketLab\tools\historical-data\python"
 
-# 1. strict qualification + conversion (never converts a failing source)
+# 1. derive the always-open runtime identity for the Dukascopy identity
+python -m marketlab_historical_data prepare-identity `
+    --data-folder E:\research-data\lean `
+    --source-data-folder <LeanRoot>\Data `
+    --symbol XAUUSD --market dukascopy --security-type Cfd
+
+# 2. strict qualification + conversion (never converts a failing source)
 python -m marketlab_historical_data qualify `
     --source E:\research-data\xauusd-history.csv `
     --data-folder E:\research-data\lean `
-    --timestamp-column timestamp --bid-column bid --ask-column ask --source-timezone UTC
+    --timestamp-column timestamp --bid-column bid --ask-column ask `
+    --symbol XAUUSD --market dukascopy --security-type Cfd
 
-# 2. actual LEAN replay probe (helper; change the paths as needed)
+# 3. actual LEAN replay probe (helper; change the paths as needed)
 powershell -File MarketLab\scripts\run-backtest.ps1 `
     -AlgorithmTypeName SingleAnchorReplayProbeAlgorithm `
     -AlgorithmLocation MarketLab\tools\historical-data\probe\bin\Release\MarketLab.HistoricalDataProbe.dll `
-    -DataFolder E:\research-data\lean -AllowMissingData
+    -DataFolder E:\research-data\lean -AllowMissingData `
+    -Parameters "probe-symbol:XAUUSD,probe-market:dukascopy,probe-security-type:Cfd"
 
-# 3. final record combining the manifest and the probe result
+# 4. final record combining the manifest and the probe result
 python -m marketlab_historical_data verify `
     --manifest E:\research-data\lean\marketlab-qualification\qualification-manifest.json `
     --data-folder E:\research-data\lean `
@@ -157,6 +181,60 @@ python -m marketlab_historical_data verify `
     --runtime-binaries <run dir>\runtime-binaries.json `
     --helper-exit-code 0
 ```
+
+The `probe-market` parameter is mandatory for a non-default identity: the probe
+refuses an expectation whose identity does not match its configured one. Step 1
+is the authoritative way to obtain the derived databases; a data folder whose
+always-open identity was hand-assembled without the recorded provenance cannot
+produce a PASS (`RuntimeIdentityProvenanceMissing`, section 5).
+
+### Aggregating a per-file sweep
+
+The CLI qualifies one source file per run, so a full-history qualification is a
+sequence of per-file PR-1 runs. The per-month records are aggregated and
+re-validated with the tracked command:
+
+```powershell
+python -m marketlab_historical_data summarize-history `
+    --months-root E:\research-data\history-months `
+    --expected-first-month 2019_01 `
+    --expected-last-month 2026_06
+```
+
+Each direct child of `--months-root` is one month directory (`YYYY_MM`) holding
+`data\marketlab-qualification\qualification-record.json`. The command requires:
+the explicit expected first/last month, so a contiguous subset (for example a
+single year) cannot claim the qualified window; one contiguous, ordered,
+gap-free month sequence; each record a structurally valid `PASS` with helper
+exit 0, accepted = converted = LEAN-delivered = probe-processed, zero rejected
+rows and session differences, equal per-partition counts/digests and equal
+source/delivered digests; no missing partition, no coverage gap and no
+stale/hash-mismatched partition; each record's source file name matching its
+month and its first/last timestamps falling inside that month; and a singleton
+identity across every run (symbol, market, security type, native path, time
+zones, market-hours database SHA-256, symbol-properties SHA-256, converter
+source aggregate, clean checkout and runtime binary set). A record missing any
+field the aggregator consumes is reported as an error instead of a traceback.
+It writes `full-history-summary.json` with totals and two documented aggregate
+hashes:
+
+- `source_file_set_sha256` = SHA-256 of the newline-joined
+  `<source file name>:<source sha256>` lines in month order;
+- `ordered_month_digest_chain_sha256` = SHA-256 of the newline-joined
+  per-month ordered source semantic digests in month order.
+
+The default output is `<months-root>\full-history-summary.json`; the command
+overwrites only that aggregate, and refuses a user-supplied `--output` that
+resolves inside any month directory of the months root or inside a source
+directory recorded by the month records, so a mistaken path cannot overwrite a
+qualification record or a raw source file.
+
+Both are aggregates over the decomposition. Per-month ordinals restart per file
+and the tooling does not ingest multiple source files into one run, so there is
+**no single-stream PR-1 ordinal digest**; the per-month PR-1 digests and the
+chain are the evidence. The command exits 0 only when every check passes, 1 for
+a non-conforming record set (the summary still lists the errors), and 2 for a
+missing or invalid months root.
 
 `-AllowMissingData` is required for step 2 because LEAN probes the trading days
 adjacent to the qualified window for continuity; the final record classifies
@@ -183,10 +261,11 @@ All generated research data stays **outside Git**.
 
 | Output | Meaning |
 |---|---|
-| `<data folder>\cfd\oanda\tick\xauusd\YYYYMMDD_quote.zip` | native LEAN quote-tick partition; one entry `YYYYMMDD_xauusd_tick_quote.csv`, lines `time,bid,ask` |
+| `<data folder>\cfd\<market>\tick\xauusd\YYYYMMDD_quote.zip` | native LEAN quote-tick partition; one entry `YYYYMMDD_xauusd_tick_quote.csv`, lines `time,bid,ask` |
 | `<data folder>\marketlab-qualification\qualification-manifest.json` | machine-readable source/conversion/provenance record |
 | `<data folder>\marketlab-qualification\replay-expectation.json` | what the probe must observe (counts, digests, window, partitions) |
 | `<data folder>\marketlab-qualification\qualification-record.json` | final record: manifest + probe result + runtime-binary hashes + helper exit code + every comparison + explicit overall PASS/FAIL (written by `verify`) |
+| `<data folder>\marketlab-qualification\runtime-identity.json` | provenance of a `prepare-identity` derivation: source databases and SHA-256s, derived databases and SHA-256s, the inserted always-open entry and the rule (absent for the engine-fixture `oanda` identity) |
 | `<run dir>\storage\single-anchor-replay-probe\replay-result.json` | the probe's delivered stream summary and comparison |
 
 ### Native file semantics (derived from the current LEAN implementation)
@@ -198,7 +277,10 @@ All generated research data stays **outside Git**.
   converts `DataTimeZone -> ExchangeTimeZone` itself (`Common/Data/Market/Tick.cs`).
 - The resolved values for the actual subscription are recorded in the manifest
   and again at runtime by the probe (`DataTimeZone`, `ExchangeTimeZone`, the
-  runtime market-hours database path and its SHA-256).
+  runtime market-hours database path and its SHA-256). The source identity is
+  `dukascopy` with `DataTimeZone = ExchangeTimeZone = UTC`; the fixture
+  identity is `oanda` with `DataTimeZone = UTC`, `ExchangeTimeZone =
+  America/New_York`.
 - Prices are written as canonical exact-decimal text; the converter parses
   source text with `decimal.Decimal` and never passes an authoritative price
   through binary floating point. Numerically equal source spellings (`1.2`,
@@ -234,10 +316,11 @@ source semantic digest == delivered semantic digest
 the probe's embedded expectation matches this manifest (digest, source hash, identity, zones)
 every per-partition count and semantic digest agrees
 runtime DataTimeZone/ExchangeTimeZone and market-hours database SHA agree with the manifest
+an always-open identity carries its recorded `prepare-identity` provenance (source and derived database SHA-256s)
 the complete runtime binary set is recorded and agrees with the probe's observed assemblies
 every native partition file exists, matches its recorded hash, no stale partition
 no failed data request for a partition that carries accepted rows
-no failed data request inside the qualified window without source rows
+for a session-bounded identity, no failed data request for a market day inside the qualified window
 ```
 
 The probe result is validated against the exact probe contract
@@ -258,7 +341,7 @@ Any failure produces `overall_qualification: FAIL` and a machine-readable
 | `ConvertedRowCountMismatch` / `NativePartitionCountMismatch` | the converted totals, partition row counts or per-day totals disagree |
 | `PerDayAcceptedCountMismatch` / `PerPartitionAcceptedCountMismatch` | per-day or per-partition accepted totals disagree with the accepted count |
 | `NativePartitionMissing` | LEAN could not read a partition that carries accepted rows |
-| `SourceCoverageGap` | a market day inside the qualified window has no source rows |
+| `SourceCoverageGap` | a market day inside the qualified window has no source rows (session-bounded identities; for an always-open identity such days are recorded as `source_absent_days` evidence instead, because the source itself defines its calendar) |
 | `StaleNativePartition` | the tick directory holds a partition the current manifest does not describe |
 | `NativeReplayProbeResultMissing` / `NativeReplayProbeDidNotComplete` | the probe did not run or the engine faulted |
 | `EngineDidNotProcessEveryAcceptedQuote` | the engine processed fewer quotes than the source accepted |
@@ -266,6 +349,8 @@ Any failure produces `overall_qualification: FAIL` and a machine-readable
 | `ProbeSelfInconsistent` | a probe claiming PASS with failure reasons or false comparison flags |
 | `ProbeExpectationDoesNotMatchManifest` | the probe compared against an expectation that is not this manifest's |
 | `RuntimeBinariesMissing` / `RuntimeBinariesMismatchWithProbe` | the runtime binary evidence is absent, or contradicts the probe's observed assemblies |
+| `RuntimeIdentityProvenanceMissing` | the manifest resolved an always-open identity but carries no `prepare-identity` provenance; a hand-assembled identity cannot qualify |
+| `RuntimeIdentityProvenanceMismatch` | the recorded provenance hashes do not match the databases the manifest resolved |
 | `HelperExitCodeMissing` | the LEAN helper exit code was not supplied (a PASS record requires 0) |
 | `HelperExitNotClean` | the helper exited nonzero and the probe did not deliberately report a replay mismatch |
 | `ExpectedAndDeliveredCountsDiffer` | LEAN delivered fewer/more quotes than accepted (for example market-hours/session filtering) |
@@ -288,21 +373,35 @@ published), a report path that would replace one of its evidence inputs, and
 wrong-schema/incomplete manifest, probe or runtime-binaries inputs.
 
 **Session filtering must not silently pass.** LEAN drops ticks outside the
-resolved exchange sessions (for Oanda XAUUSD: the New York 16:58-18:03 break,
-weekends and holidays) in `SubscriptionFilterEnumerator`. The manifest records
-the offline session preview as a diagnostic only; the probe measures the real
-delivery. For an exact-replay PASS the delivered count must equal the accepted
-count.
+resolved exchange sessions (for the Oanda XAUUSD fixture entry: the New York
+16:58-18:03 break, weekends and holidays) in `SubscriptionFilterEnumerator`.
+The manifest records the offline session preview as a diagnostic only; the
+probe measures the real delivery. For an exact-replay PASS the delivered count
+must equal the accepted count. The Dukascopy/JForex source is replayed under
+the derived always-open identity, which has no closed interval at all, so no
+accepted quote can be filtered; the committed `oanda` fixture case proves the
+filter detection still fails a session-clipped replay. Under an always-open
+identity LEAN still requests a file for every calendar day; failed requests for
+days the source has no rows for are recorded as `source_absent_days` in the
+record (evidence, not a failure), while a failed request for any day that does
+carry accepted rows remains `NativePartitionMissing`.
 
 ## 6. Auxiliary runtime data and the junction warning
 
 `Invoke-ReplayQualification.ps1` links, from `-AuxiliaryDataSource`
-(default `<LeanRoot>\Data`), any missing `market-hours`, `symbol-properties`,
-`alternative`, `equity` and `cfd\oanda\hour` path into the research data folder
-as a directory **junction**. These are the unchanged engine fixtures the
-subscription setup reads; junctions keep them in place and copy nothing. Use
-`-NoAuxiliaryLinks` to skip this and accept the helper's missing-data
-warnings, which the final record reports.
+(default `<LeanRoot>\Data`), any missing `alternative` and `equity` path into
+the research data folder as a directory **junction**. For the `oanda` fixture
+identity it also links `market-hours`, `symbol-properties` and
+`cfd\oanda\hour`. For the `dukascopy` identity it instead runs
+`prepare-identity`, which reads the engine fixture databases from
+`-AuxiliaryDataSource` and writes the derived always-open runtime databases
+into the data folder (real files, never through a junction; writing through a
+junction is refused). The Dukascopy identity does **not** link or require the
+Oanda hour fixture or the Oanda calendar, and the end-to-end test exercises a
+Dukascopy run whose auxiliary source has no `cfd` directory at all. Use
+`-NoAuxiliaryLinks` to skip the links and accept the helper's missing-data
+warnings, which the final record reports (`prepare-identity` still runs for
+`dukascopy`, because it only reads from `-AuxiliaryDataSource`).
 
 > **Warning:** a directory junction is a link, not a copy. Deleting a research
 > data folder that contains junctions with a recursive delete tool that follows
@@ -334,7 +433,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (165 tests)
+# Python offline tool (230 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -346,10 +445,14 @@ powershell -File MarketLab\tools\historical-data\scripts\Test-HistoricalDataQual
 ```
 
 The end-to-end test uses the committed fixtures in `fixtures\` (not the user's
-dataset): an exact-replay PASS, a session-filter discrepancy that must FAIL, a
-sub-millisecond source that must fail before conversion, and a crossed quote
-that must fail without cleaning. It creates scratch data folders outside the
-repository and removes the junctions as links during cleanup.
+dataset): an exact-replay PASS, the same session-gap source under the derived
+always-open Dukascopy identity with a Dukascopy auxiliary source that has no
+Oanda `cfd` fixture at all (PASS, every quote delivered) and under the Oanda
+fixture identity (FAIL, one quote filtered), a sub-millisecond source that must
+fail before conversion, a crossed quote that must fail without cleaning, an
+unsupported identity and an in-worktree data folder that must be refused. It
+creates scratch data folders outside the repository and removes the junctions
+as links during cleanup.
 
 ## 9. Provenance of adapted retired code
 
@@ -364,9 +467,10 @@ material only; nothing here is a runtime dependency on them.
 - The converter requires a header row; explicit column options name columns
   that must exist in the header (normalized), and they do not make a headerless
   file usable.
-- Only the XAUUSD/Oanda CFD tick subscription is exercised. The tool is
+- The committed fixture tests exercise the XAUUSD/Oanda CFD tick subscription;
+  the real Dukascopy source is qualified under XAUUSD/dukascopy/Cfd. The tool is
   parameterised by symbol/market/security type, but no other subscription has
-  been qualified.
+  been qualified, and the driver accepts exactly those two identities.
 - The probe reuses the SingleAnchor engine's data-quality gate through the
   same `QuoteTickFeed`; it is a data-delivery qualification, not a strategy
   performance run (LEAN statistics for a probe run are empty by design).
@@ -379,22 +483,67 @@ material only; nothing here is a runtime dependency on them.
   rejected with a controlled `SourcePriceExceedsLeanDecimalFormat` failure
   instead of an exception, and spread diagnostics are marked `complete: false`
   when such a row is present.
-- The subscription identity is the driver-enforced XAUUSD/oanda/Cfd scope; a
-  non-default identity is refused rather than loosely supported.
+- The subscription identity is the driver-enforced XAUUSD/oanda/Cfd (engine
+  fixture) and XAUUSD/dukascopy/Cfd (Dukascopy source) scope; any other
+  identity is refused rather than loosely supported.
 - Provenance: `lean_checkout_git_sha` and `converter_source` (per-file and
   aggregate hashes) identify the source that produced the manifest, even from a
   dirty checkout. The runtime identity is recorded twice: the driver hashes the
   probe and LEAN assemblies it launches (`runtime_binaries` in the record), and
   the probe adds an in-process `runtime.assemblies` list as supplemental
   evidence (byte-loaded assemblies may not expose a file `Location`).
-- The full historical dataset has **not yet completed qualification or achieved a PR 1 PASS**, and the 2023-03
-  real-data exercise exposed the unresolved replay-identity gate: the runtime
-  session identity/hours clipped 6,798 accepted rows before the strategy, so a
-  full-history PASS requires resolving that identity (a separate prerequisite,
-  recorded in `SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` section 8.7; no tooling
-  change is made here). The next non-blocking measurement is qualification speed
-  and memory on a representative large slice of that dataset (the per-day
-  conversion buffer and the exact spread histogram are the two candidates); only
-  after the data path is exercised on real data does the plan continue with
-  **PR 2** (C# research account view and bounded analytics), which remains the
-  next implementation phase.
+- The full historical dataset completed a **90-month decomposed exact-replay
+  sweep** (2019-01..2026-06, 90 source files, 22.35 GiB) on 2026-09-24: **90/90
+  months PASS, 0 failures**, with accepted = converted = LEAN-delivered =
+  probe-processed = **413,750,130** rows, 0 rejected rows, 0 session drops,
+  every per-partition count and semantic digest equal and every per-month
+  source/delivered digest equal. This is the sequence of per-file runs the CLI
+  supports, re-validated by the tracked `summarize-history` command, which also
+  checks the ordered 90-file set, adjacent month boundaries, totals, singleton
+  identity, clean checkout and runtime binary set. The source file-set SHA-256 is
+  `8ce98dd27c2df3166a0dc3ec30c6be4756887f323934a6a0ca1c348592c6f1fd`; the
+  aggregate chain over the 90 ordered per-month digests (an aggregate, not a
+  single-run PR-1 digest) is
+  `9d29c36bcd5ada21cdbf6f8e8a7ea3601efd5bab65e2acf7b4c3ee0f8b41f769`. All
+  months resolved the identical derived identity (market-hours SHA-256
+  `325a7abc8214216c9107d45bb4e0a7fd291d2a5d771d3ebed6828d02da72518e`,
+  symbol-properties SHA-256 `7d52262f53fbec169b6e03c7acb220a73ea4ff95f48c198e4977e2280407d5ed`,
+  converter source aggregate `1642c5c2ab7cd0422290859ad685138fedfb2c7ece9ea0d98f46d40bd40957bf`
+  as recorded by those runs — later review-fix commits added the tracked
+  aggregator and tightened the identity preparation without changing the
+  qualification behavior, so the records remain the authority for the sweep's
+  tooling identity — from clean HEAD
+  `ab7754af8c7175fe7f9837cf17541956a094927b`; runtime
+  binary set SHA-256 `eceb4d7526ff78098c0f29e88e1cc0fff0b9ff1a32d64e943e0237e90ce11f5b`).
+  First delivered timestamp `2019-01-01T23:00:07.151Z`, last
+  `2026-06-30T23:59:59.678Z`. The always-open identity recorded 376
+  source-absent days (weekends and source holidays LEAN requested with no
+  accepted rows) as evidence; no coverage gap and no missing accepted
+  partition. Exactly one unrelated failed request per month
+  (`cfd/dukascopy/hour/xauusd.zip`, the benchmark hour file). The sweep ran in
+  6.83 h of driver wall time; the per-month records, the runner log and
+  `full-history-summary.json` (regenerated and validated by the tracked
+  command) stay outside Git under
+  `D:\quant_research_workspace\work\lean\pr1-xauusd-full-history-dukascopy\`.
+  A distilled evidence fixture with no market data — one row per month carrying
+  the source file name/hash/size, canonical first/last timestamps, every
+  compared row count (raw/accepted/rejected/converted/delivered/processed), the
+  session difference, the source/delivered digests, failed-request counts and
+  the distilled identity hashes — is tracked at
+  `fixtures\full-history-sweep-evidence.json`; tests recompute the totals, the
+  singleton identity and both aggregate hashes, and re-check the
+  sequence/boundary properties, so the full-history claim is verifiable from
+  the repository without the external records or the raw source.
+
+  The sweep is a decomposed per-file acceptance: PR 1 writes one native data
+  folder per run and does not compose multiple source files into one data tree.
+  After PR 2 and PR 3, and before the baseline configuration freeze, the
+  already-qualified daily partitions must be materialized into one continuous
+  research data folder under the same derived identity, preserving each
+  partition's hash and the qualification identity, and the replay probe must
+  re-prove the composed delivery against the concatenated per-month evidence.
+  Running 90 independent monthly strategy runs is not the full-history
+  baseline. That composition step is deliberately not implemented in PR 1.
+  Only after the data path is exercised on the full history does the plan
+  continue with **PR 2** (C# research account view and bounded analytics),
+  which remains the next implementation phase.

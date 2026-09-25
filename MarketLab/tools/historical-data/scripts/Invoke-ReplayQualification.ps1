@@ -10,10 +10,9 @@ validation of its own:
 
   1. python -m marketlab_historical_data qualify
      Strictly validates the historical bid/ask CSV against the SingleAnchor
-     quote contract, converts it to native LEAN XAUUSD/Oanda CFD quote-tick
-     partitions only after PASS, and writes the qualification manifest and the
-     replay expectation into
-     <DataFolder>\marketlab-qualification\.
+     quote contract, converts it to native LEAN quote-tick partitions only
+     after PASS, and writes the qualification manifest and the replay
+     expectation into <DataFolder>\marketlab-qualification\.
   2. MarketLab\scripts\run-backtest.ps1 with the MarketLab replay probe
      (MarketLab.HistoricalDataProbe.dll, SingleAnchorReplayProbeAlgorithm).
      The probe runs inside the unchanged LEAN engine, captures the quotes LEAN
@@ -29,13 +28,24 @@ validation of its own:
      record.json with an explicit overall PASS/FAIL. The driver's exit code is
      that record's verdict.
 
+For -Market dukascopy (the Dukascopy/JForex XAUUSD source) the driver first
+runs python -m marketlab_historical_data prepare-identity, which derives an
+always-open, holiday-free runtime market-hours entry and symbol-properties row
+from the engine fixtures and records their provenance in
+marketlab-qualification\runtime-identity.json. The source replay then removes
+no quote through session semantics: the source stream itself defines the
+sessions. For -Market oanda the runtime databases stay the unchanged engine
+fixtures (linked as junctions).
+
 Before the LEAN run, missing auxiliary runtime data is linked (directory
 junctions, never copies) from -AuxiliaryDataSource into the data folder:
-market-hours, symbol-properties, alternative, equity and cfd\oanda\hour.
-These are the unchanged engine fixtures the subscription setup reads
-(interest rates, map files, the hour sample). Junctions keep the assets in
-place; nothing is copied or redistributed, and an existing path is never
-replaced. Use -NoAuxiliaryLinks to skip this and accept the helper's
+alternative and equity (plus market-hours, symbol-properties and
+cfd\oanda\hour for -Market oanda). The Dukascopy identity does not link or
+require the Oanda hour fixture or the Oanda calendar; it derives its own
+databases. These are the unchanged engine fixtures the subscription setup
+reads (interest rates, map files, the Oanda hour sample). Junctions keep the
+assets in place; nothing is copied or redistributed, and an existing path is
+never replaced. Use -NoAuxiliaryLinks to skip this and accept the helper's
 missing-data warnings.
 
 Historical data and all generated qualification outputs stay outside Git.
@@ -64,9 +74,11 @@ IANA timezone of timezone-naive timestamps. Required when the timestamps carry
 no embedded UTC offset, and refused when they do.
 
 .PARAMETER Symbol,Market,SecurityType
-Subscription identity. This PR is qualified for XAUUSD/oanda/Cfd only; the
-driver refuses any other identity instead of launching a probe for an
-unqualified subscription (the Python tools remain parameterised).
+Subscription identity. This PR is qualified for XAUUSD/oanda/Cfd (the engine
+fixture identity) and XAUUSD/dukascopy/Cfd (the Dukascopy/JForex source
+identity with the derived always-open runtime databases); the driver refuses
+any other identity instead of launching a probe for an unqualified
+subscription (the Python tools remain parameterised).
 
 .PARAMETER LeanRoot
 Root of the LEAN checkout. Default: four levels above this script.
@@ -79,7 +91,9 @@ Root for the LEAN run directories (default: <LeanRoot>\MarketLab\output).
 
 .PARAMETER AuxiliaryDataSource
 Runtime data folder that already contains the auxiliary databases and engine
-fixtures (default: <LeanRoot>\Data).
+fixtures (default: <LeanRoot>\Data). For -Market dukascopy it is also the
+unchanged source the derived always-open identity databases are prepared
+from; the Oanda hour fixture is neither read nor required for that identity.
 
 .PARAMETER NoAuxiliaryLinks
 Do not link auxiliary data; expect missing-data warnings from the helper.
@@ -205,19 +219,27 @@ if (-not (Test-Path -LiteralPath $OutputRoot)) {
     New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 }
 
-if ($Symbol -ne 'XAUUSD' -or $Market -ne 'oanda' -or $SecurityType -ne 'Cfd') {
-    Write-ErrorMessage "only the qualified XAUUSD/oanda/Cfd subscription is supported by this driver (got $Symbol/$Market/$SecurityType); run the Python tools directly for any other identity (not qualified)"
+if ($Symbol -ne 'XAUUSD' -or $SecurityType -ne 'Cfd' -or ($Market -ne 'oanda' -and $Market -ne 'dukascopy')) {
+    Write-ErrorMessage "only the qualified XAUUSD/oanda/Cfd (engine fixture) and XAUUSD/dukascopy/Cfd (Dukascopy source) subscriptions are supported by this driver (got $Symbol/$Market/$SecurityType); run the Python tools directly for any other identity (not qualified)"
     exit 2
 }
 
 if (-not $NoAuxiliaryLinks) {
     $auxiliaryLinks = @(
-        'market-hours',
-        'symbol-properties',
         'alternative',
-        'equity',
-        'cfd\oanda\hour'
+        'equity'
     )
+    if ($Market -eq 'oanda') {
+        # The Oanda fixture identity uses the engine fixture databases and its
+        # hour sample. The Dukascopy identity derives its own databases and does
+        # not read the Oanda hour sample: the engine requests the Dukascopy hour
+        # path, which is absent and recorded as an unrelated failed request.
+        $auxiliaryLinks = @(
+            'market-hours',
+            'symbol-properties',
+            'cfd\oanda\hour'
+        ) + $auxiliaryLinks
+    }
     foreach ($relative in $auxiliaryLinks) {
         $target = Join-Path $dataRoot $relative
         if (Test-Path -LiteralPath $target) { continue }
@@ -244,6 +266,28 @@ if (-not $NoAuxiliaryLinks) {
 $previousPythonPath = $env:PYTHONPATH
 $env:PYTHONPATH = $pythonPackageRoot
 try {
+    if ($Market -eq 'dukascopy') {
+        # The Dukascopy/JForex source has no LEAN-shipped calendar. Derive a
+        # MarketLab-owned always-open runtime identity database from the engine
+        # fixtures and record the provenance; never write through the junctioned
+        # fixture paths above (they are not linked for this identity).
+        $prepareArguments = @(
+            '-m', 'marketlab_historical_data', 'prepare-identity',
+            '--data-folder', $dataRoot,
+            '--source-data-folder', $AuxiliaryDataSource,
+            '--symbol', $Symbol, '--market', $Market, '--security-type', $SecurityType
+        )
+        if ($Force) { $prepareArguments += '--force' }
+        Write-Host "prepare identity: $PythonExe $($prepareArguments -join ' ')"
+        $prepareOutput = Invoke-External $PythonExe $prepareArguments
+        $prepareExit = $script:externalExitCode
+        Write-Host $prepareOutput
+        if ($prepareExit -ne 0) {
+            Write-ErrorMessage "the runtime identity could not be prepared (exit $prepareExit); LEAN was not run"
+            exit 2
+        }
+    }
+
     $qualifyArguments = @('-m', 'marketlab_historical_data', 'qualify', '--source', $sourcePath, '--data-folder', $dataRoot)
     if ($TimestampColumn) { $qualifyArguments += @('--timestamp-column', $TimestampColumn) }
     if ($DateColumn) { $qualifyArguments += @('--date-column', $DateColumn) }
@@ -278,6 +322,7 @@ try {
         OutputRoot        = $OutputRoot
         Configuration     = 'Release'
         AllowMissingData  = $true
+        Parameters        = "probe-symbol:$Symbol,probe-market:$Market,probe-security-type:$SecurityType"
     }
     Write-Host "replay: run-backtest.ps1 $((($helperParameters.GetEnumerator() | ForEach-Object { "-$($_.Key) $($_.Value)" }) -join ' '))"
     $helperOutput = Invoke-External $helperScript $helperParameters

@@ -17,7 +17,8 @@ namespace MarketLab.HistoricalDataProbe
 {
     /// <summary>
     /// MarketLab-owned qualification probe that exercises the actual unchanged LEAN
-    /// backtest/data path for the XAUUSD/Oanda CFD quote-tick subscription.
+    /// backtest/data path for the qualified quote-tick subscriptions (the
+    /// XAUUSD/oanda/Cfd engine fixture and the XAUUSD/dukascopy/Cfd source identity).
     ///
     /// The probe subscribes exactly like the SingleAnchor host
     /// (<see cref="SingleAnchorVNextAlgorithm"/>: <c>AddCfd(..., Resolution.Tick, ...,
@@ -33,9 +34,9 @@ namespace MarketLab.HistoricalDataProbe
     /// per-tick reporting exists unless this probe is explicitly selected as the algorithm.
     ///
     /// Parameters (all optional; the expectation file supplies the window and identity):
-    /// <c>probe-symbol</c> (XAUUSD), <c>probe-market</c> (oanda), <c>probe-security-type</c> (Cfd),
-    /// <c>probe-expectation-file</c> (config route only; the default is
-    /// <c>&lt;data-folder&gt;/marketlab-qualification/replay-expectation.json</c>),
+    /// <c>probe-symbol</c> (XAUUSD), <c>probe-market</c> (oanda or dukascopy),
+    /// <c>probe-security-type</c> (Cfd), <c>probe-expectation-file</c> (config route only; the
+    /// default is <c>&lt;data-folder&gt;/marketlab-qualification/replay-expectation.json</c>),
     /// <c>probe-step-percent</c> (0.2), <c>probe-base-lot</c> (0.01) and
     /// <c>probe-projected-spread</c> (0): the probe only needs a valid engine for the feed path.
     /// </summary>

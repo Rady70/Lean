@@ -85,6 +85,7 @@ class PassingQualificationTests(QualificationCase):
         self.assertEqual(manifest["lean"]["data_time_zone"], "UTC")
         self.assertEqual(manifest["lean"]["exchange_time_zone"], "America/New_York")
         self.assertEqual(manifest["lean"]["market_hours_database"]["entry_key"], "Cfd-oanda-XAUUSD")
+        self.assertIsNone(manifest["lean"]["runtime_identity"])
         self.assertEqual(len(manifest["lean"]["market_hours_database"]["database_sha256"]), 64)
         self.assertEqual(manifest["semantic"]["ordered_source_semantic_digest"], FIXTURE_DIGEST)
         self.assertEqual(len(manifest["native"]["partitions"]), 1)
@@ -126,6 +127,50 @@ class PassingQualificationTests(QualificationCase):
         self.qualify(PASS_CSV, force=True)
         second_zip = (self.data / "cfd" / "oanda" / "tick" / "xauusd" / "20140505_quote.zip").read_bytes()
         self.assertEqual(first_zip, second_zip)
+
+    def test_prepared_always_open_identity_is_bound_into_the_manifest(self):
+        from marketlab_historical_data.identity import prepare_runtime_identity
+
+        data = self.root / "dukascopy-data"
+        data.mkdir()
+        prepare_runtime_identity(
+            data_folder=data,
+            source_data_folder=self.data,
+            symbol="XAUUSD",
+            market="dukascopy",
+            security_type="Cfd",
+        )
+        source = self.write_source(
+            "timestamp,bid,ask\n"
+            "2014-05-05 21:30:00.000,1291.90,1292.10\n"
+        )
+        outcome = run_qualification(
+            source_path=source,
+            data_folder=data,
+            config=CsvSourceConfig(source_timezone="UTC"),
+            symbol="XAUUSD",
+            market="dukascopy",
+            security_type="Cfd",
+        )
+        self.assertEqual(outcome.exit_code, 0, outcome.failures)
+        manifest = outcome.manifest
+        self.assertEqual(manifest["lean"]["market"], "dukascopy")
+        self.assertEqual(manifest["lean"]["data_time_zone"], "UTC")
+        self.assertEqual(manifest["lean"]["exchange_time_zone"], "UTC")
+        self.assertTrue(manifest["lean"]["market_hours_database"]["always_open"])
+        runtime_identity = manifest["lean"]["runtime_identity"]
+        self.assertEqual(runtime_identity["contract"], "marketlab-runtime-identity-v1")
+        self.assertEqual(runtime_identity["entry_key"], "Cfd-dukascopy-XAUUSD")
+        self.assertTrue(
+            (
+                data
+                / "cfd"
+                / "dukascopy"
+                / "tick"
+                / "xauusd"
+                / "20140505_quote.zip"
+            ).is_file()
+        )
 
     def test_round_prices_convert_and_are_written_canonically(self):
         outcome = self.qualify(
@@ -418,6 +463,33 @@ class FailingQualificationTests(QualificationCase):
         )
         self.assertEqual(outcome.exit_code, 2)
         self.assertTrue(outcome.failures[0].startswith("SymbolPropertiesDatabaseMissing"))
+
+    def test_unreadable_runtime_identity_sidecar_is_a_configuration_error(self):
+        from marketlab_historical_data.identity import (
+            prepare_runtime_identity,
+            runtime_identity_path,
+        )
+
+        data = self.root / "identity-data"
+        data.mkdir()
+        prepare_runtime_identity(
+            data_folder=data,
+            source_data_folder=self.data,
+            symbol="XAUUSD",
+            market="dukascopy",
+            security_type="Cfd",
+        )
+        runtime_identity_path(data).write_text("{not json", encoding="utf-8")
+        outcome = run_qualification(
+            source_path=self.write_source(PASS_CSV, "identity.csv"),
+            data_folder=data,
+            config=CsvSourceConfig(source_timezone="UTC"),
+            symbol="XAUUSD",
+            market="dukascopy",
+            security_type="Cfd",
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(outcome.failures[0].startswith("RuntimeIdentityUnusable"))
 
     def test_invalid_source_encoding_is_a_configuration_error(self):
         path = self.root / "bad-encoding.csv"

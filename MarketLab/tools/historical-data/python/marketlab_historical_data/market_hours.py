@@ -4,8 +4,10 @@ The runtime market-hours database is the actual file the LEAN engine loads:
 ``<data-folder>/market-hours/market-hours-database.json`` (LEAN resolves it
 through ``MarketHoursDatabase.FromDataFolder()``; there is no configuration key
 for a different file). This module loads that file, records its SHA-256, and
-resolves the XAUUSD/Oanda CFD entry exactly as LEAN does (exact key first, then
-the ``[*]`` wildcard).
+resolves the subscription's CFD entry exactly as LEAN does (exact key first,
+then the ``[*]`` wildcard, including the engine's file-order calendar merge).
+It serves both qualified identities: the fixture ``XAUUSD/oanda/Cfd`` and the
+Dukascopy source identity ``XAUUSD/dukascopy/Cfd`` built by ``identity.py``.
 
 The session evaluator is a diagnostic view used to explain delivery
 differences in the qualification report. It is *not* the authority: the actual
@@ -31,6 +33,7 @@ __all__ = [
     "SessionEvaluator",
     "load_market_hours",
     "parse_market_hours_timespan",
+    "resolve_market_hours_entries",
 ]
 
 _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -66,6 +69,8 @@ class ResolvedMarketHours:
     early_closes: dict
     late_opens: dict
     preview_exact: bool
+    always_open: bool
+    merged_calendar_key: str | None
 
     def describe(self) -> dict:
         return {
@@ -75,6 +80,8 @@ class ResolvedMarketHours:
             "entry_source": self.entry_source,
             "data_time_zone": self.data_time_zone,
             "exchange_time_zone": self.exchange_time_zone,
+            "always_open": self.always_open,
+            "merged_calendar_key": self.merged_calendar_key,
             "holidays": sorted(day.isoformat() for day in self.holidays),
             "early_closes": {
                 day.isoformat(): seconds for day, seconds in sorted(self.early_closes.items())
@@ -118,30 +125,75 @@ def _parse_market_hours_date(text: str, field: str) -> date:
     raise MarketHoursDatabaseError(f"market-hours {field} is not a parseable date: {text!r}")
 
 
-def load_market_hours(
-    data_folder: Path, security_type: str, market: str, symbol: str
-) -> tuple[ResolvedMarketHours, dict]:
-    """Loads and resolves the runtime market-hours entry for one subscription."""
-    database_path = Path(data_folder) / "market-hours" / "market-hours-database.json"
-    if not database_path.is_file():
-        raise MarketHoursDatabaseError(
-            f"runtime market-hours database not found: {database_path} (the data folder the "
-            "LEAN run uses must contain market-hours/market-hours-database.json)"
-        )
-    payload = database_path.read_bytes()
-    database_sha256 = hashlib.sha256(payload).hexdigest()
-    try:
-        parsed = json.loads(payload.decode("utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise MarketHoursDatabaseError(
-            f"runtime market-hours database is not readable JSON: {database_path}: {error}"
-        ) from error
-    entries = parsed.get("entries") if isinstance(parsed, dict) else None
-    if not isinstance(entries, dict):
-        raise MarketHoursDatabaseError(
-            f"runtime market-hours database has no 'entries' object: {database_path}"
-        )
+def _is_always_open(
+    weekly_segments: dict,
+    holidays: frozenset,
+    early_closes: dict,
+    late_opens: dict,
+) -> bool:
+    """True when the entry excludes no instant: every day open 00:00-24:00 with no calendar.
 
+    This is the resolved-identity property the Dukascopy source replay relies on:
+    LEAN's ``SecurityExchangeHours.IsOpen`` is then true for every tick, so the
+    session filter removes nothing and the source stream itself defines the
+    sessions.
+    """
+    if holidays or early_closes or late_opens:
+        return False
+    for index in range(7):
+        segments = weekly_segments.get(index, ())
+        if len(segments) != 1:
+            return False
+        segment = segments[0]
+        if (
+            segment.start_seconds != 0
+            or segment.end_seconds != 86400
+            or segment.state.strip().lower() != "market"
+        ):
+            return False
+    return True
+
+
+def _parse_holidays(entry: dict) -> frozenset:
+    return frozenset(
+        _parse_market_hours_date(value, "holiday") for value in entry.get("holidays", []) or []
+    )
+
+
+def _parse_early_closes(entry: dict) -> dict:
+    return {
+        _parse_market_hours_date(key, "earlyCloses"): parse_market_hours_timespan(
+            value, "earlyCloses"
+        )
+        for key, value in (entry.get("earlyCloses") or {}).items()
+    }
+
+
+def _parse_late_opens(entry: dict) -> dict:
+    return {
+        _parse_market_hours_date(key, "lateOpens"): parse_market_hours_timespan(
+            value, "lateOpens"
+        )
+        for key, value in (entry.get("lateOpens") or {}).items()
+    }
+
+
+def resolve_market_hours_entries(
+    entries: dict,
+    security_type: str,
+    market: str,
+    symbol: str,
+    *,
+    database_path: str = "",
+    database_sha256: str = "",
+) -> tuple[ResolvedMarketHours, dict]:
+    """Resolves one subscription against a parsed ``entries`` object.
+
+    This is the payload-level resolver ``load_market_hours`` wraps and
+    ``identity.prepare_runtime_identity`` uses to validate a derived database
+    before publishing it. It applies the same exact/wildcard lookup and the
+    engine's file-order calendar merge as LEAN.
+    """
     type_key = _SECURITY_TYPE_KEYS.get(security_type.strip().lower(), security_type)
     market_key = market.strip().lower()
     exact_key = f"{type_key}-{market_key}-{symbol}"
@@ -162,6 +214,10 @@ def load_market_hours(
     if entry is None:
         raise MarketHoursDatabaseError(
             f"no market-hours entry for {exact_key!r} or {wildcard_key!r} in {database_path}"
+        )
+    if not isinstance(entry, dict):
+        raise MarketHoursDatabaseError(
+            f"market-hours entry {resolved_key} is not a JSON object in {database_path}"
         )
 
     try:
@@ -190,17 +246,40 @@ def load_market_hours(
             )
         weekly_segments[index] = tuple(segments)
 
-    holidays = frozenset(
-        _parse_market_hours_date(value, "holiday") for value in entry.get("holidays", []) or []
-    )
-    early_closes = {
-        _parse_market_hours_date(key, "earlyCloses"): parse_market_hours_timespan(value, "earlyCloses")
-        for key, value in (entry.get("earlyCloses") or {}).items()
-    }
-    late_opens = {
-        _parse_market_hours_date(key, "lateOpens"): parse_market_hours_timespan(value, "lateOpens")
-        for key, value in (entry.get("lateOpens") or {}).items()
-    }
+    holidays = _parse_holidays(entry)
+    early_closes = _parse_early_closes(entry)
+    late_opens = _parse_late_opens(entry)
+    merged_calendar_key = None
+
+    # LEAN merges the market wildcard's holidays and early closes/late opens
+    # into an exact entry only when the wildcard was already resolved when the
+    # exact entry is processed (MarketHoursDatabaseJsonConverter.Convert:
+    # TryGetValue on the common key). SecurityDatabaseKey maps a null/empty
+    # symbol to '[*]', so the converter's sort key is constant and entries keep
+    # their JSON file order; the merge therefore applies only when the wildcard
+    # entry precedes the exact entry in the file (verified against the engine
+    # binary). The exact entry's weekly segments are never merged.
+    if entry_source == "exact" and wildcard_match is not None:
+        ordered_keys = list(entries)
+        merge_order = (
+            wildcard_match in ordered_keys
+            and exact_match in ordered_keys
+            and ordered_keys.index(wildcard_match) < ordered_keys.index(exact_match)
+        )
+        if merge_order:
+            wildcard_entry = entries[wildcard_match]
+            wildcard_holidays = _parse_holidays(wildcard_entry)
+            wildcard_early = _parse_early_closes(wildcard_entry)
+            wildcard_late = _parse_late_opens(wildcard_entry)
+            if wildcard_holidays or wildcard_early or wildcard_late:
+                merged_calendar_key = wildcard_match
+                holidays = holidays | wildcard_holidays
+                merged_early = dict(wildcard_early)
+                merged_early.update(early_closes)
+                early_closes = merged_early
+                merged_late = dict(wildcard_late)
+                merged_late.update(late_opens)
+                late_opens = merged_late
 
     resolved = ResolvedMarketHours(
         database_path=str(database_path),
@@ -214,8 +293,43 @@ def load_market_hours(
         early_closes=early_closes,
         late_opens=late_opens,
         preview_exact=not early_closes and not late_opens,
+        always_open=_is_always_open(weekly_segments, holidays, early_closes, late_opens),
+        merged_calendar_key=merged_calendar_key,
     )
     return resolved, entry
+
+
+def load_market_hours(
+    data_folder: Path, security_type: str, market: str, symbol: str
+) -> tuple[ResolvedMarketHours, dict]:
+    """Loads and resolves the runtime market-hours entry for one subscription."""
+    database_path = Path(data_folder) / "market-hours" / "market-hours-database.json"
+    if not database_path.is_file():
+        raise MarketHoursDatabaseError(
+            f"runtime market-hours database not found: {database_path} (the data folder the "
+            "LEAN run uses must contain market-hours/market-hours-database.json)"
+        )
+    payload = database_path.read_bytes()
+    database_sha256 = hashlib.sha256(payload).hexdigest()
+    try:
+        parsed = json.loads(payload.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise MarketHoursDatabaseError(
+            f"runtime market-hours database is not readable JSON: {database_path}: {error}"
+        ) from error
+    entries = parsed.get("entries") if isinstance(parsed, dict) else None
+    if not isinstance(entries, dict):
+        raise MarketHoursDatabaseError(
+            f"runtime market-hours database has no 'entries' object: {database_path}"
+        )
+    return resolve_market_hours_entries(
+        entries,
+        security_type,
+        market,
+        symbol,
+        database_path=str(database_path),
+        database_sha256=database_sha256,
+    )
 
 
 def _adjust_segments(

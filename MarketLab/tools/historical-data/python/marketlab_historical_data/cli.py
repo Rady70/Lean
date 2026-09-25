@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 
 from .csv_source import CsvSourceConfig
+from .identity import (
+    RuntimeIdentityError,
+    prepare_runtime_identity,
+)
 from .qualification import (
     artifacts_directory,
     dump_json,
@@ -22,6 +26,11 @@ from .replay import (
     require_manifest_structure,
     require_probe_structure,
     require_runtime_binaries_structure,
+)
+from .summary import (
+    FullHistorySummaryError,
+    build_full_history_summary,
+    ensure_summary_output_allowed,
 )
 from .transactions import OutputTransaction, OutputTransactionError
 
@@ -61,6 +70,64 @@ def _qualify_parser(subparsers) -> None:
         help="replace existing native partitions, manifest and expectation atomically",
     )
     parser.add_argument("--json", action="store_true", help="print the manifest JSON to stdout")
+
+
+def _prepare_identity_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "prepare-identity",
+        help="derive the always-open runtime identity databases for a replay subscription",
+    )
+    parser.add_argument(
+        "--data-folder",
+        required=True,
+        help="runtime LEAN data folder the derived market-hours/symbol-properties databases "
+        "are written into",
+    )
+    parser.add_argument(
+        "--source-data-folder",
+        required=True,
+        help="data folder holding the unchanged auxiliary databases the derived identity is "
+        "built from (the engine fixtures, typically <LeanRoot>\\Data)",
+    )
+    parser.add_argument("--symbol", default="XAUUSD")
+    parser.add_argument("--market", default="dukascopy")
+    parser.add_argument("--security-type", default="Cfd")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="replace derived identity databases whose bytes differ from the required derivation",
+    )
+    parser.add_argument("--json", action="store_true", help="print the provenance JSON to stdout")
+
+
+def _summarize_history_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "summarize-history",
+        help="validate and aggregate a contiguous sequence of per-file PR-1 month records",
+    )
+    parser.add_argument(
+        "--months-root",
+        required=True,
+        help="directory containing one subdirectory per month, each holding "
+        "data\\marketlab-qualification\\qualification-record.json (the per-file sweep layout)",
+    )
+    parser.add_argument(
+        "--expected-first-month",
+        required=True,
+        help="first month the sequence must start at (YYYY_MM); contiguity alone does not "
+        "prove the qualified coverage",
+    )
+    parser.add_argument(
+        "--expected-last-month",
+        required=True,
+        help="last month the sequence must end at (YYYY_MM)",
+    )
+    parser.add_argument(
+        "--output",
+        help="summary path (default: <months-root>\\full-history-summary.json); an output "
+        "inside a month directory or a source directory is refused",
+    )
+    parser.add_argument("--json", action="store_true", help="print the summary JSON to stdout")
 
 
 def _verify_parser(subparsers) -> None:
@@ -122,6 +189,12 @@ def _print_manifest_summary(manifest: dict) -> None:
         print(f"ordered source semantic digest: {manifest['semantic']['ordered_source_semantic_digest']}")
     else:
         print(f"ordered source semantic digest: not evaluated ({manifest['semantic']['digest_status']})")
+    runtime_identity = manifest.get("lean", {}).get("runtime_identity")
+    if isinstance(runtime_identity, dict):
+        source_database = runtime_identity.get("source_market_hours_database")
+        source_path = source_database.get("path") if isinstance(source_database, dict) else None
+        print(f"runtime identity: {runtime_identity.get('entry_key')} "
+              f"(prepared from {source_path})")
     print(f"converted rows: {counts['converted_row_count']} across "
           f"{len(manifest['native']['partitions'])} native partitions")
     if qualification.get("conversion_error"):
@@ -137,6 +210,9 @@ def _print_record_summary(record: dict) -> None:
     print(f"ordered source semantic digest: {replay['ordered_source_semantic_digest']}")
     print(f"ordered delivered semantic digest: {replay['ordered_lean_delivered_semantic_digest']}")
     print(f"session/delivery difference: {replay['session_delivery_difference']}")
+    if replay.get("source_absent_days"):
+        print(f"source-absent tradable days (no source rows, expected under an always-open "
+              f"identity): {len(replay['source_absent_days'])}")
     if replay["unrelated_failed_data_requests"]:
         print(f"unrelated failed data requests (not tick partitions): "
               f"{len(replay['unrelated_failed_data_requests'])}")
@@ -147,6 +223,82 @@ def _print_record_summary(record: dict) -> None:
     print(f"overall qualification: {record['overall_qualification']}")
     if record["failure_reasons"]:
         print(f"failure reasons: {record['failure_reasons']}")
+
+
+def _run_prepare_identity(args) -> int:
+    try:
+        payload = prepare_runtime_identity(
+            data_folder=Path(args.data_folder),
+            source_data_folder=Path(args.source_data_folder),
+            symbol=args.symbol,
+            market=args.market,
+            security_type=args.security_type,
+            force=args.force,
+        )
+    except RuntimeIdentityError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
+    print(
+        f"runtime identity: {payload['entry_key']} "
+        f"({payload['data_time_zone']}/{payload['exchange_time_zone']}, always open); "
+        f"market-hours {payload['derived_market_hours_database']['sha256'][:12]}, "
+        f"symbol-properties {payload['derived_symbol_properties_database']['sha256'][:12]}"
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def _run_summarize_history(args) -> int:
+    try:
+        summary = build_full_history_summary(
+            Path(args.months_root),
+            expected_first_month=args.expected_first_month,
+            expected_last_month=args.expected_last_month,
+        )
+    except FullHistorySummaryError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
+    output = (
+        Path(args.output)
+        if args.output
+        else Path(args.months_root) / "full-history-summary.json"
+    )
+    try:
+        ensure_summary_output_allowed(output, Path(args.months_root), summary)
+        with OutputTransaction(allow_overwrite=True) as transaction:
+            transaction.stage_text(output, dump_json(summary))
+            transaction.commit()
+    except (FullHistorySummaryError, OutputTransactionError) as error:
+        print(f"ERROR: summary not written: {error}", file=sys.stderr)
+        return 2
+
+    totals = summary["totals"]
+    print(
+        f"months: {summary['month_count']} (pass {summary['months_pass']}, "
+        f"fail {summary['months_fail']})"
+    )
+    print(
+        f"accepted: {totals['accepted_row_count']}; converted: "
+        f"{totals['converted_row_count']}; delivered: "
+        f"{totals['lean_delivered_row_count']}; probe processed: "
+        f"{totals['probe_processed_row_count']}"
+    )
+    print(f"source file set: {summary['source_file_set_sha256']}")
+    print(f"month digest chain: {summary['ordered_month_digest_chain_sha256']}")
+    print(f"summary: {output}")
+    if args.json:
+        print(dump_json(summary))
+    if summary["errors"]:
+        for error in summary["errors"]:
+            print(f"FAIL: {error}", file=sys.stderr)
+        print("summarize-history: FAIL", file=sys.stderr)
+        return 1
+    if summary["month_count"] == 0:
+        print("ERROR: no month records were aggregated", file=sys.stderr)
+        return 2
+    print("summarize-history: PASS")
+    return 0
 
 
 def _run_qualify(args) -> int:
@@ -315,13 +467,19 @@ def main(argv=None) -> int:
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    _prepare_identity_parser(subparsers)
     _qualify_parser(subparsers)
     _verify_parser(subparsers)
+    _summarize_history_parser(subparsers)
     args = parser.parse_args(argv)
+    if args.command == "prepare-identity":
+        return _run_prepare_identity(args)
     if args.command == "qualify":
         return _run_qualify(args)
     if args.command == "verify":
         return _run_verify(args)
+    if args.command == "summarize-history":
+        return _run_summarize_history(args)
     parser.error(f"unknown command {args.command!r}")
     return 2
 

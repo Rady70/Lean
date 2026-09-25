@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,7 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 CONTRACT = "marketlab-historical-data-qualification-v1"
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 
 
 def usable_manifest():
@@ -246,6 +248,117 @@ class VerifyCliTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 2)
             self.assertIn("not a usable replay probe result", result.stderr)
+
+
+class PrepareIdentityCliTests(unittest.TestCase):
+    def run_cli(self, arguments):
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(PACKAGE_ROOT)
+        return subprocess.run(
+            [sys.executable, "-m", "marketlab_historical_data", *arguments],
+            capture_output=True,
+            text=True,
+            env=environment,
+            check=False,
+        )
+
+    def make_folders(self, root):
+        source = root / "auxiliary"
+        (source / "market-hours").mkdir(parents=True)
+        (source / "symbol-properties").mkdir()
+        shutil.copyfile(
+            FIXTURES / "market-hours-fixture.json",
+            source / "market-hours" / "market-hours-database.json",
+        )
+        (source / "symbol-properties" / "symbol-properties-database.csv").write_text(
+            "market,symbol,type,description,quote_currency,contract_multiplier,"
+            "minimum_price_variation,lot_size\n\noanda,XAUUSD,cfd,Gold,USD,1,0.001,1\n",
+            encoding="utf-8",
+        )
+        data = root / "data"
+        data.mkdir()
+        return source, data
+
+    def test_prepare_identity_writes_the_derived_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, data = self.make_folders(Path(directory))
+            result = self.run_cli(
+                [
+                    "prepare-identity",
+                    "--data-folder",
+                    str(data),
+                    "--source-data-folder",
+                    str(source),
+                    "--symbol",
+                    "XAUUSD",
+                    "--market",
+                    "dukascopy",
+                    "--security-type",
+                    "Cfd",
+                    "--json",
+                ]
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Cfd-dukascopy-XAUUSD", result.stdout)
+            self.assertIn("always open", result.stdout)
+            self.assertIn("marketlab-runtime-identity-v1", result.stdout)
+            self.assertTrue((data / "market-hours" / "market-hours-database.json").is_file())
+            self.assertTrue(
+                (data / "marketlab-qualification" / "runtime-identity.json").is_file()
+            )
+
+    def test_prepare_identity_missing_auxiliary_folder_is_a_configuration_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            data.mkdir()
+            result = self.run_cli(
+                [
+                    "prepare-identity",
+                    "--data-folder",
+                    str(data),
+                    "--source-data-folder",
+                    str(root / "nowhere"),
+                ]
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("auxiliary data folder not found", result.stderr)
+
+    def test_prepare_identity_conflict_is_a_configuration_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, data = self.make_folders(Path(directory))
+            common = [
+                "prepare-identity",
+                "--data-folder",
+                str(data),
+                "--source-data-folder",
+                str(source),
+            ]
+            self.assertEqual(self.run_cli(common).returncode, 0)
+            target = data / "market-hours" / "market-hours-database.json"
+            target.write_text("{}", encoding="utf-8")
+            result = self.run_cli(common)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("already exists and differs", result.stderr)
+
+    def test_prepare_identity_refuses_an_unqualified_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, data = self.make_folders(Path(directory))
+            result = self.run_cli(
+                [
+                    "prepare-identity",
+                    "--data-folder",
+                    str(data),
+                    "--source-data-folder",
+                    str(source),
+                    "--symbol",
+                    "EURUSD",
+                ]
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("only supports the qualified", result.stderr)
+            self.assertFalse((data / "market-hours").exists())
+            self.assertFalse((data / "symbol-properties").exists())
 
 
 if __name__ == "__main__":

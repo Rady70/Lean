@@ -433,6 +433,114 @@ class RecordTests(unittest.TestCase):
         )
         self.assertIn("SourceCoverageGap", record["failure_reasons"])
 
+    def two_day_setup(self, always_open=True, provenance=True):
+        """A consistent two-day manifest/probe with an in-window absent day."""
+        days = ("2014-05-02", "2014-05-05")
+        per_day = {days[0]: 2, days[1]: 2}
+        second_sha = hashlib.sha256(b"zip-payload-2").hexdigest()
+        (self.tick_directory / "20140502_quote.zip").write_bytes(b"zip-payload-2")
+        zip_sha_by_day = {days[0]: second_sha, days[1]: self.zip_sha}
+        manifest = base_manifest(self.zip_sha, days=days)
+        manifest["counts"]["accepted_row_count"] = 4
+        manifest["counts"]["converted_row_count"] = 4
+        manifest["qualification"]["converted_row_count"] = 4
+        manifest["per_day"]["accepted"] = dict(per_day)
+        manifest["per_day"]["converted"] = dict(per_day)
+        manifest["semantic"]["per_partition"] = {
+            day: {"accepted_row_count": per_day[day], "semantic_digest": DIGEST}
+            for day in days
+        }
+        manifest["native"]["converted_row_count"] = 4
+        manifest["native"]["partitions"] = [
+            {
+                "partition": day,
+                "zip_relative_path": f"cfd/oanda/tick/xauusd/{day.replace('-', '')}_quote.zip",
+                "zip_sha256": zip_sha_by_day[day],
+                "row_count": per_day[day],
+            }
+            for day in days
+        ]
+        if always_open:
+            manifest["lean"]["market_hours_database"]["always_open"] = True
+            manifest["lean"]["symbol_properties_database"] = {
+                "path": "spdb",
+                "sha256": "d" * 64,
+            }
+            if provenance:
+                manifest["lean"]["runtime_identity"] = {
+                    "contract": "marketlab-runtime-identity-v1",
+                    "derived_market_hours_database": {"sha256": MARKET_HOURS_SHA},
+                    "derived_symbol_properties_database": {"sha256": "d" * 64},
+                }
+        self.manifest = manifest
+        self.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        probe = base_probe(count=4)
+        probe["delivered"]["per_partition"] = {
+            day: {"quote_count": per_day[day], "semantic_digest": DIGEST} for day in days
+        }
+        return probe
+
+    def test_always_open_absent_days_are_recorded_but_do_not_fail(self):
+        probe = self.two_day_setup()
+        record = self.build(
+            probe,
+            [
+                "cfd/oanda/tick/xauusd/20140503_quote.zip",
+                "cfd/oanda/tick/xauusd/20140504_quote.zip",
+            ],
+        )
+        self.assertEqual(record["overall_qualification"], "PASS")
+        self.assertEqual(record["failure_reasons"], [])
+        self.assertEqual(
+            record["native_replay"]["source_absent_days"], ["20140503", "20140504"]
+        )
+        self.assertEqual(record["native_replay"]["source_coverage_gap_days"], [])
+
+    def test_session_bounded_identity_keeps_the_coverage_gap_gate(self):
+        probe = self.two_day_setup(always_open=False)
+        record = self.build(probe, ["cfd/oanda/tick/xauusd/20140503_quote.zip"])
+        self.assertIn("SourceCoverageGap", record["failure_reasons"])
+        self.assertEqual(record["native_replay"]["source_absent_days"], [])
+
+    def test_always_open_requires_recorded_provenance(self):
+        probe = self.two_day_setup(provenance=False)
+        record = self.build(probe)
+        self.assertIn("RuntimeIdentityProvenanceMissing", record["failure_reasons"])
+
+    def test_always_open_provenance_must_match_the_resolved_database(self):
+        probe = self.two_day_setup()
+        self.manifest["lean"]["runtime_identity"]["derived_market_hours_database"][
+            "sha256"
+        ] = "e" * 64
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        record = self.build(probe)
+        self.assertIn("RuntimeIdentityProvenanceMismatch", record["failure_reasons"])
+
+    def test_always_open_provenance_must_match_the_symbol_properties_database(self):
+        probe = self.two_day_setup()
+        self.manifest["lean"]["runtime_identity"]["derived_symbol_properties_database"][
+            "sha256"
+        ] = "e" * 64
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        record = self.build(probe)
+        self.assertIn("RuntimeIdentityProvenanceMismatch", record["failure_reasons"])
+
+    def test_always_open_malformed_provenance_is_a_mismatch_not_a_crash(self):
+        probe = self.two_day_setup()
+        self.manifest["lean"]["runtime_identity"]["derived_market_hours_database"] = "broken"
+        self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        record = self.build(probe)
+        self.assertIn("RuntimeIdentityProvenanceMismatch", record["failure_reasons"])
+
+    def test_always_open_failed_partition_with_rows_still_fails(self):
+        probe = self.two_day_setup()
+        (self.tick_directory / "20140505_quote.zip").unlink()
+        record = self.build(probe, ["cfd/oanda/tick/xauusd/20140505_quote.zip"])
+        self.assertEqual(record["failure_reasons"].count("NativePartitionMissing"), 1)
+        self.assertEqual(record["native_replay"]["missing_native_partitions"], ["20140505"])
+        self.assertEqual(record["native_replay"]["source_absent_days"], [])
+        self.assertNotIn("SourceCoverageGap", record["failure_reasons"])
+
     def test_stale_partition_fails(self):
         (self.tick_directory / "20140506_quote.zip").write_bytes(b"stale")
         record = self.build(base_probe())

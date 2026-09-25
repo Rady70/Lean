@@ -486,9 +486,14 @@ quote-only (the final truncated session has an opening buffer only):
 the engine observes every quote LEAN delivers, and the results report delivered,
 quote-only and strategy-eligible counts separately (section 8 of the
 implementation note, and `tools\session-map\`). Without it the run is
-unrestricted. Whether LEAN itself delivers every source quote is a separate
-data-path property (section 8.7): on the current research data folder it does
-not yet, so no source-to-strategy completeness is claimed here.
+unrestricted. Complete LEAN delivery of the qualified Dukascopy source is
+resolved separately from that strategy-availability rule: under the derived
+always-open `XAUUSD/dukascopy/Cfd` identity the accepted, converted,
+LEAN-delivered and probe-processed rows are equal for March 2023 and for the
+90-month decomposed qualification sweep (section 8.7). The approved PR 7 rule
+then makes the session buffers quote-only for historical strategy eligibility,
+so a strategy run's eligible count is intentionally lower than its delivered
+count; that is not a data-path loss.
 [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md)
 has the commands, the parameter names, the deferred items and a validation
 record. Its default dates lie inside upstream's shipped Oanda XAUUSD tick
@@ -499,18 +504,37 @@ its coverage, or the run ends with exit code 3 (section 10).
 A historical CSV source is qualified and converted offline before it reaches
 that run: `MarketLab\tools\historical-data\` strictly validates the source
 against the strategy's quote contract, writes native
-`cfd\oanda\tick\xauusd` partitions into a research data folder outside Git, and
-verifies the quotes the unchanged LEAN engine actually delivers with a separate
-replay probe. See [its README](tools/historical-data/README.md). **PR 1 of the
-[research implementation plan](SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md) is
+`cfd\<market>\tick\xauusd` partitions into a research data folder outside Git,
+and verifies the quotes the unchanged LEAN engine actually delivers with a
+separate replay probe. See [its README](tools/historical-data/README.md).
+**PR 1 of the [research implementation plan](SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md) is
 complete**, and **PR 7** (source-derived session maps and the five-minute
-quote-only trading availability described above) is merged. The full historical dataset has not yet completed qualification or achieved a PR 1 PASS, and the plan's replay-identity
-gate is still unresolved: the runtime session identity/hours currently clip
-legitimate source rows before the strategy (section 8.7 of the implementation
-note), so a full-history PR 1 PASS is blocked. Resolving that identity is the
-next separate prerequisite before full historical strategy research; the next
-implementation phase (**PR 2**, C# research account and bounded analytics)
-starts after the data path has been exercised on real data.
+quote-only trading availability described above) is merged. The replay identity
+for the real Dukascopy/JForex source is resolved: the source is replayed under
+the derived always-open `XAUUSD/dukascopy/Cfd` identity, so LEAN's session
+filter removes no legitimate source quote. A real historical strategy run must
+be launched with `single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,
+single-anchor-security-type:Cfd` against the qualified data folder; the
+authoritative full-history Dukascopy baseline additionally requires the
+qualified source-derived session map (SHA-256
+`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`) so the
+approved PR 7 five-minute availability rule is part of the frozen
+configuration. The in-code `Market.Oanda` default and the 2014 sample dates are
+the shipped fixture only, and fixture or backward-compatible runs may omit the
+runtime parameter where appropriate (labeled as such, never as the
+authoritative baseline). The known 2023-03 case delivers
+every accepted row (4,465,226 delivered, 4,465,226 probe-processed, source
+digest reproduced exactly); under the Oanda fixture identity it previously
+clipped 6,798 rows. The full 90-month sweep (2019-01..2026-06) completed with
+90/90 PASS: accepted = converted = delivered = probe-processed =
+413,750,130 rows, 0 rejected rows, 0 session drops, every count and ordered
+semantic digest equal; the evidence stays outside Git (see the tools README).
+The sweep is a decomposed per-file acceptance that produced 90 separate native
+data folders; composing the already-qualified daily partitions into one
+continuous research data folder under the same identity is required after
+PR 2/PR 3 and before the frozen baseline, and is deliberately not implemented
+in PR 1. **PR 2** (C# research account and bounded analytics) remains the next
+implementation phase.
 
 ## 10. When required data is missing
 

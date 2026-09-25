@@ -8,16 +8,20 @@ and merged, and PR 7 implements the source-derived trading availability for the
 historical replay (source-derived sessions, the five-minute quote-only buffers
 at session ends, and delivered-versus-eligible accounting; see
 SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 8) and is merged with this note.
-PR 7 changes no strategy formula and no PR 1 qualification semantics. The
-full historical dataset has not yet completed qualification or achieved a PR 1 PASS, and the PR 1
-replay-identity gate (section 3.6) remains unresolved: the runtime session
-identity/hours currently clip legitimate source rows before the strategy (the
-2023-03 exercise measured 6,798 accepted rows not delivered), so a full-history
-PR 1 PASS is still blocked. Resolving that identity is the next separate
-prerequisite before full historical strategy research; the next non-blocking
-measurement is qualification speed/memory on a representative large slice, and
-PR 2 remains the next implementation phase after the data path has been
-exercised on real data.
+PR 7 changes no strategy formula and no PR 1 qualification semantics. The PR 1
+replay-identity gate (section 3.6) is now resolved: the real Dukascopy/JForex
+source replays under a MarketLab-derived always-open `XAUUSD/dukascopy/Cfd`
+runtime identity, so LEAN's session filter removes no legitimate source quote.
+The known 2023-03 case now delivers every accepted row: 4,465,226 accepted =
+converted = delivered = probe-processed, source and delivered semantic digests
+equal, zero session drops (the Oanda fixture identity previously clipped 6,798
+rows). The full historical dataset completed the 90-month qualification sweep
+(2019-01..2026-06) on 2026-09-24: 90/90 months PASS, accepted = converted =
+delivered = probe-processed = 413,750,130 rows, 0 rejected rows, 0 session
+drops, every per-partition count/digest and per-month ordered digest equal. The
+tooling qualifies one source file per run; the per-month records and the
+aggregate summary stay outside Git, and the result is recorded in
+`tools/historical-data/README.md`. PR 2 is the next implementation phase.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
@@ -304,6 +308,16 @@ must hold for a normal exact-replay PASS.
 
 If it does not hold, stop and investigate the differences before historical
 strategy research.
+
+Resolution note (implementation record): the gate is satisfied for the real
+source by the source-appropriate `XAUUSD/dukascopy/Cfd` replay identity with a
+MarketLab-derived always-open, holiday-free runtime identity prepared from the
+engine fixtures and recorded with source/derived SHA-256 provenance. The source
+stream then defines the sessions; LEAN requests every calendar day, and days
+with no accepted source rows are recorded as `source_absent_days` evidence
+rather than failures. Session-bounded identities (the Oanda engine fixture)
+keep the original `SourceCoverageGap` failure path, which the end-to-end test
+still exercises. See `tools/historical-data/README.md` sections 5-6.
 
 #### 3.7 Provenance and manifest
 
@@ -698,9 +712,24 @@ vNext engine:
 The expanded results file may contain additional research fields, so byte
 identity of the entire results JSON is not required.
 
-## 4. After PR 3: freeze before historical research
+## 4. After PR 3: compose, then freeze before historical research
 
-After PR 1-3 pass review, freeze the backtester before parameter research.
+After PR 1-3 pass review, freeze the backtester before parameter research. The
+freeze includes the qualified data identity: the authoritative historical runs
+use the `XAUUSD/dukascopy/Cfd` subscription prepared by
+`MarketLab\tools\historical-data` (`single-anchor-symbol XAUUSD`,
+`single-anchor-market dukascopy`, `single-anchor-security-type Cfd`) and the
+required qualified source-derived `single-anchor-session-map`. The in-code
+defaults (`XAUUSD/oanda/Cfd`, the shipped 2014 fixture dates) are software-use
+fixtures only; a real historical baseline that omits
+`single-anchor-market dukascopy` is not a valid run under this plan (section 6
+and section 7).
+
+The freeze also happens after composition, not before it: compose the
+already-qualified daily native partitions into one continuous research data
+folder under the same identity and re-prove its delivery (section 5), so the
+frozen configuration records that composed folder, not the 90 per-run
+qualification folders.
 
 The resulting architecture is:
 
@@ -711,7 +740,10 @@ historical CSV
 strict offline qualification
       |
       v
-native LEAN tick files + manifest
+native LEAN tick files + manifest (per source file)
+      |
+      v
+composed continuous research data folder (full history, re-proved)
       |
       v
 LEAN -- unchanged data/time host
@@ -739,7 +771,31 @@ The qualification report should make long gaps and coverage anomalies visible
 by day/month and must preserve the local source identity/hash.
 
 Only a PASS under the declared replay contract may proceed to the baseline
-strategy run.
+strategy run. The baseline strategy run reads that qualified data folder under
+the same identity it was qualified with: `single-anchor-symbol XAUUSD`,
+`single-anchor-market dukascopy`, `single-anchor-security-type Cfd`. Running
+the baseline against the Oanda fixture default in a qualified Dukascopy data
+folder would resolve a different subscription identity and is not a valid
+baseline.
+
+The authoritative full-history Dukascopy baseline also requires the qualified
+source-derived `single-anchor-session-map` (SHA-256
+`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`): the
+approved PR 7 availability rule makes the first and last five minutes of every
+complete session quote-only, and the final truncated session has only its
+opening buffer. Fixture or backward-compatible runs may omit the runtime
+parameter where appropriate, but such a run is not the authoritative baseline.
+
+PR 1 qualifies one source file per run and writes one native data folder per
+run, so the 90-month full-history qualification is a decomposed acceptance of
+the data and not itself one continuous LEAN data tree. After PR 2 and PR 3 and
+before the frozen baseline, compose the already-qualified daily partitions into
+a single continuous research data folder under the same derived identity,
+carrying over each partition's hash and the qualification identity, and re-run
+the replay probe over the composed folder to prove its delivery equals the
+concatenated per-month qualification evidence. Do not run 90 independent
+monthly strategy runs and treat that as the full-history baseline; that
+composition step is deliberately out of scope for PR 1.
 
 The historical files themselves remain outside Git.
 
@@ -754,6 +810,18 @@ HardBreakevenCeilingPercent = 4.478
 
 Freeze one complete immutable baseline configuration including at least:
 
+- data identity: `single-anchor-symbol = XAUUSD`, `single-anchor-market =
+  dukascopy`, `single-anchor-security-type = Cfd`, with the qualified
+  `XAUUSD/dukascopy/Cfd` data folder — the single composed continuous folder
+  from section 5, not the 90 per-run qualification folders (the Oanda fixture
+  default is not a research configuration);
+- the qualified start/end dates and the required qualified source-derived
+  `single-anchor-session-map` (SHA-256
+  `33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`, with its
+  generation provenance): the authoritative full-history Dukascopy baseline
+  requires it because the approved PR 7 availability rule makes the session
+  buffers quote-only. Fixture or backward-compatible runs may omit the runtime
+  parameter where appropriate, but they are not the authoritative baseline;
 - StepPercent;
 - BaseLot;
 - NormalTradeCount = 4;
@@ -895,7 +963,10 @@ This phase is complete only when:
    using LEAN portfolio holdings;
 5. risk-disabled runs reproduce the current strategy path exactly;
 6. performance remains suitable for multi-year tick research;
-7. a complete baseline configuration is frozen;
+7. the qualified daily partitions are composed into one continuous research
+   data folder whose delivery is re-proved, and a complete baseline
+   configuration (including that composed folder and the qualified
+   source-derived session map) is frozen;
 8. one untouched full-history baseline run is completed and audited before
    parameter optimization begins.
 

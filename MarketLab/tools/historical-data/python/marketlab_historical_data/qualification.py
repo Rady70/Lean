@@ -25,6 +25,7 @@ from .csv_source import (
     qualify_source,
     resolve_csv_layout,
 )
+from .identity import RuntimeIdentityError, load_runtime_identity
 from .lean_native import NativeConversionError, NativeLeanTickLayout, NativeTickWriter
 from .market_hours import (
     MarketHoursDatabaseError,
@@ -360,6 +361,11 @@ def run_qualification(
     except Exception as error:  # noqa: BLE001 - timezone resolution failure is a configuration error
         return QualificationOutcome(2, [f"DataTimeZoneUnusable: {error}"], None, None)
 
+    try:
+        runtime_identity = load_runtime_identity(data_folder, symbol, market, security_type)
+    except RuntimeIdentityError as error:
+        return QualificationOutcome(2, [f"RuntimeIdentityUnusable: {error}"], None, None)
+
     source_zone = None
     if config.source_timezone:
         try:
@@ -492,6 +498,7 @@ def run_qualification(
                     source_size=source_size,
                     data_folder=data_folder,
                     identity=identity,
+                    runtime_identity=runtime_identity,
                     conversion_status="PASS",
                     conversion_error=None,
                     partitions=partitions,
@@ -540,6 +547,7 @@ def run_qualification(
             source_size=source_size,
             data_folder=data_folder,
             identity=identity,
+            runtime_identity=runtime_identity,
             conversion_status=conversion_status,
             conversion_error=conversion_error,
             partitions=(),
@@ -592,6 +600,7 @@ def _build_manifest(
     source_size: int,
     data_folder: Path,
     identity: dict,
+    runtime_identity: dict | None,
     conversion_status: str,
     conversion_error: str | None,
     partitions,
@@ -658,6 +667,7 @@ def _build_manifest(
                 "path": str(symbol_properties),
                 "sha256": _hash_file(symbol_properties),
             },
+            "runtime_identity": runtime_identity,
             "native_layout": native_layout.describe(),
         },
         "counts": {
