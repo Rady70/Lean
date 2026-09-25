@@ -37,12 +37,17 @@ namespace MarketLab.ResearchAccountProbe
             var mismatches = 0;
             for (var phase = 0; phase < Phases; phase++)
             {
-                without[phase] = Measure(parameters, withAccount: false, MeasuredQuotes);
-                with[phase] = Measure(parameters, withAccount: true, MeasuredQuotes);
+                // Alternate the order so a thermal, JIT or load drift cannot bias the
+                // with/without comparison in one direction.
+                var accountFirst = (phase % 2) == 1;
+                var first = Measure(parameters, withAccount: accountFirst, MeasuredQuotes);
+                var second = Measure(parameters, withAccount: !accountFirst, MeasuredQuotes);
+                without[phase] = accountFirst ? second : first;
+                with[phase] = accountFirst ? first : second;
                 Console.WriteLine(
-                    $"phase {phase}: without {without[phase].NanosecondsPerQuote:F1} ns/quote / {without[phase].Bytes} B / closed {without[phase].ClosedBaskets} / entries {without[phase].Entries} / attempts {without[phase].RejectedAttempts}");
+                    $"phase {phase} ({(accountFirst ? "with,without" : "without,with")}): without {without[phase].NanosecondsPerQuote:F1} ns/quote / {without[phase].Bytes} B / closed {without[phase].ClosedBaskets} / entries {without[phase].Entries} / attempts {without[phase].RejectedAttempts}");
                 Console.WriteLine(
-                    $"phase {phase}: with    {with[phase].NanosecondsPerQuote:F1} ns/quote / {with[phase].Bytes} B / closed {with[phase].ClosedBaskets} / entries {with[phase].Entries} / attempts {with[phase].RejectedAttempts}");
+                    $"phase {phase} ({(accountFirst ? "with,without" : "without,with")}): with    {with[phase].NanosecondsPerQuote:F1} ns/quote / {with[phase].Bytes} B / closed {with[phase].ClosedBaskets} / entries {with[phase].Entries} / attempts {with[phase].RejectedAttempts}");
                 if (without[phase].ClosedBaskets != with[phase].ClosedBaskets
                     || without[phase].Entries != with[phase].Entries
                     || without[phase].RejectedAttempts != with[phase].RejectedAttempts)

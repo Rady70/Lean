@@ -814,7 +814,11 @@ no executable value).
    the realized change and seals the basket's research record; the close-tick
    balance is therefore observed even when the run ends there;
 4. the host observes the end-of-data mark with the last processed quote before
-   writing the results (the same state the `openBasket` snapshot reports).
+   writing the results (the same state the `openBasket` snapshot reports). That
+   final call is genuinely idempotent: when the quote, the basket state and the
+   realized profit are exactly the last observed ones (the engine has already
+   observed every processed quote), it changes nothing, so an unavailable final
+   executable mark is never counted twice in the skipped-mark counters.
 
 No observation mutates the basket, raises a strategy event or reorders the
 engine's exit-before-entry priority.
@@ -915,11 +919,12 @@ the parity comparison in section 9.7 is produced.
 - `dotnet build MarketLab\src\SingleAnchor\MarketLab.SingleAnchor.csproj --configuration Release`:
   0 errors (upstream project warnings only, as before).
 - `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`:
-  200 passed, 0 failed, 0 skipped (175 before PR 2; the 25 new tests cover the
+  201 passed, 0 failed, 0 skipped (175 before PR 2; the 26 new tests cover the
   account definitions, observation timing (including the unobservable-to-
-  observable recovery and the hard-BE-violation basket), per-basket and active
-  records, run aggregates, bounded retention and allocation-free observation,
-  strategy parity with and without a session map, and the edge cases below).
+  observable recovery, the idempotent end-of-run call and the
+  hard-BE-violation basket), per-basket and active records, run aggregates,
+  bounded retention and allocation-free observation, strategy parity with and
+  without a session map, and the edge cases below).
 - `pwsh -File MarketLab\tests\Test-MarketLabBacktesting.ps1` (fast mode):
   150 passed, 0 failed.
 - `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1`:
@@ -946,56 +951,68 @@ the parity comparison in section 9.7 is produced.
   exercises entries, closes, rejected attempts and the ambiguous first-entry
   skip; a second run of the same stream with a source-derived session map
   exercises quote-only quotes and again produces identical projections.
-- Strategy parity, real fixture: the strategy projection (quote counts, skipped
-  first-entry quotes, legs, rejected entries and attempts, baskets closed,
-  realized profit, `closedBaskets`, `openBasket`, `lastProcessedQuote`,
-  parameters; compact canonical JSON, SHA-256) is identical for all three of:
-  the pre-change build (worktree at the PR #8 merge commit `2ee8a3260`), the new
-  build with `single-anchor-research-account=false`, and the new build with the
-  account enabled. With the committed
+- Strategy parity, real fixture: the strategy projection is the strategy
+  parameter block, the quote counts, skipped first-entry quotes, legs, rejected
+  entries and attempts, baskets closed, realized profit, `lastProcessedQuote`,
+  `closedBaskets` and `openBasket`, as compact canonical JSON hashed with
+  SHA-256. It is identical for all three of: the pre-change build (worktree at
+  the PR #8 merge commit `2ee8a3260`), the new build with
+  `single-anchor-research-account=false`, and the new build with the account
+  enabled. With the committed
   [Get-SingleAnchorStrategyProjection.ps1](scripts/Get-SingleAnchorStrategyProjection.ps1)
   under Windows PowerShell 5.1 the hash was
-  `c6124965664b6afeb6dd49d8878510cf8d777e3c28cd6e51f786644d717de880` for all
-  three. The hash text depends on how a shell formats JSON numbers, so compare
-  files with one shell invocation (the script does that); the values are
-  identical. Enabling the account changed no strategy path dimension; the
+  `80cd7a1a026734686851ac299e168f287773e593a3e1315439e30ede0d35c725` for all
+  three; the script also exits 1 naming the files when the hashes differ, so it
+  is the parity check itself and not only a printer. The hash text depends on
+  how a shell formats JSON numbers, so compare files within one shell
+  invocation (the script does that); the values are identical. The strategy
+  `parameters` block is hashed because it is part of the configuration that
+  produced the path; the `single-anchor-research-account` toggle lives outside
+  that block. Enabling the account changed no strategy path dimension; the
   results JSON gains the three research blocks.
 - Benchmark and acceptance (shipped 2014 XAUUSD fixture, Release, helper wall
   clock, one warm-up per configuration and 5 measured runs per configuration in
-  a rotated round-robin order, all in one session; host applications were
-  running, which raises the absolute times against section 7 and is why the
-  comparison is same-session): pre-change median 21.674 s (min 21.166, max
-  21.968), 77,915 ticks/s; account disabled median 21.268 s (21.087, 21.717),
-  79,403 ticks/s; account enabled median 22.023 s (21.839, 22.467), 76,681
-  ticks/s. The two baseline configurations themselves differed by 1.9%, so the
-  session noise is of the same order as the effect. The threshold was set after
-  the measurement from the pooled baseline variance: pooled baseline median
-  21.471 s, pooled sample sd 0.329 s (1.53%), noise bound 22.456 s (three sd),
-  materiality bound 22.115 s (3%, chosen after measuring the attributable cost);
-  the enabled median 22.023 s is below both, so the criterion passes
-  (`Measure-SingleAnchorResearchOverhead.ps1` exits 0). The enabled median was
-  +1.6% against the pre-change median and +3.5% against the disabled median in
-  that session; the directly measured, same-process attributable cost is
-  174 ns/quote (see the probe bullet), and the overhead is the required
-  exact-decimal per-quote executable marking, not an unexplained regression.
+  a rotated round-robin order, one session): the threshold is set after the
+  measurement from the pre-change baseline runs only, as their mean plus two
+  sample standard deviations. The account-disabled configuration is measured and
+  reported as a diagnostic that isolates the attributable cost; it is a
+  different binary, so it is deliberately not mixed into the baseline variance.
+  Reported session: pre-change mean 12.481 s, median 12.426 s (11.549-13.679),
+  sample sd 0.775 s, 135,903 ticks/s; account disabled median 12.314 s
+  (12.237-14.122), 137,140 ticks/s; account enabled median 12.996 s
+  (12.781-14.373), 129,943 ticks/s; bound 14.030 s. The enabled median is below
+  the bound, so the criterion passes
+  (`Measure-SingleAnchorResearchOverhead.ps1` exits 0; +4.6% against the
+  pre-change median and +5.5% against the disabled median in that session). A
+  repeat session passed as well (bound 15.257 s, enabled 14.461 s), but the
+  host's run-to-run variance was high in both (pre-change relative sd 6.2% and
+  7.2%), so the script prints a low-confidence warning for a noisy baseline and
+  the wall-clock pass is reported as such, not as a precise cost. No materiality
+  allowance and no confidence-bound claim is used; a result over the bound with
+  a noisy baseline is reported INCONCLUSIVE for a rerun instead of widening the
+  band.
 - Allocations and per-quote cost (committed probe,
   [tools/research-account-probe](tools/research-account-probe), 3,000,000
-  deterministic quotes per run, five repeated phases): the engine alone took a
-  median 791.2 ns/quote and 43.99 MB; the engine with the account took a median
-  964.7 ns/quote and 49.85 MB, an attributable +174 ns/quote. The allocation
-  difference is stable (+5.85-5.86 MB over 12,264 closed baskets = 477-478 bytes
-  per closed basket, not per quote) and the strategy counters were identical in
-  every phase. The steady-state observation path itself allocates 0 managed
-  bytes per observation, including the skipped-observation branch (1,000,000
-  observations after a 1,000,000-observation warm-up, on a dedicated thread, in
-  the unit tests).
+  deterministic quotes per run, five repeated phases with the
+  account/no-account order alternated across phases so load, JIT and thermal
+  drift cannot bias one direction): the engine alone took a median 960.6
+  ns/quote and 44.0 MB; the engine with the account a median 1208.1 ns/quote
+  and 49.85 MB; the paired per-phase deltas were 220-274 ns/quote. The
+  allocation difference is stable (+5.85-5.86 MB over 12,264 closed baskets =
+  477-478 bytes per closed basket, not per quote) and the strategy counters were
+  identical in every phase. The steady-state observation path itself allocates 0
+  managed bytes per observation, including the skipped-observation branch
+  (1,000,000 observations after a 1,000,000-observation warm-up, on a dedicated
+  thread, in the unit tests). Absolute ns/quote still moves with host load; the
+  paired delta and the allocation are the stable quantities.
 - Reproduction: the projection comparison is
-  `powershell -NoProfile -File MarketLab\scripts\Get-SingleAnchorStrategyProjection.ps1 <results.json> <results.json> ...`;
-  the acceptance benchmark is
+  `powershell -NoProfile -File MarketLab\scripts\Get-SingleAnchorStrategyProjection.ps1 <results.json> <results.json> ...`
+  (equal hashes exit 0; differing hashes are named and exit 1; a missing file
+  exits 2); the acceptance benchmark is
   `pwsh -NoProfile -File MarketLab\scripts\Measure-SingleAnchorResearchOverhead.ps1 -PreChangeDll <base dll> -CurrentDll <current dll>`
-  (the script prints its three configurations, the pooled variance, the derived
-  bounds and PASS/FAIL, and writes its per-run CSV under its output root); the
-  probe is
+  (the script prints the pre-change mean and sd, the derived bound, the
+  diagnostic deltas and PASS/FAIL/INCONCLUSIVE, and writes its per-run CSV under
+  its output root); the probe is
   `dotnet build MarketLab\tools\research-account-probe\MarketLab.ResearchAccountProbe.csproj --configuration Release`
   then running its DLL.
 - Provenance of the account/analytics semantics adapted from the retired

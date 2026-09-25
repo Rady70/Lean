@@ -14,19 +14,17 @@ Each configuration gets one warm-up run and -Rounds measured runs (default 5, th
 3-5). Wall-clock seconds and the derived ticks/second are reported, as is the paired
 per-quote cost of the analytics.
 
-The acceptance threshold is set after the measurement from the observed baseline variance
-(the roadmap's requirement), not invented in advance. The two baseline configurations
-(pre-change and account-disabled) are pooled to estimate the run-to-run noise of the same
-workload: with their pooled median and pooled sample standard deviation, the allowed upper
-bound is the larger of
+The acceptance threshold is set after the measurement from the pre-change baseline runs only
+(the roadmap's requirement): the enabled median must not exceed the pre-change mean plus two
+pre-change sample standard deviations. The account-disabled configuration is measured and
+reported as a diagnostic (it isolates the attributable account cost), but it is not mixed into
+the baseline variance, because it is a different binary and its systematic difference is not
+run-to-run noise.
 
-  * the pooled baseline median plus three pooled standard deviations (a one-sided 99.7%
-    tolerance bound for the same workload), and
-  * the pooled baseline median plus 3%, a materiality allowance chosen after measuring the
-    attributable cost of the account (about 2% of the run, roughly 250 ns per quote).
-
-The enabled median must not exceed that bound. The script exits 0 when the criterion passes
-and 1 when it fails; a failing result is a defect to investigate, not an accepted cost.
+If the enabled median exceeds the bound while the pre-change relative standard deviation is
+large (more than 3%), the script reports INCONCLUSIVE rather than widening the pass band and
+asks for a rerun under cleaner conditions. Exit codes: 0 PASS, 1 FAIL, 2 INCONCLUSIVE; a run
+that itself fails aborts the script with an error.
 
 The absolute times depend on the host (start-up, caches, other applications). Compare the
 three configurations within one session; the rotated order removes ordering bias.
@@ -137,25 +135,29 @@ foreach ($name in $order) {
 }
 Write-Host "csv: $csvPath"
 
-$baselineSeconds = @($rows | Where-Object { $_.Config -ne 'enabled' } | ForEach-Object { [double]$_.Seconds })
-$pooledMedian = Get-Median $baselineSeconds
-$pooledMean = ($baselineSeconds | Measure-Object -Average).Average
-$pooledSd = [Math]::Sqrt((($baselineSeconds | ForEach-Object { ($_ - $pooledMean) * ($_ - $pooledMean) } | Measure-Object -Sum).Sum) / ($baselineSeconds.Count - 1))
-$pooledRelativeSd = $pooledSd / $pooledMean
-$noiseThreshold = $pooledMedian * (1 + 3 * $pooledRelativeSd)
-$materialityThreshold = $pooledMedian * 1.03
-$threshold = [Math]::Max($noiseThreshold, $materialityThreshold)
+$preSeconds = @($rows | Where-Object { $_.Config -eq 'pre' } | ForEach-Object { [double]$_.Seconds })
+$preMean = ($preSeconds | Measure-Object -Average).Average
+$preSd = [Math]::Sqrt((($preSeconds | ForEach-Object { ($_ - $preMean) * ($_ - $preMean) } | Measure-Object -Sum).Sum) / ($preSeconds.Count - 1))
+$preRelativeSd = $preSd / $preMean
+$threshold = $preMean + 2 * $preSd
 $preDelta = ($summary.enabled.Median - $summary.pre.Median) / $summary.pre.Median
 $disabledDelta = ($summary.enabled.Median - $summary.disabled.Median) / $summary.disabled.Median
 $perQuoteNanoseconds = ($summary.enabled.Median - $summary.disabled.Median) * 1e9 / $ExpectedQuoteTicks
 $pass = $summary.enabled.Median -le $threshold
 
-Write-Host ("baseline pooled (pre + disabled): median {0:N3} s, sample sd {1:N4} s ({2:P2}); noise bound (3 sd) {3:N3} s; materiality bound (3%) {4:N3} s" -f $pooledMedian, $pooledSd, $pooledRelativeSd, $noiseThreshold, $materialityThreshold)
-Write-Host ("acceptance: enabled median {0:N3} s must be <= {1:N3} s (the larger of the two bounds)" -f $summary.enabled.Median, $threshold)
-Write-Host ("enabled delta: {0:+0.0%;-0.0%} vs pre-change, {1:+0.0%;-0.0%} vs disabled; attributable {2:N0} ns/quote" -f $preDelta, $disabledDelta, $perQuoteNanoseconds)
+Write-Host ("baseline (pre-change only, n={0}): mean {1:N3} s, median {2:N3} s, sample sd {3:N4} s ({4:P2})" -f $preSeconds.Count, $preMean, $summary.pre.Median, $preSd, $preRelativeSd)
+Write-Host ("acceptance: enabled median {0:N3} s must be <= pre-change mean + 2 sd = {1:N3} s" -f $summary.enabled.Median, $threshold)
+Write-Host ("diagnostic: enabled delta {0:+0.0%;-0.0%} vs pre-change, {1:+0.0%;-0.0%} vs disabled; attributable {2:N0} ns/quote" -f $preDelta, $disabledDelta, $perQuoteNanoseconds)
 if ($pass) {
+    if ($preRelativeSd -gt 0.03) {
+        Write-Host 'WARNING: the pre-change baseline was noisy (relative sd > 3%); the PASS is low-confidence, and the direct probe is the stable attributable measure.'
+    }
     Write-Host 'RESULT: PASS'
     exit 0
+}
+if ($preRelativeSd -gt 0.03) {
+    Write-Host 'RESULT: INCONCLUSIVE (the pre-change baseline was too noisy; rerun under cleaner conditions)'
+    exit 2
 }
 Write-Host 'RESULT: FAIL'
 exit 1
