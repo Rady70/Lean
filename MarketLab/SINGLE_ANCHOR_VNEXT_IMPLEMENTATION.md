@@ -726,22 +726,29 @@ re-validates the ordered 90-file set against explicit `2019_01`/`2026_06`
 expected bounds, month boundaries, singleton identity and aggregate hashes.
 This is a 90-month decomposed exact-replay sweep (one PR-1 run per monthly
 file), not a single-stream ordinal digest. It also produced 90 separate native
-data folders, not one continuous LEAN data tree: after PR 2, PR 3 and the
-baseline freeze, and before the first frozen full-history strategy run, the
-already-qualified daily partitions must be composed into one continuous
-research data folder under the same derived identity, preserving each
-partition's hash and the qualification identity and re-proving the composed
-delivery with the replay probe against the concatenated per-month evidence.
-Running 90 independent monthly strategy runs is not the full-history baseline;
-the composition step is deliberately not implemented in PR 1.
+data folders, not one continuous LEAN data tree: after PR 2 and PR 3, and
+before the baseline configuration freeze, the already-qualified daily
+partitions must be composed into one continuous research data folder under the
+same derived identity, preserving each partition's hash and the qualification
+identity and re-proving the composed delivery with the replay probe against the
+concatenated per-month evidence. Running 90 independent monthly strategy runs
+is not the full-history baseline; the composition step is deliberately not
+implemented in PR 1.
 
 Any real historical strategy run must use the qualified identity:
 `single-anchor-symbol: XAUUSD`, `single-anchor-market: dukascopy`,
 `single-anchor-security-type: Cfd`, with dates inside the qualified data
-folder. The in-code `Market.Oanda` default and the 2014 sample dates are the
-shipped fixture only; a baseline run that leaves them in place bypasses the
-qualified identity and is not a valid baseline. The replay-identity blocker
-recorded here is resolved; the next project step is the plan's sequence
-PR 2 (C# research account and bounded analytics), PR 3 (target-account margin
-survival), the baseline configuration freeze, and only then the first
-full-history strategy baseline.
+folder; the authoritative full-history Dukascopy baseline additionally
+requires the qualified source-derived session map (SHA-256
+`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`), because
+the approved PR 7 availability rule makes the session buffers quote-only.
+Fixture or backward-compatible runs may omit the runtime parameter where
+appropriate, but they are not the authoritative baseline. The in-code
+`Market.Oanda` default and the 2014 sample dates are the shipped fixture only;
+a baseline run that leaves them in place bypasses the qualified identity and is
+not a valid baseline. The replay-identity blocker recorded here is resolved;
+the next project step is the plan's sequence PR 2 (C# research account and
+bounded analytics), PR 3 (target-account margin survival), composing the
+already-qualified daily partitions into one continuous research data folder and
+re-proving its delivery, the baseline configuration freeze, and only then the
+first full-history strategy baseline.

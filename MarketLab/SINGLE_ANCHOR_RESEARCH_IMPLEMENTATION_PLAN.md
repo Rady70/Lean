@@ -712,17 +712,24 @@ vNext engine:
 The expanded results file may contain additional research fields, so byte
 identity of the entire results JSON is not required.
 
-## 4. After PR 3: freeze before historical research
+## 4. After PR 3: compose, then freeze before historical research
 
 After PR 1-3 pass review, freeze the backtester before parameter research. The
 freeze includes the qualified data identity: the authoritative historical runs
 use the `XAUUSD/dukascopy/Cfd` subscription prepared by
 `MarketLab\tools\historical-data` (`single-anchor-symbol XAUUSD`,
-`single-anchor-market dukascopy`, `single-anchor-security-type Cfd`). The
-in-code defaults (`XAUUSD/oanda/Cfd`, the shipped 2014 fixture dates) are
-software-use fixtures only; a real historical baseline that omits
+`single-anchor-market dukascopy`, `single-anchor-security-type Cfd`) and the
+required qualified source-derived `single-anchor-session-map`. The in-code
+defaults (`XAUUSD/oanda/Cfd`, the shipped 2014 fixture dates) are software-use
+fixtures only; a real historical baseline that omits
 `single-anchor-market dukascopy` is not a valid run under this plan (section 6
 and section 7).
+
+The freeze also happens after composition, not before it: compose the
+already-qualified daily native partitions into one continuous research data
+folder under the same identity and re-prove its delivery (section 5), so the
+frozen configuration records that composed folder, not the 90 per-run
+qualification folders.
 
 The resulting architecture is:
 
@@ -733,7 +740,10 @@ historical CSV
 strict offline qualification
       |
       v
-native LEAN tick files + manifest
+native LEAN tick files + manifest (per source file)
+      |
+      v
+composed continuous research data folder (full history, re-proved)
       |
       v
 LEAN -- unchanged data/time host
@@ -768,6 +778,14 @@ the baseline against the Oanda fixture default in a qualified Dukascopy data
 folder would resolve a different subscription identity and is not a valid
 baseline.
 
+The authoritative full-history Dukascopy baseline also requires the qualified
+source-derived `single-anchor-session-map` (SHA-256
+`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`): the
+approved PR 7 availability rule makes the first and last five minutes of every
+complete session quote-only, and the final truncated session has only its
+opening buffer. Fixture or backward-compatible runs may omit the runtime
+parameter where appropriate, but such a run is not the authoritative baseline.
+
 PR 1 qualifies one source file per run and writes one native data folder per
 run, so the 90-month full-history qualification is a decomposed acceptance of
 the data and not itself one continuous LEAN data tree. After PR 2 and PR 3 and
@@ -797,8 +815,13 @@ Freeze one complete immutable baseline configuration including at least:
   `XAUUSD/dukascopy/Cfd` data folder — the single composed continuous folder
   from section 5, not the 90 per-run qualification folders (the Oanda fixture
   default is not a research configuration);
-- the qualified start/end dates and, when used, the source-derived
-  `single-anchor-session-map`;
+- the qualified start/end dates and the required qualified source-derived
+  `single-anchor-session-map` (SHA-256
+  `33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`, with its
+  generation provenance): the authoritative full-history Dukascopy baseline
+  requires it because the approved PR 7 availability rule makes the session
+  buffers quote-only. Fixture or backward-compatible runs may omit the runtime
+  parameter where appropriate, but they are not the authoritative baseline;
 - StepPercent;
 - BaseLot;
 - NormalTradeCount = 4;
@@ -940,7 +963,10 @@ This phase is complete only when:
    using LEAN portfolio holdings;
 5. risk-disabled runs reproduce the current strategy path exactly;
 6. performance remains suitable for multi-year tick research;
-7. a complete baseline configuration is frozen;
+7. the qualified daily partitions are composed into one continuous research
+   data folder whose delivery is re-proved, and a complete baseline
+   configuration (including that composed folder and the qualified
+   source-derived session map) is frozen;
 8. one untouched full-history baseline run is completed and audited before
    parameter optimization begins.
 

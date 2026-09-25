@@ -433,7 +433,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (216 tests)
+# Python offline tool (230 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -537,13 +537,13 @@ material only; nothing here is a runtime dependency on them.
 
   The sweep is a decomposed per-file acceptance: PR 1 writes one native data
   folder per run and does not compose multiple source files into one data tree.
-  After PR 2, PR 3 and the baseline freeze — and before the first frozen
-  full-history strategy run — the already-qualified daily partitions must be
-  materialized into one continuous research data folder under the same derived
-  identity, preserving each partition's hash and the qualification identity,
-  and the replay probe must re-prove the composed delivery against the
-  concatenated per-month evidence. Running 90 independent monthly strategy runs
-  is not the full-history baseline. That composition step is deliberately not
-  implemented in PR 1. Only after the data path is exercised on the full
-  history does the plan continue with **PR 2** (C# research account view and
-  bounded analytics), which remains the next implementation phase.
+  After PR 2 and PR 3, and before the baseline configuration freeze, the
+  already-qualified daily partitions must be materialized into one continuous
+  research data folder under the same derived identity, preserving each
+  partition's hash and the qualification identity, and the replay probe must
+  re-prove the composed delivery against the concatenated per-month evidence.
+  Running 90 independent monthly strategy runs is not the full-history
+  baseline. That composition step is deliberately not implemented in PR 1.
+  Only after the data path is exercised on the full history does the plan
+  continue with **PR 2** (C# research account view and bounded analytics),
+  which remains the next implementation phase.
