@@ -21,10 +21,11 @@ reported as a diagnostic (it isolates the attributable account cost), but it is 
 the baseline variance, because it is a different binary and its systematic difference is not
 run-to-run noise.
 
-If the enabled median exceeds the bound while the pre-change relative standard deviation is
-large (more than 3%), the script reports INCONCLUSIVE rather than widening the pass band and
-asks for a rerun under cleaner conditions. Exit codes: 0 PASS, 1 FAIL, 2 INCONCLUSIVE; a run
-that itself fails aborts the script with an error.
+If the pre-change relative standard deviation is large (more than 3%), the session is too noisy
+to distinguish the candidate effect: the script reports INCONCLUSIVE regardless of how the
+enabled median compares with the bound, and asks for a rerun under cleaner conditions, rather
+than letting a wide bound, or a wide band, certify the result. Exit codes: 0 PASS, 1 FAIL,
+2 INCONCLUSIVE; a run that itself fails aborts the script with an error.
 
 The absolute times depend on the host (start-up, caches, other applications). Compare the
 three configurations within one session; the rotated order removes ordering bias.
@@ -148,16 +149,13 @@ $pass = $summary.enabled.Median -le $threshold
 Write-Host ("baseline (pre-change only, n={0}): mean {1:N3} s, median {2:N3} s, sample sd {3:N4} s ({4:P2})" -f $preSeconds.Count, $preMean, $summary.pre.Median, $preSd, $preRelativeSd)
 Write-Host ("acceptance: enabled median {0:N3} s must be <= pre-change mean + 2 sd = {1:N3} s" -f $summary.enabled.Median, $threshold)
 Write-Host ("diagnostic: enabled delta {0:+0.0%;-0.0%} vs pre-change, {1:+0.0%;-0.0%} vs disabled; attributable {2:N0} ns/quote" -f $preDelta, $disabledDelta, $perQuoteNanoseconds)
+if ($preRelativeSd -gt 0.03) {
+    Write-Host ("RESULT: INCONCLUSIVE (the pre-change baseline relative sd {0:P2} exceeds the 3% quality limit; the session cannot distinguish the effect, rerun under cleaner conditions)" -f $preRelativeSd)
+    exit 2
+}
 if ($pass) {
-    if ($preRelativeSd -gt 0.03) {
-        Write-Host 'WARNING: the pre-change baseline was noisy (relative sd > 3%); the PASS is low-confidence, and the direct probe is the stable attributable measure.'
-    }
     Write-Host 'RESULT: PASS'
     exit 0
-}
-if ($preRelativeSd -gt 0.03) {
-    Write-Host 'RESULT: INCONCLUSIVE (the pre-change baseline was too noisy; rerun under cleaner conditions)'
-    exit 2
 }
 Write-Host 'RESULT: FAIL'
 exit 1

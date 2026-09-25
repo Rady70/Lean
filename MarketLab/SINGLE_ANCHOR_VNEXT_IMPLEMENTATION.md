@@ -902,9 +902,15 @@ on demand from the live basket and the same accumulator, so an unresolved
 basket costs no retained history either. The per-quote valuation uses the
 basket's existing aggregates and `BasketEconomics` (constant time), never a
 loop over legs, and reuses the cached balance (realized profit changes only at
-a close) and cached exposure (the ledger is append-only within a basket). A
-repeated rejection folds into the existing engine episode; 100,000 repeated
-attempts stay one row and one attempt count
+a close) and cached exposure (the ledger is append-only within a basket). The
+executable mark is the engine's already-computed raw basket profit less the
+configured per-lot cost of the simultaneous close
+(`slippage * point value + round-trip commission`, applied to the gross
+volume); this is the exact rearrangement of
+`BasketEconomics.ExecutableProfit` at the executable close prices, pinned by a
+randomized equivalence test, and it removes a duplicated raw-profit
+computation from the hot path. A repeated rejection folds into the existing
+engine episode; 100,000 repeated attempts stay one row and one attempt count
 (`tests\SingleAnchor\ResearchAccountTests.cs`).
 
 ### 9.6 Host configuration
@@ -919,8 +925,9 @@ the parity comparison in section 9.7 is produced.
 - `dotnet build MarketLab\src\SingleAnchor\MarketLab.SingleAnchor.csproj --configuration Release`:
   0 errors (upstream project warnings only, as before).
 - `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`:
-  201 passed, 0 failed, 0 skipped (175 before PR 2; the 26 new tests cover the
-  account definitions, observation timing (including the unobservable-to-
+  202 passed, 0 failed, 0 skipped (175 before PR 2; the 27 new tests cover the
+  account definitions (including the executable-mark equivalence across
+  parameter draws), observation timing (including the unobservable-to-
   observable recovery, the idempotent end-of-run call and the
   hard-BE-violation basket), per-basket and active records, run aggregates,
   bounded retention and allocation-free observation, strategy parity with and
@@ -977,34 +984,38 @@ the parity comparison in section 9.7 is produced.
   sample standard deviations. The account-disabled configuration is measured and
   reported as a diagnostic that isolates the attributable cost; it is a
   different binary, so it is deliberately not mixed into the baseline variance.
-  Reported session: pre-change mean 12.481 s, median 12.426 s (11.549-13.679),
-  sample sd 0.775 s, 135,903 ticks/s; account disabled median 12.314 s
-  (12.237-14.122), 137,140 ticks/s; account enabled median 12.996 s
-  (12.781-14.373), 129,943 ticks/s; bound 14.030 s. The enabled median is below
+  A pre-change relative standard deviation above 3% means the session cannot
+  distinguish the candidate effect: the result is INCONCLUSIVE regardless of how
+  the enabled median compares with the bound, to be rerun under cleaner
+  conditions, and only a usable baseline can return PASS or FAIL. No materiality
+  allowance and no confidence-bound claim is used. The accepted session
+  (pre-change relative sd 2.99%): pre-change mean 12.234 s, median 12.240 s
+  (11.764-12.732), sd 0.366 s, 137,969 ticks/s; account disabled median 12.746 s
+  (12.255-13.553), 132,491 ticks/s; account enabled median 12.725 s
+  (12.280-15.403), 132,710 ticks/s; bound 12.967 s. The enabled median is below
   the bound, so the criterion passes
-  (`Measure-SingleAnchorResearchOverhead.ps1` exits 0; +4.6% against the
-  pre-change median and +5.5% against the disabled median in that session). A
-  repeat session passed as well (bound 15.257 s, enabled 14.461 s), but the
-  host's run-to-run variance was high in both (pre-change relative sd 6.2% and
-  7.2%), so the script prints a low-confidence warning for a noisy baseline and
-  the wall-clock pass is reported as such, not as a precise cost. No materiality
-  allowance and no confidence-bound claim is used; a result over the bound with
-  a noisy baseline is reported INCONCLUSIVE for a rerun instead of widening the
-  band.
+  (`Measure-SingleAnchorResearchOverhead.ps1` exits 0), with diagnostic deltas
+  of +4.0% against the pre-change median and -0.2% against the disabled median.
+  Earlier sessions in the same working period were correctly rejected as
+  INCONCLUSIVE (pre-change relative sd 3.05% to 64%) rather than certified, and
+  the pre-change relative sd of the accepted session is only just inside the
+  3% quality limit; the probe below is the stable attributable measure.
 - Allocations and per-quote cost (committed probe,
   [tools/research-account-probe](tools/research-account-probe), 3,000,000
   deterministic quotes per run, five repeated phases with the
   account/no-account order alternated across phases so load, JIT and thermal
-  drift cannot bias one direction): the engine alone took a median 960.6
-  ns/quote and 44.0 MB; the engine with the account a median 1208.1 ns/quote
-  and 49.85 MB; the paired per-phase deltas were 220-274 ns/quote. The
-  allocation difference is stable (+5.85-5.86 MB over 12,264 closed baskets =
-  477-478 bytes per closed basket, not per quote) and the strategy counters were
-  identical in every phase. The steady-state observation path itself allocates 0
-  managed bytes per observation, including the skipped-observation branch
-  (1,000,000 observations after a 1,000,000-observation warm-up, on a dedicated
-  thread, in the unit tests). Absolute ns/quote still moves with host load; the
-  paired delta and the allocation are the stable quantities.
+  drift cannot bias one direction): the engine alone took a median 630.2
+  ns/quote and 44.0 MB; the engine with the account a median 699.7 ns/quote and
+  49.85 MB. The paired per-phase deltas were 67-77 ns/quote in four phases and
+  within noise (-58 ns) in one, after the raw-profit reuse; the same probe
+  measured 220-274 ns/quote before that reuse. The allocation difference is
+  stable (+5.85-5.86 MB over 12,264 closed baskets = 477-478 bytes per closed
+  basket, not per quote) and the strategy counters were identical in every
+  phase. The steady-state observation path itself allocates 0 managed bytes per
+  observation, including the skipped-observation branch (1,000,000 observations
+  after a 1,000,000-observation warm-up, on a dedicated thread, in the unit
+  tests). Absolute ns/quote still moves with host load; the paired delta and the
+  allocation are the stable quantities.
 - Reproduction: the projection comparison is
   `powershell -NoProfile -File MarketLab\scripts\Get-SingleAnchorStrategyProjection.ps1 <results.json> <results.json> ...`
   (equal hashes exit 0; differing hashes are named and exit 1; a missing file
