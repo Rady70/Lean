@@ -1032,3 +1032,62 @@ the parity comparison in section 9.7 is produced.
   repositories is recorded in
   [src/SingleAnchor/PROVENANCE.md](src/SingleAnchor/PROVENANCE.md).
 
+
+## 10. Approved PR 3 account contract (design freeze; not yet implemented)
+
+The PR 3 research target was frozen on 2026-09-26 before implementation. It is
+a **USD-denominated XM Global Ultra Low Standard-style research account**, not
+an exact replay of the user's EUR-denominated live account. This choice keeps
+the survival study focused on XAUUSD and deliberately removes historical
+EURUSD conversion from PR 3.
+
+The approved starting contract is:
+
+~~~text
+account / profit / margin currency    USD
+position accounting                   hedging
+selected leverage                     1:500
+XAUUSD calculation                    CFD Leverage
+contract size                         100 oz / lot
+volume min / step / max               0.01 / 0.01 / 50 lots
+initial / maintenance margin rate     1.0 / 1.0
+matched Gold hedge margin             0
+Margin Call                           50%
+Stop-out                              20%
+Islamic BUY / SELL swap               0 / 0
+CommissionPerLot baseline             0
+~~~
+
+For the basic MT5 hedging calculation, matched BUY/SELL Gold volume contributes
+zero margin and only the uncovered side contributes ordinary margin. The
+uncovered side uses its weighted-average open price, including a candidate fill
+when projecting a new entry:
+
+~~~text
+UsedMarginUSD =
+    UncoveredLots * 100 * WeightedAverageOpenPrice / 500
+~~~
+
+PR 3 must evaluate the complete projected post-fill inventory, because an
+opposite-side SingleAnchor entry can reduce used margin by increasing the
+covered volume. It must not calculate candidate margin independently from the
+existing hedged basket.
+
+At or below 50% margin level the account remains alive but new entries are
+blocked. At or below 20%, stop-out is terminal for the research path and is
+checked before strategy actions that could rescue the account on that quote. A
+hedged account with open positions that enters negative equity is also terminal,
+including the zero-used-margin edge case. PR 3 does not simulate the broker's
+post-stop-out ticket liquidation; stop-out already means the intact
+SingleAnchor path failed the survival test.
+
+`InitialBalance` remains configurable until the complete baseline is frozen.
+Risk-disabled PR 3 must preserve the current strategy path exactly. The
+implementation must not add EURUSD history, USD/EUR conversion, a second
+position/account ledger, or a generic multi-broker margin framework.
+
+Evidence used for the research contract: the user-supplied MT5 XAUUSD symbol
+specification (XMGlobal-MT5 8, Ultra Low Standard) plus the XM Global margin/
+stop-out and MetaTrader 5 CFD-leverage/hedging documentation reviewed on
+2026-09-26. The USD denomination is an approved modeling simplification and
+must remain explicit in result interpretation.
