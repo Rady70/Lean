@@ -548,4 +548,8 @@ material only; nothing here is a runtime dependency on them.
   merged (SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 9); the next
   implementation phase is **PR 3** (target-account margin survival), followed by composition
   of the already-qualified partitions into one continuous research data folder,
-  the baseline configuration freeze and the first full-history baseline.
+  the baseline configuration freeze and the first full-history baseline. PR 3
+  uses the approved USD-denominated XM-style research account, so it does **not**
+  require an EURUSD conversion dataset or any additional FX-conversion
+  qualification; the qualified XAUUSD history remains the market-data input for
+  this roadmap phase.

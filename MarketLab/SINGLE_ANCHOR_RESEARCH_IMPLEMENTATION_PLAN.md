@@ -593,27 +593,54 @@ is a defect to fix, not an expected cost to accept.
 Goal: answer whether the configured account could finance and survive the
 strategy path. This is a MarketLab research layer, not LEAN portfolio/margin.
 
-#### 3.16 Prerequisite: freeze broker/account rules first
+#### 3.16 Approved PR 3 research-account contract
 
-Do not implement a generic broker simulator before the target rules are known.
+Decision recorded 2026-09-26: PR 3 deliberately models a **USD-denominated
+XM Global Ultra Low Standard-style research account**. The user's live XM
+account is EUR-denominated, but historical EUR account conversion is explicitly
+out of scope for this phase. PR 3 must not add an EURUSD market-data stream,
+historical USD/EUR conversion, or another currency-conversion subsystem.
 
-Before PR 3 implementation, document the target account/broker rules:
+This is a research simplification, not a claim that the baseline reproduces the
+exact monetary path of the user's live EUR account. Results may be described as
+survival under the frozen USD XM-style research model only.
 
-- account currency;
-- XAUUSD contract size;
-- leverage;
-- margin formula;
-- price used for margin;
-- hedged-position margin rule:
-  full both sides, largest leg, reduced hedge margin, unmatched exposure, or
-  another explicit rule;
-- margin-call threshold;
-- stop-out threshold;
-- account-currency conversion rule if needed;
-- broker min/max/step lot rules that materially differ from current settings;
-- intended insufficient-free-margin behaviour.
+Freeze these rules for the first PR 3 implementation:
 
-For XAUUSD in a USD account this can remain focused and simple.
+- account, XAUUSD profit and XAUUSD margin currency: USD;
+- hedging position accounting;
+- selected leverage: fixed 1:500 for PR 3; do not add dynamic/equity-based
+  leverage tiers in this phase;
+- XAUUSD calculation mode: CFD Leverage;
+- XAUUSD contract size: 100 oz per lot;
+- broker volume limits: minimum 0.01 lot, step 0.01 lot, maximum 50 lots;
+- initial and maintenance margin rate: 1.0;
+- matched Gold BUY/SELL volume has zero margin; ordinary margin is charged only
+  on the uncovered side;
+- ordinary uncovered-volume margin follows the MT5 contract-leverage formula:
+  `uncovered lots * contract size * weighted-average open price / leverage`;
+  the projected post-fill calculation includes the candidate fill in the
+  relevant side's volume and weighted-average open price;
+- Margin Call Level: 50%. At or below it the account remains alive but no new
+  position may be opened; normal basket exits may still execute while the
+  account is above stop-out;
+- Stop-out Level: 20%. Stop-out is evaluated before strategy actions that could
+  rescue the account on that quote and is terminal for this research model;
+- a hedged account with open positions and negative equity is also terminal
+  stop-out, including the zero-used-margin edge case;
+- Islamic baseline financing: BUY swap = 0 and SELL swap = 0;
+- baseline commission per lot: 0;
+- InitialBalance remains a configurable research input and is frozen only with
+  the complete baseline configuration;
+- do not simulate XM's post-stop-out ticket-liquidation sequence. Once stop-out
+  is reached, the intact SingleAnchor basket has failed the survival test.
+
+The broker-style rules above are the approved research contract, based on the
+user-supplied MT5 XAUUSD specification and the XM/MetaTrader documentation
+reviewed on 2026-09-26. Keep the implementation narrow to this contract rather
+than building a generic multi-broker or multi-currency margin framework. These
+are authoritative research-configuration values; do not change unrelated
+SingleAnchor engine defaults merely to encode this broker profile.
 
 #### 3.17 One account authority
 
@@ -686,27 +713,34 @@ On InsufficientMargin:
 #### 3.20 Margin-call and stop-out
 
 On every incoming quote, before allowing strategy actions that could rescue the
-account, use the explicitly frozen survival order unless the actual broker rule
-requires something else:
+account, use this frozen survival order:
 
 ~~~text
 1. revalue executable account equity
 2. calculate current used margin / free margin / margin level
-3. evaluate stop-out
-4. if alive, allow normal strategy exit/entry processing
+3. evaluate terminal stop-out (20%, plus the negative-equity hedged-account rule)
+4. if alive, allow normal strategy exit processing
+5. if an entry is triggered, enforce the 50% Margin Call entry block first,
+   then evaluate projected post-fill margin feasibility
 ~~~
 
-Margin call can initially be diagnostic.
+Margin Call is not diagnostic-only in the approved model. At or below 50% no
+new position may be opened. The basket remains open and may recover; exits may
+still execute while the account is above stop-out.
 
-For the first survival implementation, stop-out should be terminal unless the
-broker's exact liquidation algorithm is known and explicitly approved:
+Stop-out is terminal for the research path:
 
 ~~~text
-margin level reaches stop-out
+margin level <= 20%
+or hedged open account enters negative equity
     -> record terminal stop-out
     -> mark research account/run failed for survival
     -> stop strategy research execution
 ~~~
+
+When UsedMargin is zero, do not manufacture an infinite/safe margin level that
+lets a negative-equity hedged account survive. Preserve the explicit
+negative-equity stop-out rule.
 
 Do not invent ticket-liquidation ordering, partial liquidation or broker
 intervention merely to continue the simulation.
@@ -847,19 +881,23 @@ Freeze one complete immutable baseline configuration including at least:
 - fixed TP settings;
 - trailing settings;
 - ProjectedSpread;
-- CommissionPerLot;
+- CommissionPerLot = 0 for the approved XM-style baseline;
 - Slippage;
-- PointValuePerLot;
+- PointValuePerLot = 100 for the USD XAUUSD research account;
+- research account currency = USD (no historical EURUSD conversion stream);
 - InitialBalance;
-- MinimumVolume;
-- VolumeStep;
-- MaximumVolume;
+- MinimumVolume = 0.01;
+- VolumeStep = 0.01;
+- MaximumVolume = 50;
 - margin enabled/disabled;
-- ContractSize;
-- Leverage;
-- hedged-margin rule;
-- margin-call threshold;
-- stop-out threshold.
+- ContractSize = 100;
+- selected Leverage = fixed 500 for PR 3 (no dynamic/equity-based leverage tiers);
+- hedged-margin rule = zero margin on matched Gold volume, ordinary margin on
+  uncovered volume;
+- margin-call threshold = 50%;
+- stop-out threshold = 20%, plus terminal negative-equity handling for a hedged
+  account with open positions;
+- BUY/SELL swap = 0 for the Islamic baseline.
 
 Do not promote fixture-only values to research defaults. In particular, the
 representative fixture's projected spread and its example step percent/base lot
@@ -868,6 +906,11 @@ are not automatically approved research settings.
 BaseLot is a risk-scale parameter once account survival/margin is modeled. It
 must either be frozen by an explicit risk policy before geometry sweeps or be
 studied later as a separate risk dimension.
+
+The USD account denomination is an intentional research simplification. Do not
+later reinterpret the resulting USD balance, equity, margin or stop-out path as
+an exact reconstruction of the user's EUR-denominated live XM account without
+adding and separately qualifying historical currency conversion.
 
 ## 7. First full-history run: qualification baseline, not optimization
 
