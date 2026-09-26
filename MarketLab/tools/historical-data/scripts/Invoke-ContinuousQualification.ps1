@@ -45,6 +45,10 @@ it must be outside the LEAN Git worktree.
 The qualified source-derived session map. It is verified by hash and copied into
 the continuous folder under marketlab-sessions\xauusd-sessions.json.
 
+.PARAMETER ExpectedFirstMonth, ExpectedLastMonth
+The contiguous month window the month records must cover (YYYY_MM). Defaults:
+2019_01 / 2026_06 (the qualified full history).
+
 .PARAMETER LeanRoot
 Root of the LEAN checkout. Default: four levels above this script.
 
@@ -83,6 +87,8 @@ param(
     [Parameter(Mandatory = $true)][string]$MonthsRoot,
     [Parameter(Mandatory = $true)][string]$DataFolder,
     [string]$SessionMap,
+    [string]$ExpectedFirstMonth = '2019_01',
+    [string]$ExpectedLastMonth = '2026_06',
     [string]$LeanRoot,
     [string]$PythonExe = 'python',
     [string]$OutputRoot,
@@ -127,7 +133,7 @@ if (-not $OutputRoot) { $OutputRoot = Join-Path $LeanRoot 'MarketLab\output' }
 if (-not $AuxiliaryDataSource) { $AuxiliaryDataSource = Join-Path $LeanRoot 'Data' }
 
 $monthsRootPath = Resolve-RequiredPath $MonthsRoot 'months root'
-$dataRoot = Resolve-RequiredPath $DataFolder 'data folder'
+$dataRoot = [System.IO.Path]::GetFullPath($DataFolder)
 if ($SessionMap) { $sessionMapPath = Resolve-RequiredPath $SessionMap 'session map' }
 
 $scriptCheckout = (Get-Item -LiteralPath (Join-Path $PSScriptRoot '..\..\..\..')).FullName
@@ -137,6 +143,15 @@ foreach ($checkout in @($LeanRoot, $scriptCheckout) | Select-Object -Unique) {
         Write-ErrorMessage "the data folder is inside a LEAN worktree ($checkout): continuous native history and qualification outputs must stay outside the repository"
         exit 2
     }
+}
+if (-not (Test-Path -LiteralPath $dataRoot)) {
+    $dataParent = Split-Path -Parent $dataRoot
+    if (-not $dataParent -or -not (Test-Path -LiteralPath $dataParent)) {
+        Write-ErrorMessage "the data folder parent does not exist: $dataParent (create it first)"
+        exit 2
+    }
+    New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+    Write-Host "created the continuous data folder: $dataRoot"
 }
 
 $pythonPackageRoot = Join-Path $PSScriptRoot '..\python'
@@ -176,8 +191,8 @@ try {
             '-m', 'marketlab_historical_data', 'compose-history',
             '--months-root', $monthsRootPath,
             '--data-folder', $dataRoot,
-            '--expected-first-month', '2019_01',
-            '--expected-last-month', '2026_06',
+            '--expected-first-month', $ExpectedFirstMonth,
+            '--expected-last-month', $ExpectedLastMonth,
             '--source-data-folder', $AuxiliaryDataSource,
             '--symbol', 'XAUUSD', '--market', 'dukascopy', '--security-type', 'Cfd'
         )
@@ -287,8 +302,24 @@ try {
         Set-Content -LiteralPath $runtimeBinariesFile -Value $runtimePayload -Encoding UTF8
     }
 
-    if ($helperExit -ne 0) {
-        Write-ErrorMessage "the LEAN helper exited ${helperExit}: the run is not clean and no qualification record was written"
+    $probeDeliberateFailure = $false
+    if ($probeResult) {
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $probeJson = Get-Content -LiteralPath $probeResult -Raw -Encoding UTF8 | ConvertFrom-Json
+            $probeDeliberateFailure = ($probeJson.completed -eq $true -and $probeJson.qualification -eq 'FAIL')
+        }
+        catch {
+            $probeDeliberateFailure = $false
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
+    }
+
+    if ($helperExit -ne 0 -and -not ($helperExit -eq 1 -and $probeDeliberateFailure)) {
+        Write-ErrorMessage "the LEAN helper exited ${helperExit} without a deliberate probe replay mismatch: the run is not clean and no qualification record was written"
         exit 3
     }
 
@@ -311,6 +342,10 @@ try {
     if ($verifyExit -eq 2) {
         Write-Host "continuous qualification driver: the record could not be written (exit 2)"
         exit 2
+    }
+    if ($helperExit -ne 0 -and $verifyExit -eq 0) {
+        Write-ErrorMessage "the LEAN helper exited ${helperExit}: a PASS record cannot be accepted from an unclean run"
+        exit 3
     }
     if ($verifyExit -eq 0) {
         Write-Host "continuous qualification driver: PASS"

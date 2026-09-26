@@ -433,7 +433,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (255 tests)
+# Python offline tool (258 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -442,6 +442,9 @@ dotnet test MarketLab\tools\historical-data\probe-tests\MarketLab.HistoricalData
 
 # end-to-end Windows test: CSV -> native files -> actual LEAN replay -> record
 powershell -File MarketLab\tools\historical-data\scripts\Test-HistoricalDataQualification.ps1
+
+# synthetic continuous driver test: one-month layout -> composition -> two real LEAN runs
+powershell -File MarketLab\tools\historical-data\scripts\Test-ContinuousQualification.ps1
 ```
 
 The end-to-end test uses the committed fixtures in `fixtures\` (not the user's
@@ -588,6 +591,19 @@ and without re-reading the raw source:
   plus a `composition` block, so the continuous verification uses the same
   established record contract, checks and semantics as a single-file
   qualification.
+
+Forced replacement is fail-safe. A previously recorded continuous
+qualification record is invalidated before any write, so an interrupted or
+failed replacement can never leave a stale PASS (or FAIL) record next to a
+changed generation; the auxiliary data source is derived in memory and
+compared with the qualified identity hashes before the runtime databases are
+published, so a wrong auxiliary source aborts without touching anything; and
+the destination must not overlap the Git worktree, the months root, the
+qualified raw source directory or the auxiliary engine-fixture folder. The
+driver also preserves the established deliberate-fail semantics (a
+probe-reported replay mismatch produces a machine-readable FAIL record and
+driver exit 1, not an unrecorded unclean run) and creates a missing
+destination folder safely.
 
 ### Continuous replay qualification (2026-09-26)
 

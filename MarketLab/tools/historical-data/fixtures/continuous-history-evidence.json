@@ -2,7 +2,7 @@
  "composition": {
   "composer_checkout_dirty": true,
   "composer_checkout_head_sha": "c5e491315dcba7b39da5a3579dbce31b122d1b04",
-  "composer_checkout_note": "the composition ran while the change that introduced the composer was still uncommitted; the composer package sources are recorded here and their contents are identical to the committed revision",
+  "composer_checkout_note": "the composer package sources recorded here are the composer at qualification time; the composition ran while that change was still uncommitted. A later review-fix commit changed only replacement/error-path safeguards (forced-replacement record invalidation, runtime-identity preflight, destination overlap guard) and the orchestration driver; the composition, expectation, replay and every measured value were not affected.",
   "composer_source": {
    "aggregate_sha256": "4d5686bf908c8d0f490f9ceeb858202189c2e7e4a4b56027a3bd94fad6807253",
    "algorithm": "sha256 of the newline-terminated '<file name>:<sha256>' lines in sorted name order",

@@ -368,6 +368,98 @@ class ContinuousCompositionTests(unittest.TestCase):
                 sha256_file(data_folder / relative["zip_relative_path"]), relative["zip_sha256"]
             )
 
+    def test_compose_refuses_a_destination_overlapping_its_inputs(self):
+        months_root = self.root / "months"
+        raw_root = self.root / "raw"
+        raw_root.mkdir()
+        for month in ROWS:
+            _write_month(months_root, month, raw_root)
+        destinations = (
+            ("raw source", raw_root),
+            ("raw source child", raw_root / "child"),
+            ("months root", months_root),
+            ("months month directory", months_root / "2023_01"),
+            (
+                "repository",
+                REPO_ROOT / "MarketLab" / "tools" / "historical-data" / "python" / "tests" / "_unused-continuous-destination",
+            ),
+        )
+        for label, destination in destinations:
+            outcome = compose_history(
+                months_root,
+                destination,
+                expected_first_month="2023_01",
+                expected_last_month="2023_02",
+                source_data_folder=REPO_DATA,
+            )
+            self.assertEqual(outcome.exit_code, 2, label)
+            self.assertTrue(
+                any("DataFolderOverlapsInput" in failure for failure in outcome.failures), label
+            )
+            if label == "repository":
+                self.assertFalse(destination.exists())
+
+    def test_forced_compose_invalidates_the_previous_record(self):
+        months_root, data_folder = _compose_fixture(self.root)
+        record = continuous_record_path(data_folder)
+        record.write_text('{"overall_qualification": "PASS"}', encoding="utf-8")
+        outcome = compose_history(
+            months_root,
+            data_folder,
+            expected_first_month="2023_01",
+            expected_last_month="2023_02",
+            source_data_folder=REPO_DATA,
+            force=True,
+        )
+        self.assertEqual(outcome.exit_code, 0, outcome.failures)
+        self.assertFalse(record.exists())
+        self.assertTrue(composition_path(data_folder).is_file())
+
+    def test_forced_compose_with_a_wrong_identity_aborts_before_writing(self):
+        months_root, data_folder = _compose_fixture(self.root)
+        record = continuous_record_path(data_folder)
+        record.write_text('{"overall_qualification": "PASS"}', encoding="utf-8")
+        market_hours_file = data_folder / "market-hours" / "market-hours-database.json"
+        symbol_properties_file = data_folder / "symbol-properties" / "symbol-properties-database.csv"
+        identity_file = data_folder / "marketlab-qualification" / "runtime-identity.json"
+        market_hours_before = market_hours_file.read_bytes()
+        symbol_properties_before = symbol_properties_file.read_bytes()
+        identity_before = identity_file.read_bytes()
+        wrong_aux = self.root / "wrong-aux"
+        (wrong_aux / "market-hours").mkdir(parents=True)
+        (wrong_aux / "symbol-properties").mkdir(parents=True)
+        payload = json.loads(
+            (REPO_DATA / "market-hours" / "market-hours-database.json").read_text(
+                encoding="utf-8-sig"
+            )
+        )
+        payload["entries"]["marketlab-review-decoy"] = {
+            "dataTimeZone": "UTC",
+            "exchangeTimeZone": "UTC",
+        }
+        (wrong_aux / "market-hours" / "market-hours-database.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        (wrong_aux / "symbol-properties" / "symbol-properties-database.csv").write_bytes(
+            (REPO_DATA / "symbol-properties" / "symbol-properties-database.csv").read_bytes()
+        )
+        outcome = compose_history(
+            months_root,
+            data_folder,
+            expected_first_month="2023_01",
+            expected_last_month="2023_02",
+            source_data_folder=wrong_aux,
+            force=True,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(
+            any("RuntimeIdentityProvenanceMismatch" in failure for failure in outcome.failures)
+        )
+        self.assertFalse(record.exists())
+        self.assertEqual(market_hours_file.read_bytes(), market_hours_before)
+        self.assertEqual(symbol_properties_file.read_bytes(), symbol_properties_before)
+        self.assertEqual(identity_file.read_bytes(), identity_before)
+
     def test_compose_copies_the_session_map_and_records_its_hash(self):
         session_map = b'{"contract": "marketlab-single-anchor-session-map-v1"}'
         months_root, data_folder = _compose_fixture(self.root, session_map=session_map)

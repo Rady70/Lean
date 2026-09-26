@@ -35,9 +35,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .canonical import sha256_file
-from .identity import prepare_runtime_identity
+from .identity import (
+    derive_market_hours_payload,
+    derive_symbol_properties_text,
+    dump_market_hours_payload,
+    entry_key,
+    prepare_runtime_identity,
+    symbol_properties_row,
+)
 from .lean_native import NativeLeanTickLayout
-from .qualification import ARTIFACTS_DIRECTORY, dump_json
+from .qualification import ARTIFACTS_DIRECTORY, dump_json, repository_root
 from .replay import (
     MANIFEST_CONTRACT,
     build_record,
@@ -109,6 +116,50 @@ def _deduplicate(values) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        Path(path).relative_to(Path(root))
+    except ValueError:
+        return False
+    return True
+
+
+def _preflight_identity_hashes(
+    source_data_folder: Path, symbol: str, market: str, security_type: str
+) -> tuple[str, str]:
+    """Derives the runtime identity databases in memory, without writing anything.
+
+    A forced replacement must never publish a derived identity before it has
+    been compared with the qualified monthly identity, so a wrong auxiliary
+    source aborts before any file is touched.
+    """
+    source_data_folder = Path(source_data_folder)
+    market_hours = source_data_folder / "market-hours" / "market-hours-database.json"
+    symbol_properties = (
+        source_data_folder / "symbol-properties" / "symbol-properties-database.csv"
+    )
+    try:
+        payload = json.loads(market_hours.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ContinuousHistoryError(
+            f"auxiliary market-hours database is not usable: {market_hours}: {error}"
+        ) from error
+    try:
+        text = symbol_properties.read_text(encoding="utf-8-sig")
+    except OSError as error:
+        raise ContinuousHistoryError(
+            f"auxiliary symbol-properties database is not usable: {symbol_properties}: {error}"
+        ) from error
+    key = entry_key(symbol, market, security_type)
+    derived_market_hours = dump_market_hours_payload(derive_market_hours_payload(payload, key))
+    row = symbol_properties_row(symbol, market, security_type)
+    derived_symbol_properties = derive_symbol_properties_text(text, row).encode("utf-8")
+    return (
+        hashlib.sha256(derived_market_hours).hexdigest(),
+        hashlib.sha256(derived_symbol_properties).hexdigest(),
+    )
 
 
 def _singleton(sets: dict, name: str) -> str:
@@ -344,6 +395,31 @@ def compose_history(
         )
 
     layout = NativeLeanTickLayout(symbol=symbol, market=market, security_type=security_type)
+    source_root = (
+        Path(summary["source_directory"]).resolve()
+        if summary.get("source_directory")
+        else None
+    )
+    repository = repository_root(Path(__file__))
+    overlap_targets = (
+        ("the Git worktree", repository),
+        ("the months root", months_root),
+        ("the qualified raw source directory", source_root),
+        ("the auxiliary engine-fixture folder", Path(source_data_folder).resolve()),
+    )
+    for label, root in overlap_targets:
+        if root is None:
+            continue
+        if data_folder == root or _is_within(data_folder, root) or _is_within(root, data_folder):
+            return ContinuousOutcome(
+                2,
+                [
+                    f"DataFolderOverlapsInput: the data folder {data_folder} must not overlap "
+                    f"{label} ({root})"
+                ],
+                None,
+                None,
+            )
     tick_directory = data_folder / layout.relative_directory
     existing_zips = (
         {path.name: path for path in tick_directory.glob("*_quote.zip")}
@@ -379,13 +455,14 @@ def compose_history(
                 None,
                 None,
             )
-    if composition_path(data_folder).exists() and not force:
-        return ContinuousOutcome(
-            2,
-            [f"OutputsExistWithoutForce: {composition_path(data_folder)} already exists"],
-            None,
-            None,
-        )
+    for existing_output in (composition_path(data_folder), continuous_record_path(data_folder)):
+        if existing_output.exists() and not force:
+            return ContinuousOutcome(
+                2,
+                [f"OutputsExistWithoutForce: {existing_output} already exists"],
+                None,
+                None,
+            )
 
     session_record = None
     session_bytes = None
@@ -409,6 +486,41 @@ def compose_history(
                     None,
                 )
         session_record = recorded_session
+
+    # A previously recorded PASS certifies the generation that is about to be
+    # replaced; it must not survive the start of the replacement. It is removed
+    # before any write (including the runtime identity), so an interrupted or
+    # failed replacement can never leave a stale PASS next to a changed
+    # generation, and an aborted replacement leaves no PASS at all.
+    if force:
+        stale_record = continuous_record_path(data_folder)
+        if stale_record.is_file():
+            try:
+                stale_record.unlink()
+            except OSError as error:
+                return ContinuousOutcome(2, [f"StaleRecordNotInvalidated: {error}"], None, None)
+
+    try:
+        derived_market_hours_preflight, derived_symbol_properties_preflight = (
+            _preflight_identity_hashes(source_data_folder, symbol, market, security_type)
+        )
+    except ContinuousHistoryError as error:
+        return ContinuousOutcome(2, [f"RuntimeIdentityUnusable: {error}"], None, None)
+    if (
+        derived_market_hours_preflight != market_hours_sha
+        or derived_symbol_properties_preflight != symbol_properties_sha
+    ):
+        return ContinuousOutcome(
+            2,
+            [
+                "RuntimeIdentityProvenanceMismatch: the auxiliary data source would derive "
+                f"market-hours {derived_market_hours_preflight} / symbol-properties "
+                f"{derived_symbol_properties_preflight}, not the qualified identity "
+                f"{market_hours_sha} / {symbol_properties_sha}; nothing was written"
+            ],
+            None,
+            None,
+        )
 
     try:
         data_folder.mkdir(parents=True, exist_ok=True)
