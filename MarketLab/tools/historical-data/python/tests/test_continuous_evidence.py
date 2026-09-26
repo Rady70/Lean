@@ -84,6 +84,13 @@ class TrackedContinuousHistoryEvidenceTests(unittest.TestCase):
         self.assertEqual(composer["file_count"], len(composer["files"]))
         for digest in composer["files"].values():
             self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        recomputed = hashlib.sha256(
+            "".join(
+                f"{name}:{digest}\n" for name, digest in sorted(composer["files"].items())
+            ).encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(recomputed, composer["aggregate_sha256"])
+        self.assertEqual(recomputed, COMPOSER_SOURCE_AGGREGATE)
 
     def test_months_are_contiguous_and_match_the_original_qualified_evidence(self):
         months = self.fixture["months"]

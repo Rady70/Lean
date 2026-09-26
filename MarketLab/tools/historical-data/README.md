@@ -609,9 +609,14 @@ not delivery loss.
 ### One complete derived native representation
 
 After the continuous delivery passed, the two complete 90-folder native
-representations were verified against their records and their partition zips
-were removed, so exactly one complete derived native representation remains
-(the continuous tree):
+representations were verified against their records and their XAUUSD native
+partition zips (`cfd\dukascopy\tick\xauusd\*_quote.zip`) were removed, so
+exactly one complete derived native representation remains (the continuous
+tree). Pre-existing one-off partial XAUUSD outputs elsewhere in the retired
+workspace (a single-month 2023-03 tree and four single-partition support
+folders) are not complete 90-month representations and are not used by any
+MarketLab workflow; unrelated zips such as the engine's auxiliary equity
+fixtures are untouched:
 
 | Retired native set | Partitions | Bytes | Verification |
 |---|---|---|---|
@@ -729,10 +734,10 @@ material only; nothing here is a runtime dependency on them.
   **PR 2** (C# research account view and bounded analytics) is implemented and
   merged (SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 9), and **PR 3**
   (target-account margin survival) is implemented and merged through GitHub
-  PR #11 (section 10 of the same note). The next roadmap step after PR 3 is
-  composition of the already-qualified partitions into one continuous research
-  data folder, the baseline configuration freeze and the first full-history
-  baseline. PR 3 uses
+  PR #11 (section 10 of the same note). The composition of the already-qualified
+  partitions into one continuous research data folder and its continuous replay
+  qualification are recorded in section 10 of this README; the baseline
+  configuration freeze and the first full-history baseline remain later steps. PR 3 uses
   the approved USD-denominated XM-style research account, so it does **not**
   require an EURUSD conversion dataset or any additional FX-conversion
   qualification; the qualified XAUUSD history remains the market-data input for

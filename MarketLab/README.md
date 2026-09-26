@@ -588,8 +588,8 @@ fixture's projection hash recorded in the implementation note section 10; the
 added results fields are additive. The user's live account is EUR-denominated; historical EURUSD
 conversion is deliberately out of scope, so the USD research result must not be
 presented as an exact reconstruction of the live EUR monetary path. The
-full-history composition, the baseline freeze and the first full-history
-baseline are still later steps.
+full-history composition is complete (section 10 of the tools README); the
+baseline freeze and the first full-history baseline are still later steps.
 
 ## 10. When required data is missing
 

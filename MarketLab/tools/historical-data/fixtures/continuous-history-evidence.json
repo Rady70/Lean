@@ -5,6 +5,7 @@
   "composer_checkout_note": "the composition ran while the change that introduced the composer was still uncommitted; the composer package sources are recorded here and their contents are identical to the committed revision",
   "composer_source": {
    "aggregate_sha256": "4d5686bf908c8d0f490f9ceeb858202189c2e7e4a4b56027a3bd94fad6807253",
+   "algorithm": "sha256 of the newline-terminated '<file name>:<sha256>' lines in sorted name order",
    "file_count": 13,
    "files": {
     "__init__.py": "842c8b32d3989f04adf96043666c76ee1270213c879fc856b8c42320fd707bba",
@@ -53,7 +54,7 @@
  },
  "contract": "marketlab-continuous-history-evidence-v1",
  "description": "Distilled, market-data-free evidence that the already-qualified 90-month native partitions were composed into one continuous LEAN data folder under the qualified XAUUSD/dukascopy/Cfd always-open UTC/UTC identity, that one uninterrupted LEAN replay of the complete history reproduced the qualified population, boundaries and per-partition semantic evidence, and that the redundant complete 90-folder native representations were retired so exactly one complete derived native representation remains. The native tree, the raw source and the large run output stay outside Git.",
- "generated_utc": "2026-09-26T22:17:53Z",
+ "generated_utc": "2026-09-26T22:48:58Z",
  "identity": "XAUUSD/dukascopy/Cfd (always open, UTC/UTC)",
  "months": [
   {

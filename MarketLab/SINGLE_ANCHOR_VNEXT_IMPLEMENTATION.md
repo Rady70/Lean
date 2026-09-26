@@ -792,10 +792,11 @@ a baseline run that leaves them in place bypasses the qualified identity and is
 not a valid baseline. The replay-identity blocker recorded here is resolved;
 PR 2 (C# research account and bounded analytics) is implemented and merged
 (section 9), and PR 3 (target-account margin survival) is implemented and
-merged through GitHub PR #11 (section 10). The next project steps are composing
-the already-qualified daily partitions into one continuous research data folder and
-re-proving its delivery, the baseline configuration freeze, and only then the
-first full-history strategy baseline.
+merged through GitHub PR #11 (section 10). The already-qualified daily
+partitions are composed into one continuous research data folder and its
+delivery is re-proved (section 10.5 below; tools README section 10); the
+remaining project steps are the baseline configuration freeze and only then
+the first full-history strategy baseline.
 
 ## 9. Research account and bounded analytics (PR 2)
 
