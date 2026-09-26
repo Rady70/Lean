@@ -342,9 +342,10 @@ culture; `true`/`false` for booleans.
   digests equal; zero session drops). The full 90-month sweep also completed
   with 90/90 PASS and 413,750,130 rows equal at every stage (section 8.7).
   PR 2 is implemented and merged (section 9); PR 3 is implemented and merged
-  through GitHub PR #11 (section 10). The composed full-history data folder,
-  the complete baseline freeze and the first full-history baseline remain later
-  steps.
+  through GitHub PR #11 (section 10); the composed continuous full-history data
+  folder and its delivery re-proof are implemented (section 10.5 and tools
+  README section 10). The complete baseline freeze and the first full-history
+  baseline remain later steps.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants
   (a partial tail fill must not be able to break the hard-BE requirement; a
