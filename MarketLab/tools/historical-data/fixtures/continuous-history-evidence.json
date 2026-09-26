@@ -2,6 +2,26 @@
  "composition": {
   "composer_checkout_dirty": true,
   "composer_checkout_head_sha": "c5e491315dcba7b39da5a3579dbce31b122d1b04",
+  "composer_checkout_note": "the composition ran while the change that introduced the composer was still uncommitted; the composer package sources are recorded here and their contents are identical to the committed revision",
+  "composer_source": {
+   "aggregate_sha256": "4d5686bf908c8d0f490f9ceeb858202189c2e7e4a4b56027a3bd94fad6807253",
+   "file_count": 13,
+   "files": {
+    "__init__.py": "842c8b32d3989f04adf96043666c76ee1270213c879fc856b8c42320fd707bba",
+    "__main__.py": "43ca5f4e430efd47a09193e9308829c4ca5bf0ae676e3702407f767437fb88bf",
+    "canonical.py": "57d79b14b95a9cc63a5e53e901e53210695b092880fe8f2f101177f10a10d4ed",
+    "cli.py": "e93a04974ebb689324591f510fabe016667d37e848099daa653514c2fd00a480",
+    "continuous.py": "8855ae262e61496c13bb007c4e82600f97f1189c70e02a4add5730c23e06e0d0",
+    "csv_source.py": "493434867e1b2490b2cc82390a60f103c8f14a60c8013356a434e0b11075ed53",
+    "identity.py": "7924eacdce00b59b451100152b1583c7129b256e65abf8e650948eb6692d6923",
+    "lean_native.py": "09a9eba3e7b10c80a3ee176277171c371d2836e62da7170ae5a658aee6546ec5",
+    "market_hours.py": "66c2fd4c47b1c4f77cd61c02824b230259e111301ed4f3aeb7408ff61023bdb6",
+    "qualification.py": "8f3c4efda48a4060519073b1f5906416c292c42ad8e5927c9ea5851e2b1c296f",
+    "replay.py": "181e089fbb9e666a0113d9972835da07b7b80402d16a03d23faae0fb37a0688e",
+    "summary.py": "09630caf075154cf160d8051f361553fbf6721c163ecdb45a1b12850e1f3ae5f",
+    "transactions.py": "9ee3b87af756c0ee28060fb23753a94423ac6381844ba77c493b3e4628b14a52"
+   }
+  },
   "data_folder": "E:\\MarketLab\\data\\lean\\xauusd-dukascopy",
   "first_canonical_utc": "2019-01-01T23:00:07.151Z",
   "last_canonical_utc": "2026-06-30T23:59:59.678Z",
@@ -33,7 +53,7 @@
  },
  "contract": "marketlab-continuous-history-evidence-v1",
  "description": "Distilled, market-data-free evidence that the already-qualified 90-month native partitions were composed into one continuous LEAN data folder under the qualified XAUUSD/dukascopy/Cfd always-open UTC/UTC identity, that one uninterrupted LEAN replay of the complete history reproduced the qualified population, boundaries and per-partition semantic evidence, and that the redundant complete 90-folder native representations were retired so exactly one complete derived native representation remains. The native tree, the raw source and the large run output stay outside Git.",
- "generated_utc": "2026-09-26T21:41:53Z",
+ "generated_utc": "2026-09-26T22:17:53Z",
  "identity": "XAUUSD/dukascopy/Cfd (always open, UTC/UTC)",
  "months": [
   {

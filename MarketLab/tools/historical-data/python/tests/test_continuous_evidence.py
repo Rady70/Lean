@@ -32,6 +32,9 @@ SOURCE_ABSENT_DAYS = 406
 UNRELATED_FAILED_REQUESTS = 1
 RUNTIME_BINARY_SET = "493ecb9b65f39d78ae231ce8efc9b4d4ca8f2f6d5b3f75d4535850b3d5a19b97"
 RETIRED_SET_BYTES = 2706616139
+COMPOSER_SOURCE_AGGREGATE = (
+    "4d5686bf908c8d0f490f9ceeb858202189c2e7e4a4b56027a3bd94fad6807253"
+)
 
 
 class TrackedContinuousHistoryEvidenceTests(unittest.TestCase):
@@ -76,6 +79,11 @@ class TrackedContinuousHistoryEvidenceTests(unittest.TestCase):
         self.assertEqual(totals["last_canonical_utc"], LAST_CANONICAL_UTC)
         self.assertIn("xauusd-dukascopy", composition["data_folder"])
         self.assertEqual(composition["source_directory"], self.relocation["relocation"]["new_location"])
+        composer = composition["composer_source"]
+        self.assertEqual(composer["aggregate_sha256"], COMPOSER_SOURCE_AGGREGATE)
+        self.assertEqual(composer["file_count"], len(composer["files"]))
+        for digest in composer["files"].values():
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
 
     def test_months_are_contiguous_and_match_the_original_qualified_evidence(self):
         months = self.fixture["months"]
