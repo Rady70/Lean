@@ -27,6 +27,10 @@ MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
 `E:\MarketLab\data\XAUUSD_raw_history` is the canonical Lean-owned source
 location; the retired-workspace path it replaced is historical only. See
 section 9 of [../historical-data/README.md](../historical-data/README.md).
+The continuous-history composition copies the qualified map into the
+continuous data folder at `marketlab-sessions\xauusd-sessions.json` (section
+10 of the same README); the command below regenerates it from the canonical
+source when needed.
 
 Options: `--source <csv directory>` (required; Dukascopy/JForex XAUUSD monthly files named
 `XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv`, contiguous months, read and never written by the
