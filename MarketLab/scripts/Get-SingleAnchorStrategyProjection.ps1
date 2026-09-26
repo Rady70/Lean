@@ -7,11 +7,18 @@ The projection is the strategy-facing part of `storage\single-anchor\results.jso
 strategy parameter block, the quote counters, entries, skipped first-entry quotes, rejected
 entries and attempts, baskets closed, realized profit, the last processed quote, the
 closed-basket records and the open-basket snapshot. The research blocks (`researchAccount`,
-`researchBaskets`, `researchOpenBasket`) and the envelope fields are deliberately excluded, so
-a run with the research account enabled and the same run with it disabled must print the same
-hash: that is the PR 2 strategy-path parity check. The strategy parameter block is included
-because it is part of the configuration that produced the path; the
-`single-anchor-research-account` toggle is a separate host field and is not part of it.
+`researchBaskets`, `researchOpenBasket`, `researchMargin`) and the envelope fields are
+deliberately excluded, so a run with the research account (and PR 3 margin) enabled and the
+same run with them disabled must print the same hash: that is the PR 2/PR 3 strategy-path
+parity check. The strategy parameter block is included because it is part of the configuration
+that produced the path; the `single-anchor-research-account` and
+`single-anchor-margin-enabled` toggles are separate host fields and are not part of it.
+
+PR 3 adds account-only fields to every rejection trace row inside the closed-basket and
+open-basket objects (account used/free/level and the projected post-fill margins). They are
+removed from the parsed rows before hashing, so the projection is genuinely strategy-only and
+a pre-PR-3 result and a margin-disabled PR 3 result of the same strategy path hash identically
+even when rejection episodes exist.
 
 The values are re-serialized as compact canonical JSON in a fixed key order
 (ConvertTo-Json -Depth 100 -Compress) and hashed with SHA-256. Run every compared file through
@@ -34,6 +41,30 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# PR 3 account-only fields on rejection trace rows; excluded so the projection stays
+# strategy-only across the pre-PR-3 and PR 3 result shapes.
+$pr3RejectionAccountFields = @(
+    'accountUsedMargin',
+    'accountFreeMargin',
+    'accountMarginLevelPercent',
+    'projectedUsedMargin',
+    'projectedFreeMargin',
+    'minProjectedFreeMargin',
+    'maxProjectedFreeMargin'
+)
+
+function Remove-Pr3RejectionAccountFields($Basket) {
+    if ($null -eq $Basket -or $null -eq $Basket.rejectionTrace) { return }
+    foreach ($row in @($Basket.rejectionTrace)) {
+        foreach ($field in $script:pr3RejectionAccountFields) {
+            if ($row.PSObject.Properties[$field]) {
+                $row.PSObject.Properties.Remove($field)
+            }
+        }
+    }
+}
+
 $hashes = @()
 foreach ($path in $Results) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -41,6 +72,12 @@ foreach ($path in $Results) {
         exit 2
     }
     $j = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    Remove-Pr3RejectionAccountFields $j.openBasket
+    if ($null -ne $j.closedBaskets) {
+        foreach ($basket in @($j.closedBaskets)) {
+            Remove-Pr3RejectionAccountFields $basket
+        }
+    }
     $projection = [ordered]@{
         parameters               = $j.parameters
         quoteTicksProcessed      = $j.quoteTicksProcessed

@@ -74,10 +74,20 @@ namespace MarketLab.SingleAnchor
     public interface IResearchRiskGuard
     {
         /// <summary>
+        /// True when the account state the survival and entry assessments use is current for the
+        /// quote just observed. False when the configured execution economics made a needed
+        /// executable close price non-positive, so the current executable equity and margin state
+        /// cannot be established on this quote. The engine must not evaluate or certify survival
+        /// from a stale state; it stops the run explicitly when this is false.
+        /// </summary>
+        bool SurvivalObservable { get; }
+
+        /// <summary>
         /// Evaluates terminal stop-out from the account state already observed for this quote
         /// (Step 3 of the frozen survival order). Returns the recorded terminal state the first
         /// time the account stops out; null while the run may continue. The call is idempotent and
-        /// the engine stops the run when it is non-null, so no later quote is delivered.
+        /// the engine stops the run when it is non-null, so no later quote is delivered. Only
+        /// called while <see cref="SurvivalObservable"/> is true.
         /// </summary>
         MarginStopOut? EvaluateSurvival(in Quote quote);
 
@@ -429,6 +439,9 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <inheritdoc />
+        public bool SurvivalObservable => _margin != null && _floatingObservable;
+
+        /// <inheritdoc />
         public MarginStopOut? EvaluateSurvival(in Quote quote)
         {
             var margin = RequireMargin();
@@ -462,10 +475,10 @@ namespace MarketLab.SingleAnchor
                 return null;
             }
 
-            // The state is the last observed one: the engine calls this immediately after the
-            // observation of the same quote, and when that observation skipped an unavailable
-            // executable mark the account keeps its last observable values (the skip is already
-            // counted by FloatingObservationsSkipped).
+            // The engine calls this immediately after the observation of the same quote and only
+            // while SurvivalObservable is true, so the equity and margin values below are current
+            // for that quote; a skipped executable mark stops the run instead (the account keeps
+            // its last observable values only for presentation and the skipped-mark count).
             _stopOut = new MarginStopOut(
                 reason,
                 quote.Time,

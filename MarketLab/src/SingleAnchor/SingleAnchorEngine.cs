@@ -335,13 +335,21 @@ namespace MarketLab.SingleAnchor
         /// observed for this quote is terminal stop-out. The guard records the terminal account
         /// state; the engine faults here, before exits or entries, so no later action can rescue an
         /// account that already failed survival, and no post-stop-out liquidation is simulated.
-        /// No-op without a risk guard (the pre-PR-3 path).
+        /// When the guard cannot establish a current executable account state (a needed close
+        /// price is not positive under the configured slippage), the run stops explicitly rather
+        /// than being certified from a stale state. No-op without a risk guard (the pre-PR-3
+        /// path).
         /// </summary>
         private void EvaluateSurvival(in Quote quote)
         {
             if (_risk == null)
             {
                 return;
+            }
+            if (!_risk.SurvivalObservable)
+            {
+                throw RecordFault(new AccountSurvivalException(AccountSurvivalIssue.ExecutableMarkUnavailable, quote,
+                    $"The PR 3 research account cannot be revalued at {quote}: a needed executable close price is not positive under the configured slippage, so the current equity, used margin, free margin and margin level are not defined on this quote. Survival is not certified from a stale account state; the run is stopped."));
             }
             var stopOut = _risk.EvaluateSurvival(quote);
             if (stopOut == null)
@@ -550,6 +558,14 @@ namespace MarketLab.SingleAnchor
             // post-mortem ledger state (which keeps the faulting leg) is observed. The raw profit
             // of the updated basket is computed for the observer here (entry ticks only).
             _research?.ObserveQuote(quote, basket, RealizedProfit, BasketEconomics.RawProfit(basket, quote, _p));
+
+            // The fill changed the account state, so the frozen order's stop-out step applies to
+            // the post-fill state as well: a fill whose immediate execution costs (spread,
+            // slippage, commission) put the account at terminal stop-out ends the run on this
+            // quote instead of waiting for the next one (which may never arrive). The filled leg
+            // stays in the ledger and in the terminal state, but it is not published as a normal
+            // successful entry, mirroring the hard-BE invariant path.
+            EvaluateSurvival(quote);
 
             if (sizing.HasValue)
             {

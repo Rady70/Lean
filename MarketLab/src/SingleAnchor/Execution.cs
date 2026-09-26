@@ -352,12 +352,61 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
+    /// Why a PR 3 survival run cannot establish the account's current survival state.
+    /// </summary>
+    public enum AccountSurvivalIssue
+    {
+        /// <summary>
+        /// A needed executable close price is not positive under the configured slippage, so the
+        /// current executable account equity, used margin, free margin and margin level cannot be
+        /// computed for this quote. PR 3 does not certify survival from a stale account state, so
+        /// the run stops instead of continuing or fabricating a valuation.
+        /// </summary>
+        ExecutableMarkUnavailable
+    }
+
+    /// <summary>
+    /// Thrown by the engine when a PR 3 survival run cannot revalue the account on an incoming
+    /// quote because the configured execution economics make a needed executable close price
+    /// non-positive. The frozen survival order requires a current executable valuation on every
+    /// quote; continuing on the last observable state would silently certify an account that may
+    /// already be terminally stopped out. This is a run-ending condition like the stop-out and
+    /// data-quality faults, not a stop-out itself; the last observable account state and the
+    /// skipped-mark count remain in the results.
+    /// </summary>
+    public sealed class AccountSurvivalException : SingleAnchorRunException
+    {
+        /// <summary>Creates the exception.</summary>
+        public AccountSurvivalException(AccountSurvivalIssue issue, Quote quote, string message)
+            : base(quote, message)
+        {
+            Issue = issue;
+        }
+
+        /// <summary>Which survival condition could not be established.</summary>
+        public AccountSurvivalIssue Issue { get; }
+
+        /// <inheritdoc />
+        public override string Kind => "AccountSurvival";
+
+        /// <inheritdoc />
+        public override string Condition => Issue.ToString();
+
+        /// <inheritdoc />
+        public override SingleAnchorRunException AsRefusal()
+        {
+            return new AccountSurvivalException(Issue, Quote, "The engine is faulted and accepts no further quotes: " + Message);
+        }
+    }
+
+    /// <summary>
     /// Thrown by the engine when the PR 3 research account reaches terminal stop-out. Stop-out is
-    /// evaluated before any strategy action that could rescue the account on the same quote, and
-    /// it is a run-ending condition like the strategy-invariant and data-quality faults: the
-    /// intact SingleAnchor path did not survive, the engine refuses every further quote, and no
-    /// broker ticket-liquidation sequence is simulated. The terminal account state is recorded by
-    /// the account (<c>researchMargin.stopOut</c>).
+    /// evaluated before any strategy action that could rescue the account on the same quote and
+    /// again on the post-fill state of an entry, and it is a run-ending condition like the
+    /// strategy-invariant and data-quality faults: the intact SingleAnchor path did not survive,
+    /// the engine refuses every further quote, and no broker ticket-liquidation sequence is
+    /// simulated. The terminal account state is recorded by the account
+    /// (<c>researchMargin.stopOut</c>).
     /// </summary>
     public sealed class AccountStopOutException : SingleAnchorRunException
     {

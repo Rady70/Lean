@@ -8,10 +8,12 @@ namespace MarketLab.SingleAnchor
     /// The frozen PR 3 target-account margin configuration (approved roadmap contract, sections
     /// 3.16-3.21): a USD-denominated XM Global Ultra Low Standard-style research account with
     /// hedging position accounting, a fixed selected leverage and the MT5/XM hedging margin rule.
-    /// The approved PR 3 values are the defaults: 100 oz per lot, fixed 1:500, Margin Call 50%,
-    /// Stop-out 20%. The complete baseline configuration freezes these numbers later; PR 3 must
-    /// not add dynamic or equity-based leverage tiers, a multi-currency account or a generic
-    /// multi-broker framework. This record is deliberately not part of
+    /// The approved PR 3 values are the defaults - 100 oz per lot, fixed 1:500, Margin Call 50%,
+    /// Stop-out 20% - and the production host instantiates exactly those values (it also enforces
+    /// the XAUUSD CFD instrument and the 100-per-lot USD point value). The record stays
+    /// internally parameterizable so the arithmetic can be tested independently, but PR 3 must
+    /// not expose dynamic or equity-based leverage tiers, a multi-currency account or a generic
+    /// multi-broker framework. It is deliberately not part of
     /// <see cref="SingleAnchorParameters"/>: the strategy parameter block that the parity
     /// projection hashes stays unchanged, and margin is a research-account capability, not a
     /// strategy formula.

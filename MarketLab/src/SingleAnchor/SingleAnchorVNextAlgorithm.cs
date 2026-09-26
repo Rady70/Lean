@@ -42,22 +42,27 @@ namespace MarketLab.SingleAnchor
     /// no strategy decision, and the results carry it as <c>researchAccount</c>,
     /// <c>researchBaskets</c> and <c>researchOpenBasket</c> (implementation note section 9).
     /// The optional PR 3 target-account margin layer (<c>single-anchor-margin-enabled</c>,
-    /// default false) extends that same account with the frozen USD XM-style contract
-    /// (<c>single-anchor-margin-contract-size</c> 100, <c>single-anchor-margin-leverage</c> 500,
-    /// <c>single-anchor-margin-call-percent</c> 50, <c>single-anchor-margin-stop-out-percent</c>
-    /// 20): used/free margin and margin level derived from the same balance/equity, the 50%
-    /// Margin Call entry block, explicit <c>InsufficientMargin</c> rejections against the
-    /// projected post-fill inventory, and terminal 20% (or open-position negative-equity)
-    /// stop-out that stops the run as an <c>AccountStopOut</c> failure. The extra evidence is
-    /// written to <c>researchMargin</c>; disabling margin leaves the pre-PR-3 strategy path
-    /// exactly unchanged. The account currency is USD as a research simplification (the user's
-    /// live account is EUR-denominated; historical EURUSD conversion is out of scope), and no
-    /// LEAN portfolio, order or margin state is used.
+    /// default false) extends that same account with the frozen USD XM-style contract, which the
+    /// host instantiates at the approved fixed values (100 oz/lot, fixed 1:500, Margin Call 50%,
+    /// Stop-out 20%) and only in the approved instrument configuration: XAUUSD, CFD Leverage and
+    /// the 100-per-lot USD point value; another symbol, security type or point value is refused
+    /// rather than described as the frozen model. It adds used/free margin and margin level
+    /// derived from the same balance/equity, the 50% Margin Call entry block, explicit
+    /// <c>InsufficientMargin</c> rejections against the projected post-fill inventory, a
+    /// post-fill stop-out check, and terminal 20% (or open-position negative-equity) stop-out
+    /// that stops the run as an <c>AccountStopOut</c> failure; an executable mark that cannot be
+    /// computed stops the run as an <c>AccountSurvival</c> failure instead of certifying
+    /// survival from a stale state. The extra evidence is written to <c>researchMargin</c>;
+    /// disabling margin leaves the pre-PR-3 strategy path exactly unchanged. The account
+    /// currency is USD as a research simplification (the user's live account is EUR-denominated;
+    /// historical EURUSD conversion is out of scope), and no LEAN portfolio, order or margin
+    /// state is used.
     /// A strategy invariant
     /// failure (<see cref="StrategyInvariantException"/>), a data-quality failure
     /// (<see cref="DataQualityException"/>), a session-map coverage mismatch
     /// (<see cref="SessionMapException"/>) or — with the PR 3 margin layer enabled — terminal
-    /// account stop-out (<see cref="AccountStopOutException"/>) writes the results with the
+    /// account stop-out (<see cref="AccountStopOutException"/>) or an account that cannot be
+    /// revalued on a quote (<see cref="AccountSurvivalException"/>) writes the results with the
     /// failure recorded and then stops the run as a LEAN runtime error. The results also carry the hard-BE verification
     /// metadata (strategy definition resolved, requirement verified at each tail entry under the
     /// configured execution model).
@@ -111,11 +116,10 @@ namespace MarketLab.SingleAnchor
         [Parameter("single-anchor-research-account")] private bool _researchAccountEnabled = true;
 
         // ---- Target-account margin survival (approved roadmap PR 3) ----
+        // The frozen PR 3 account contract (USD XM-style XAUUSD CFD, 100 oz/lot, fixed 1:500,
+        // 50% Margin Call, 20% stop-out) is instantiated from MarginParameters' approved defaults;
+        // it is deliberately not a configurable generic broker model.
         [Parameter("single-anchor-margin-enabled")] private bool _marginEnabled = false;
-        [Parameter("single-anchor-margin-contract-size")] private decimal _marginContractSize = 100m;
-        [Parameter("single-anchor-margin-leverage")] private decimal _marginLeverage = 500m;
-        [Parameter("single-anchor-margin-call-percent")] private decimal _marginCallPercent = 50m;
-        [Parameter("single-anchor-margin-stop-out-percent")] private decimal _marginStopOutPercent = 20m;
 
         private Symbol _symbol = null!;
         private SingleAnchorEngine _engine = null!;
@@ -203,18 +207,16 @@ namespace MarketLab.SingleAnchor
                     throw new ArgumentException(
                         "single-anchor-margin-enabled=true requires single-anchor-research-account=true: the PR 3 margin/survival model extends the one research account and must not create a second Balance/Equity authority.");
                 }
-                margin = new MarginParameters
+                var contractError = MarginHostContractError(_ticker, _securityType, pointValue.Value);
+                if (contractError != null)
                 {
-                    ContractSize = _marginContractSize,
-                    Leverage = _marginLeverage,
-                    MarginCallLevelPercent = _marginCallPercent,
-                    StopOutLevelPercent = _marginStopOutPercent
-                };
-                var marginErrors = margin.GetValidationErrors();
-                if (marginErrors.Count > 0)
-                {
-                    throw new ArgumentException("SingleAnchor margin parameters are invalid (see the single-anchor-margin-* parameters): " + string.Join(" ", marginErrors));
+                    throw new ArgumentException(contractError);
                 }
+                // The approved values themselves (100 oz/lot, 1:500, 50%/20%); the record stays
+                // internally parameterizable for the arithmetic tests, but the host path is the
+                // frozen contract, not a configurable broker model.
+                margin = new MarginParameters();
+                margin.Validate();
             }
             _researchAccount = _researchAccountEnabled ? new SingleAnchorResearchAccount(_parameters, _cash, margin) : null;
             _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters), availability, _researchAccount, margin != null ? _researchAccount : null);
@@ -294,6 +296,31 @@ namespace MarketLab.SingleAnchor
                     ? $"final session ends {FormatUtc(final.End.Value)} (coverage end {FormatUtc(source.LastQuoteUtc)})."
                     : $"final session end not observable (no closing buffer; coverage ends {FormatUtc(source.LastQuoteUtc)})."));
             return availability;
+        }
+
+        /// <summary>
+        /// The frozen PR 3 host-contract check: margin mode models exactly the approved
+        /// USD-denominated XM-style XAUUSD CFD research account, so the instrument, its CFD
+        /// Leverage calculation and the 100-per-lot USD point value (the 100 oz/lot contract in
+        /// the USD account) may not vary. The LEAN data market (Dukascopy/Oanda) is the replay
+        /// identity, not the modeled broker, and is deliberately not constrained. Returns the
+        /// error message, or null when the configuration is the approved one.
+        /// </summary>
+        internal static string? MarginHostContractError(string ticker, string securityType, decimal pointValuePerLot)
+        {
+            if (!string.Equals(ticker, "XAUUSD", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"single-anchor-margin-enabled=true models the approved USD XM-style XAUUSD research account; single-anchor-symbol must be XAUUSD (got '{ticker}').";
+            }
+            if (!string.Equals(securityType, "Cfd", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"single-anchor-margin-enabled=true uses the approved XAUUSD CFD Leverage calculation; single-anchor-security-type must be Cfd (got '{securityType}').";
+            }
+            if (pointValuePerLot != 100m)
+            {
+                return $"single-anchor-margin-enabled=true requires the frozen USD research point value 100 per lot for the 100 oz/lot XAUUSD contract (got {pointValuePerLot.ToString(CultureInfo.InvariantCulture)}); 100 oz/lot, fixed 1:500, USD and the 100/lot point value are one approved model.";
+            }
+            return null;
         }
 
         private static string FormatUtc(DateTime value)

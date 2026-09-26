@@ -15,6 +15,9 @@ namespace MarketLab.SingleAnchor.Tests
         public MarginEntryDecision NextEntryDecision { get; set; } = MarginEntryDecision.Allowed;
         public int SurvivalChecks { get; private set; }
 
+        /// <summary>Scripted observability; false makes the engine stop with AccountSurvival.</summary>
+        public bool SurvivalObservable { get; set; } = true;
+
         public MarginStopOut? EvaluateSurvival(in Quote quote)
         {
             SurvivalChecks++;
@@ -176,6 +179,82 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(new MarginParameters { MarginCallLevelPercent = 100m }.GetValidationErrors(), Is.Not.Empty);
             Assert.Throws<ArgumentException>(() => new MarginParameters { Leverage = 0m }.Validate());
             Assert.Throws<ArgumentException>(() => new SingleAnchorResearchAccount(Harness.Defaults(), 1000m, new MarginParameters { Leverage = 0m }));
+        }
+    }
+
+    /// <summary>
+    /// The frozen PR 3 host contract: margin mode models exactly the approved USD XM-style
+    /// XAUUSD CFD research account, so the instrument, its CFD Leverage calculation and the
+    /// 100-per-lot USD point value may not vary. The fixed contract values themselves
+    /// (100 oz/lot, 1:500, 50%/20%) come from <see cref="MarginParameters"/>' approved defaults.
+    /// </summary>
+    [TestFixture]
+    public class MarginHostContractTests
+    {
+        [Test]
+        public void TheApprovedHostConfigurationPasses()
+        {
+            Assert.That(SingleAnchorVNextAlgorithm.MarginHostContractError("XAUUSD", "Cfd", 100m), Is.Null);
+            Assert.That(SingleAnchorVNextAlgorithm.MarginHostContractError("xauusd", "cfd", 100m), Is.Null, "the comparison is case-insensitive");
+        }
+
+        [Test]
+        public void MarginModeRefusesAnotherInstrumentSecurityTypeOrPointValue()
+        {
+            Assert.That(SingleAnchorVNextAlgorithm.MarginHostContractError("EURUSD", "Cfd", 100m), Does.Contain("XAUUSD"));
+            Assert.That(SingleAnchorVNextAlgorithm.MarginHostContractError("XAUUSD", "Forex", 100m), Does.Contain("Cfd"));
+            Assert.That(SingleAnchorVNextAlgorithm.MarginHostContractError("XAUUSD", "Cfd", 50m), Does.Contain("100"));
+            Assert.That(SingleAnchorVNextAlgorithm.MarginHostContractError("XAUUSD", "Cfd", 0m), Does.Contain("100"));
+        }
+    }
+
+    /// <summary>
+    /// The approved XM research volume profile (minimum 0.01, step 0.01, maximum 50 lots): PR 3
+    /// must support and test it without changing the unrelated global engine default (100).
+    /// </summary>
+    [TestFixture]
+    public class MarginApprovedVolumeProfileTests
+    {
+        private static SingleAnchorParameters ApprovedProfile()
+        {
+            return Harness.Defaults() with { MinimumVolume = 0.01m, VolumeStep = 0.01m, MaximumVolume = 50m };
+        }
+
+        [Test]
+        public void TheApprovedProfilePlacesAnOrdinaryAndAHardBreakevenTail()
+        {
+            var h = new Harness(ApprovedProfile(), null, 1_000_000m, Harness.MarginDefaults());
+            h.PingPongFourLegs();
+            h.AtUpper(); // trade 5 hard-BE 0.06 <= 50
+
+            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(5));
+            Assert.That(h.Engine.EntriesRejected, Is.EqualTo(0));
+            Assert.That(h.Engine.Basket!.Legs[4].Lots, Is.EqualTo(0.06m));
+        }
+
+        [Test]
+        public void TheApprovedMaximumRejectsAnArithmeticLotAboveFifty()
+        {
+            var p = ApprovedProfile() with { BaseLot = 20m };
+            var h = new Harness(p, null, 1_000_000m, Harness.MarginDefaults());
+            h.Anchor();
+            h.AtUpper(); // trade 1 BUY 20 <= 50
+            h.AtLower(); // trade 2 SELL 40 <= 50
+            h.AtUpper(); // trade 3 BUY 60 > 50
+
+            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(2));
+            Assert.That(h.EntriesRejected, Has.Count.EqualTo(1));
+            Assert.That(h.EntriesRejected[0].Rejection.Reason, Is.EqualTo(EntryRejectionReason.VolumeExceedsMaximum));
+            Assert.That(h.EntriesRejected[0].Rejection.NormalizedRequiredLots, Is.EqualTo(60m));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(2), "the over-maximum lot is not financed or placed");
+        }
+
+        [Test]
+        public void TheGlobalEngineDefaultVolumeCeilingIsStillOneHundred()
+        {
+            Assert.That(Harness.Defaults().MinimumVolume, Is.EqualTo(0.01m));
+            Assert.That(Harness.Defaults().VolumeStep, Is.EqualTo(0.01m));
+            Assert.That(Harness.Defaults().MaximumVolume, Is.EqualTo(100m), "PR 3 must not encode the broker profile in the global default");
         }
     }
 
@@ -389,6 +468,10 @@ namespace MarketLab.SingleAnchor.Tests
         [Test]
         public void ASkippedExecutableMarkStillObservesTheUsedMargin()
         {
+            // The account keeps its PR 2 skip semantics: used margin (pure inventory) is still
+            // observed, while the equity-dependent margin state stays as of the last observable
+            // mark and SurvivalObservable is false. The engine does not evaluate survival from
+            // that state; it stops the run explicitly (MarginEngineSurvivalTests).
             var p = Harness.Defaults() with { Slippage = 2500m };
             var account = new SingleAnchorResearchAccount(p, 1000m, Harness.MarginDefaults());
             var basket = BuyOnlyBasket();
@@ -397,6 +480,7 @@ namespace MarketLab.SingleAnchor.Tests
             account.ObserveQuote(skipped, basket, 0m, null);
 
             Assert.That(account.FloatingObservable, Is.False, "bid - 2500 is not a usable close price");
+            Assert.That(account.SurvivalObservable, Is.False, "the engine must not use this state for survival");
             Assert.That(account.FloatingObservationsSkipped, Is.EqualTo(1));
             Assert.That(account.MarginSummary!.MaxUsedMargin, Is.EqualTo(4.04m), "used margin needs no price and is still observed");
             Assert.That(account.MarginSummary.CurrentUsedMargin, Is.EqualTo(0m), "the margin state stays as of the last observable mark");
@@ -407,6 +491,7 @@ namespace MarketLab.SingleAnchor.Tests
             account.ObserveQuote(valid, basket, 0m, null);
 
             Assert.That(account.FloatingObservable, Is.True);
+            Assert.That(account.SurvivalObservable, Is.True, "an observable mark makes the survival state current again");
             Assert.That(account.FloatingProfit, Is.EqualTo(480m), "raw 2980 less 2500 slippage cost");
             Assert.That(account.MarginSummary.CurrentUsedMargin, Is.EqualTo(4.04m));
             Assert.That(account.MarginSummary.CurrentFreeMargin, Is.EqualTo(1475.96m));
@@ -667,6 +752,56 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void AFillThatImmediatelyStopsOutIsTerminalOnTheSameQuote()
+        {
+            // Equity 4.05 finances the 4.04 projected margin of a 0.01 BUY at 2020, but the fill's
+            // immediate mark at the same quote's bid 2010 is -10: the post-fill account is
+            // terminal and must not be allowed to wait for a next quote that may never come.
+            var h = new Harness(Harness.Defaults(), null, 4.05m, Harness.MarginDefaults());
+            h.Anchor();
+
+            var failure = Assert.Throws<AccountStopOutException>(() => h.Feed(2010m, 2020m));
+
+            Assert.That(failure!.Kind, Is.EqualTo("AccountStopOut"));
+            Assert.That(h.BasketsClosed, Is.Empty);
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1), "the filled leg stays in the ledger and in the terminal state");
+            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(0), "the fill is not published as a normal successful entry");
+            Assert.That(h.Executor.Entries, Has.Count.EqualTo(1), "the executor did fill the order");
+
+            var stopOut = h.ResearchAccount!.MarginSummary!.StopOut;
+            Assert.That(stopOut, Is.Not.Null);
+            Assert.That(stopOut!.Time, Is.EqualTo(h.Engine.LastProcessedQuote!.Value.Time));
+            Assert.That(stopOut.Equity, Is.EqualTo(-5.95m), "balance 4.05 plus the immediate -10 mark");
+            Assert.That(stopOut.FloatingProfit, Is.EqualTo(-10m));
+            Assert.That(stopOut.UsedMargin, Is.EqualTo(4.04m));
+            Assert.That(stopOut.OpenPositions, Is.EqualTo(1));
+            Assert.Throws<AccountStopOutException>(() => h.Feed(2000m, 2000.2m), "a faulted engine refuses every further quote");
+        }
+
+        [Test]
+        public void AnUnobservableExecutableMarkStopsTheRunExplicitly()
+        {
+            // With pathological slippage the post-fill executable close price is not positive, so
+            // the current account state is undefined: survival cannot be certified from the stale
+            // pre-fill state, and the run stops instead of continuing.
+            var p = Harness.Defaults() with { Slippage = 2500m };
+            var h = new Harness(p, null, 1000m, Harness.MarginDefaults());
+            h.Anchor();
+
+            var failure = Assert.Throws<AccountSurvivalException>(() => h.Feed(2019.8m, 2020m));
+
+            Assert.That(failure!.Kind, Is.EqualTo("AccountSurvival"));
+            Assert.That(failure.Condition, Is.EqualTo("ExecutableMarkUnavailable"));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1), "the fill happened and stays in the ledger");
+            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(0));
+            Assert.That(h.Engine.Fault, Is.SameAs(failure));
+            Assert.That(h.ResearchAccount!.MarginSummary!.StopOut, Is.Null, "this is not a stop-out: survival could not be established");
+            Assert.That(h.ResearchAccount.FloatingObservable, Is.False);
+            Assert.That(h.ResearchAccount.FloatingObservationsSkipped, Is.EqualTo(1));
+            Assert.Throws<AccountSurvivalException>(() => h.Feed(3000m, 3000.2m), "a faulted engine refuses every further quote");
+        }
+
+        [Test]
         public void MarginCallDoesNotBlockNormalBasketExits()
         {
             // The account is alive (survival returns null) but every entry is Margin Call blocked;
@@ -680,7 +815,8 @@ namespace MarketLab.SingleAnchor.Tests
             engine.OnQuote(new Quote(Harness.T0.AddSeconds(1), 2019.8m, 2020m));
             engine.OnQuote(new Quote(Harness.T0.AddSeconds(2), 1980m, 1980.2m));
             Assert.That(engine.Basket!.OpenPositions, Is.EqualTo(2));
-            Assert.That(guard.SurvivalChecks, Is.EqualTo(3), "survival is asked on every processed quote");
+            // Three processed quotes plus the two post-fill survival checks of the two entries.
+            Assert.That(guard.SurvivalChecks, Is.EqualTo(5), "survival is asked on every processed quote and after every fill");
 
             // The account stays alive but every further entry would be Margin Call blocked.
             guard.NextEntryDecision = MarginEntryDecision.MarginCall;
