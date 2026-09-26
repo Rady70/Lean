@@ -62,6 +62,26 @@ live account. PR 3 is merged through GitHub PR #11; the composed full-history
 data folder, the complete baseline freeze and the first full-history baseline
 remain unimplemented.
 
+Implementation note (historical-data ownership record): the qualified
+Dukascopy/JForex XAUUSD source history now has exactly one canonical copy at
+the Lean-owned `E:\MarketLab\data\XAUUSD_raw_history` (outside Git), relocated
+from the retired
+`D:\quant_research_workspace\common\market_data\raw\XAUUSD_raw_history` on
+2026-09-26 by a hash-verified move of all 179 files; the retired path no
+longer exists on this machine and is no longer a dependency. The unchanged
+per-file qualification/conversion/LEAN replay route was re-run from the
+canonical location over all 90 months: 90/90 PASS, accepted = converted =
+LEAN-delivered = probe-processed = 413,750,130 rows, every per-partition
+count/digest equal, the source-file-set and ordered-month-digest aggregates
+byte-identical to the original sweep, and the source-derived session map
+re-derived with the identical SHA-256
+`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`. No
+strategy, conversion or qualification-rule change. Evidence:
+`tools/historical-data/README.md` section 9 and
+`fixtures/xauusd-history-relocation-evidence.json`. The composed full-history
+data folder, the complete baseline freeze and the first full-history baseline
+remain unimplemented.
+
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
 behaviour. The behavioural authority remains
@@ -804,6 +824,15 @@ folder under the same identity and re-prove its delivery (section 5), so the
 frozen configuration records that composed folder, not the 90 per-run
 qualification folders.
 
+The composition is a verified transition, not a second permanent history: the
+source keeps its one canonical copy at `E:\MarketLab\data\XAUUSD_raw_history`,
+and after the composed folder's delivery has been re-proved, the architecture
+must not retain the complete 90-folder partitioned native history and the
+complete composed native history as two permanent copies. Temporary staging
+during the verified transition is allowed; the transition mechanism (move,
+promote, or delete-after-verify, keeping the measured partition hashes until
+the composed delivery is proved) is deliberately left undecided here.
+
 The resulting architecture is:
 
 ~~~text
@@ -869,6 +898,14 @@ the replay probe over the composed folder to prove its delivery equals the
 concatenated per-month qualification evidence. Do not run 90 independent
 monthly strategy runs and treat that as the full-history baseline; that
 composition step is deliberately out of scope for PR 1.
+
+The composition must not end with two complete persistent native histories:
+after the composed folder's delivery is proved against the concatenated
+per-month evidence, exactly one complete native representation of the
+qualified history is retained (temporary transition copies are allowed only
+until that proof succeeds). The raw canonical source at
+`E:\MarketLab\data\XAUUSD_raw_history` is not part of that native duplication
+count: it is the single qualified source, not a derived native tree.
 
 The historical files themselves remain outside Git.
 
@@ -1046,8 +1083,9 @@ This phase is complete only when:
 5. risk-disabled runs reproduce the current strategy path exactly;
 6. performance remains suitable for multi-year tick research;
 7. the qualified daily partitions are composed into one continuous research
-   data folder whose delivery is re-proved, and a complete baseline
-   configuration (including that composed folder and the qualified
+   data folder whose delivery is re-proved, with exactly one complete native
+   representation of the qualified history retained afterwards, and a complete
+   baseline configuration (including that composed folder and the qualified
    source-derived session map) is frozen;
 8. one untouched full-history baseline run is completed and audited before
    parameter optimization begins.

@@ -36,6 +36,7 @@ DOCUMENTED_QUALIFIED_ROWS = 413750130
 DOCUMENTED_FIRST = "2019-01-01T23:00:07.151Z"
 DOCUMENTED_LAST = "2026-06-30T23:59:59.678Z"
 DOCUMENTED_MAP_SHA = "33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949"
+DOCUMENTED_CANONICAL_SOURCE = r"E:\MarketLab\data\XAUUSD_raw_history"
 DOCUMENTED_REQUALIFICATION_HEAD = "7d424e3d25591646a6a27e5be257f49c21c7486d"
 DOCUMENTED_REQUALIFICATION_CONVERTER = (
     "ed64e293d89a03f5cbde1fa0a981055bea2b87db437814dfe9aa93efa3f7f292"
@@ -213,6 +214,20 @@ class RelocationEvidenceTests(unittest.TestCase):
         self.assertEqual(totals["source_coverage_gap_days"], 0)
         self.assertEqual(requalification["first_delivered_canonical_utc"], DOCUMENTED_FIRST)
         self.assertEqual(requalification["last_delivered_canonical_utc"], DOCUMENTED_LAST)
+
+    def test_requalification_is_bound_to_the_canonical_source(self):
+        requalification = self.fixture["requalification"]
+        self.assertEqual(requalification["source_directory"], DOCUMENTED_CANONICAL_SOURCE)
+        self.assertEqual(self.fixture["relocation"]["new_location"], DOCUMENTED_CANONICAL_SOURCE)
+        self.assertEqual(
+            self.fixture["session_map_recheck"]["source"], DOCUMENTED_CANONICAL_SOURCE
+        )
+        months = requalification["months"]
+        self.assertEqual(len(months), 90)
+        for entry in months:
+            source_path = Path(entry["source_path"])
+            self.assertEqual(str(source_path.parent), DOCUMENTED_CANONICAL_SOURCE, entry["month"])
+            self.assertEqual(source_path.name, entry["source_file_name"], entry["month"])
 
     def test_requalified_content_matches_the_original_tracked_evidence(self):
         original = {entry["month"]: entry for entry in self.original["months"]}

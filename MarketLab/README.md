@@ -532,7 +532,8 @@ clipped 6,798 rows. The full 90-month sweep (2019-01..2026-06) completed with
 90/90 PASS: accepted = converted = delivered = probe-processed =
 413,750,130 rows, 0 rejected rows, 0 session drops, every count and ordered
 semantic digest equal; the evidence stays outside Git (see the tools README).
-The qualified source now has one physical canonical copy at the Lean-owned
+The complete qualified 90-file source set now has one physical canonical copy
+at the Lean-owned
 `E:\MarketLab\data\XAUUSD_raw_history`, relocated from the retired workspace on
 2026-09-26 and re-qualified from there with 90/90 PASS and the identical
 413,750,130-row population and aggregate digests

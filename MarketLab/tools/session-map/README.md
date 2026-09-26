@@ -29,7 +29,8 @@ location; the retired-workspace path it replaced is historical only. See
 section 9 of [../historical-data/README.md](../historical-data/README.md).
 
 Options: `--source <csv directory>` (required; Dukascopy/JForex XAUUSD monthly files named
-`XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv`, contiguous months, read-only), `--out <map.json>`
+`XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv`, contiguous months, read and never written by the
+tool), `--out <map.json>`
 (required), `--stats <stats.json>` (optional), `--jobs <n>` (default `min(processor count, 8)`).
 
 ## What it does

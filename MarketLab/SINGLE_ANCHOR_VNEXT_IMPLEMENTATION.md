@@ -639,7 +639,7 @@ MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
     --stats E:\MarketLab\work\lean\single-anchor-sessions\xauusd-sessions-stats.json
 ```
 
-The source is read-only and the output is deterministic (same source, same map and stats). Only a
+No tool writes to the source, and the output is deterministic (same source, same map and stats). Only a
 legitimate quote may define a session boundary: pass 1 parses the timestamp and the Bid/Ask
 columns and requires the engine's own contract (positive Bid and Ask, `Ask >= Bid`) and the exact
 five-column Dukascopy source format (`timestamp,bid,ask,bidVolume,askVolume`), so neither a
