@@ -19,10 +19,14 @@ other instrument or provider is refused rather than relabeled.
 dotnet build MarketLab\tools\session-map\MarketLab.SessionMapTool.csproj --configuration Release
 
 MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
-    --source D:\quant_research_workspace\common\market_data\raw\XAUUSD_raw_history `
-    --out D:\quant_research_workspace\work\lean\single-anchor-sessions\xauusd-sessions.json `
-    --stats D:\quant_research_workspace\work\lean\single-anchor-sessions\xauusd-sessions-stats.json
+    --source E:\MarketLab\data\XAUUSD_raw_history `
+    --out E:\MarketLab\work\lean\single-anchor-sessions\xauusd-sessions.json `
+    --stats E:\MarketLab\work\lean\single-anchor-sessions\xauusd-sessions-stats.json
 ```
+
+`E:\MarketLab\data\XAUUSD_raw_history` is the canonical Lean-owned source
+location; the retired-workspace path it replaced is historical only. See
+section 9 of [../historical-data/README.md](../historical-data/README.md).
 
 Options: `--source <csv directory>` (required; Dukascopy/JForex XAUUSD monthly files named
 `XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv`, contiguous months, read-only), `--out <map.json>`

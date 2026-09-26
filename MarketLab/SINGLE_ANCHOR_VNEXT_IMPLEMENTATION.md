@@ -634,9 +634,9 @@ passes (segments + provenance; then per-row availability counting). Build and ru
 ```powershell
 dotnet build MarketLab\tools\session-map\MarketLab.SessionMapTool.csproj --configuration Release
 MarketLab\tools\session-map\bin\Release\MarketLab.SessionMapTool.exe `
-    --source D:\quant_research_workspace\common\market_data\raw\XAUUSD_raw_history `
-    --out D:\quant_research_workspace\work\lean\single-anchor-sessions\xauusd-sessions.json `
-    --stats D:\quant_research_workspace\work\lean\single-anchor-sessions\xauusd-sessions-stats.json
+    --source E:\MarketLab\data\XAUUSD_raw_history `
+    --out E:\MarketLab\work\lean\single-anchor-sessions\xauusd-sessions.json `
+    --stats E:\MarketLab\work\lean\single-anchor-sessions\xauusd-sessions-stats.json
 ```
 
 The source is read-only and the output is deterministic (same source, same map and stats). Only a
@@ -673,8 +673,11 @@ qualification rule; no source row is excluded, filtered, redescribed or converte
 ### 8.6 Full-history validation (2026-09-23, Windows, .NET SDK 10.0.401)
 
 `MarketLab.SessionMapTool` over the 90-file immutable Dukascopy/JForex XAUUSD source
-(413,750,130 rows, `D:\quant_research_workspace\common\market_data\raw\XAUUSD_raw_history`,
-first quote `2019-01-01T23:00:07.151Z`, last `2026-06-30T23:59:59.678Z`, wall time 103-125 s;
+(413,750,130 rows, `D:\quant_research_workspace\common\market_data\raw\XAUUSD_raw_history` —
+the source location at the time of this record; since relocated to the canonical
+`E:\MarketLab\data\XAUUSD_raw_history`, where the generator reproduces the identical map hash;
+see `tools/historical-data/README.md` section 9 — first quote
+`2019-01-01T23:00:07.151Z`, last `2026-06-30T23:59:59.678Z`, wall time 103-125 s;
 every row passed the generator's timestamp and Bid/Ask contract validation):
 
 - **1,935 sessions, 1,934 junctions** — exactly the previously established segmentation; 1,934
@@ -768,7 +771,12 @@ same derived identity, preserving each partition's hash and the qualification
 identity and re-proving the composed delivery with the replay probe against the
 concatenated per-month evidence. Running 90 independent monthly strategy runs
 is not the full-history baseline; the composition step is deliberately not
-implemented in PR 1.
+implemented in PR 1. The source was later relocated to the Lean-owned canonical
+`E:\MarketLab\data\XAUUSD_raw_history` and the identical 90-month
+qualification/LEAN replay route was re-run from there on 2026-09-26 (90/90
+PASS, the same 413,750,130 rows, the same source-set and digest-chain
+aggregates; `tools/historical-data/README.md` section 9). The records named
+above remain the original sweep's.
 
 Any real historical strategy run must use the qualified identity:
 `single-anchor-symbol: XAUUSD`, `single-anchor-market: dukascopy`,
@@ -1288,11 +1296,17 @@ conversion, dynamic/equity-based leverage tiers, multi-currency/multi-broker or
 multi-asset margin, LEAN native orders/portfolio margin, partial or pending
 fills, latency or order-book simulation, post-stop-out liquidation sequencing,
 swap/financing, hosted CI, and parameter optimization (StepPercent,
-HardBreakevenCeilingPercent, BaseLot). The next roadmap step is composing the
-already-qualified XAUUSD partitions into one continuous research data folder,
-re-proving its LEAN delivery, freezing the complete baseline configuration
-(including the margin values above) and running the first untouched
-full-history baseline.
+HardBreakevenCeilingPercent, BaseLot). Historical-data ownership and the
+full-history replay qualification from the new canonical location were
+completed first (2026-09-26): the qualified XAUUSD source now has one
+physical copy at the Lean-owned `E:\MarketLab\data\XAUUSD_raw_history`,
+and the unchanged 90-month qualification/LEAN replay route reproduced
+90/90 PASS with the identical 413,750,130-row population and aggregate
+digests (`tools/historical-data/README.md` section 9). The next roadmap
+step is composing the already-qualified XAUUSD partitions into one
+continuous research data folder, re-proving its LEAN delivery, freezing
+the complete baseline configuration (including the margin values above)
+and running the first untouched full-history baseline.
 
 Evidence used for the frozen research contract: the user-supplied MT5 XAUUSD
 symbol specification (XMGlobal-MT5 8, Ultra Low Standard), XM's published Gold

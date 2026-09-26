@@ -433,7 +433,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (230 tests)
+# Python offline tool (238 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -454,12 +454,99 @@ unsupported identity and an in-worktree data folder that must be refused. It
 creates scratch data folders outside the repository and removes the junctions
 as links during cleanup.
 
-## 9. Provenance of adapted retired code
+## 9. Canonical historical-data location and relocation (2026-09-26)
+
+The single canonical copy of the already-qualified Dukascopy/JForex XAUUSD
+source history is owned by this Lean/MarketLab workspace and lives outside Git:
+
+```text
+E:\MarketLab\data\XAUUSD_raw_history
+```
+
+`E:\MarketLab\data` is the Lean workspace's persistent research-data root; it
+is a sibling of the `E:\MarketLab\Lean` checkout (whose `Data\` stays the
+engine fixture it always was), so nothing under it can be committed and the
+qualifier's "data folder outside the Git worktree" rule holds by construction.
+All 179 files moved together: the 90 monthly
+`XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv` sources and their 89
+`.meta.txt` sidecars, 23,995,922,711 bytes.
+
+Until 2026-09-26 the only copy lived at
+`D:\quant_research_workspace\common\market_data\raw\XAUUSD_raw_history`, which
+belonged to the retired quant-research workspace. The relocation was a
+verified move, not a copy and not a re-acquisition:
+
+- every one of the 179 files was hashed in place first and compared with the
+  retired workspace's own pre-move manifest
+  (`inventory\manifests\XAUUSD_raw_history.pre.sha256.csv`): zero differences;
+- the 90-file source set hash computed from those hashes equals the qualified
+  identity recorded by the original 90-month sweep,
+  `8ce98dd27c2df3166a0dc3ec30c6be4756887f323934a6a0ca1c348592c6f1fd`;
+- the files were copied to the canonical location and every file was hashed
+  again there and compared with the pre-move inventory: 179/179 files,
+  23,995,922,711/23,995,922,711 bytes, zero hash differences, zero missing
+  files, zero extra files;
+- only then was the old directory removed. The retired path no longer exists
+  on this machine, and no active MarketLab tool, configuration or workflow
+  needs it. Older records in this repository that name it (the original
+  sweep evidence below, the session-map validation record) remain as
+  provenance.
+
+The full-history delivery was then re-qualified from the canonical location
+with the unchanged route: `Invoke-ReplayQualification.ps1` ran the strict
+qualification, conversion and LEAN replay probe for one monthly file at a
+time (three months concurrent, each in its own data folder and run output
+root; local orchestration only, no qualification rule changed), and the
+tracked `summarize-history` command aggregated the 90 records. Result
+(2026-09-26; clean checkout `7d424e3d25591646a6a27e5be257f49c21c7486d`;
+Python 3.14.5; converter source aggregate
+`ed64e293d89a03f5cbde1fa0a981055bea2b87db437814dfe9aa93efa3f7f292`;
+runtime binary set
+`493ecb9b65f39d78ae231ce8efc9b4d4ca8f2f6d5b3f75d4535850b3d5a19b97`; sweep
+wall time 9,420 s):
+
+- 90/90 months PASS, 0 failures;
+- accepted = converted = LEAN-delivered = probe-processed =
+  **413,750,130** rows, 0 rejected rows, 0 session delivery difference,
+  376 source-absent days, 0 coverage gaps, and the same 90 unrelated
+  failed requests (the absent `cfd/dukascopy/hour` benchmark file, one per
+  month);
+- first delivered `2019-01-01T23:00:07.151Z`, last
+  `2026-06-30T23:59:59.678Z`;
+- every per-partition count and semantic digest equal and every month's
+  source/delivered digest equal;
+- the source file-set SHA-256 and the ordered 90-month digest chain are
+  byte-identical to the original sweep (`8ce98dd2...`, `9d29c36b...`), and
+  every previously qualified identity value is singleton and unchanged
+  (derived market-hours `325a7abc...`, symbol-properties `7d52262f...`,
+  always-open `Cfd-dukascopy-XAUUSD` at UTC/UTC).
+
+The session map was also re-derived from the canonical source with
+`MarketLab.SessionMapTool`: 90 files, 413,750,130 rows, 1,935 sessions /
+1,934 junctions, 1,347,651 quote-only rows, and the map is byte-identical to
+the previously recorded qualified map (section 8.6;
+`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`).
+
+The distilled, market-data-free evidence is tracked at
+`fixtures\xauusd-history-relocation-evidence.json` (the full 179-file
+inventory plus the re-qualification totals, identity and per-month rows) and
+is recomputed and cross-checked against
+`fixtures\full-history-sweep-evidence.json` by
+`python\tests\test_relocation_evidence.py`. The per-month records, the
+converted native partitions and the run outputs stay outside Git under
+`E:\MarketLab\work\lean\pr1-xauusd-full-history-dukascopy\` (aggregate:
+`full-history-summary.json`); the canonical source itself is read-only. No
+historical value, identity, timestamp or conversion rule changed. Composing
+the partitioned folders into one continuous research data folder, the
+baseline configuration freeze and the first full-history baseline remain
+later steps.
+
+## 10. Provenance of adapted retired code
 
 See [`PROVENANCE.md`](PROVENANCE.md). The retired repositories are reference
 material only; nothing here is a runtime dependency on them.
 
-## 10. Known limitations
+## 11. Known limitations
 
 - The offline session preview is diagnostic. It is exact for the XAUUSD entry
   (no early closes or late opens) but simplified when an entry defines them;
@@ -535,6 +622,11 @@ material only; nothing here is a runtime dependency on them.
   sequence/boundary properties, so the full-history claim is verifiable from
   the repository without the external records or the raw source.
 
+  That sweep and its records predate the relocation: its source path is the
+  retired location as it was then. The canonical location and the successful
+  re-qualification from it are recorded in section 9; the values above remain
+  the record of the original qualification.
+
   The sweep is a decomposed per-file acceptance: PR 1 writes one native data
   folder per run and does not compose multiple source files into one data tree.
   After PR 2 and PR 3, and before the baseline configuration freeze, the
@@ -554,4 +646,4 @@ material only; nothing here is a runtime dependency on them.
   the approved USD-denominated XM-style research account, so it does **not**
   require an EURUSD conversion dataset or any additional FX-conversion
   qualification; the qualified XAUUSD history remains the market-data input for
-  this roadmap phase.
+  this roadmap phase and now lives at the canonical location of section 9.
