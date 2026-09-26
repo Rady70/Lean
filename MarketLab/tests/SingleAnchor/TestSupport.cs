@@ -43,14 +43,14 @@ namespace MarketLab.SingleAnchor.Tests
     {
         public static readonly DateTime T0 = new DateTime(2024, 1, 2, 10, 0, 0);
 
-        public Harness(SingleAnchorParameters? parameters = null, HistoricalTradingAvailability? tradingAvailability = null, decimal? researchInitialBalance = null)
+        public Harness(SingleAnchorParameters? parameters = null, HistoricalTradingAvailability? tradingAvailability = null, decimal? researchInitialBalance = null, MarginParameters? margin = null)
         {
             Parameters = parameters ?? Defaults();
             Executor = new SyntheticExecutor(Parameters);
             ResearchAccount = researchInitialBalance.HasValue
-                ? new SingleAnchorResearchAccount(Parameters, researchInitialBalance.Value)
+                ? new SingleAnchorResearchAccount(Parameters, researchInitialBalance.Value, margin)
                 : null;
-            Engine = new SingleAnchorEngine(Parameters, Executor, tradingAvailability, ResearchAccount);
+            Engine = new SingleAnchorEngine(Parameters, Executor, tradingAvailability, ResearchAccount, margin != null ? ResearchAccount : null);
             Engine.AnchorCreated += e => AnchorsCreated.Add(e);
             Engine.FirstEntrySkipped += e => SkippedFirstEntries.Add(e);
             Engine.EntryOpened += e => EntriesOpened.Add(e);
@@ -99,6 +99,12 @@ namespace MarketLab.SingleAnchor.Tests
         public static SingleAnchorParameters NoExits()
         {
             return Defaults() with { EscapeEnabled = false, FixedTakeProfitUnits = 0m, TrailingEnabled = false };
+        }
+
+        /// <summary>The approved PR 3 target-account contract: 100 oz/lot, fixed 1:500, 50% Margin Call, 20% stop-out.</summary>
+        public static MarginParameters MarginDefaults()
+        {
+            return new MarginParameters();
         }
 
         /// <summary>Next quote, one second after the previous one.</summary>
