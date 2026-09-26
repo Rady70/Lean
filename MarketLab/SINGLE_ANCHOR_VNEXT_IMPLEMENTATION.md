@@ -56,7 +56,8 @@ basket, so LEAN's orders, equity, drawdown, fees and margin stay empty and are
 | `src\SingleAnchor\QuoteTickFeed.cs` | hands every LEAN quote tick of a slice to the engine in order; counts unused (non-quote) ticks; lets the engine's failures propagate |
 | `tools\session-map\` | the `MarketLab.SessionMapTool` generator that derives a session map from the immutable Dukascopy/JForex XAUUSD CSV history and counts the quote-only rows (section 8) |
 | `src\SingleAnchor\SingleAnchorVNextAlgorithm.cs`, `ParameterParsing.cs` | the `QCAlgorithm` host: XAUUSD CFD quote ticks, LEAN parameters, event logging, end-of-data mark to market, results file |
-| `src\SingleAnchor\ResearchAccount.cs` | the derived research account and bounded analytics (PR 2): `IResearchObserver`, the observation points the engine calls, and `SingleAnchorResearchAccount` with the run-level account values and one compact research record per closed basket; section 9 |
+| `src\SingleAnchor\ResearchAccount.cs` | the derived research account and bounded analytics (PR 2): `IResearchObserver`, the observation points the engine calls, and `SingleAnchorResearchAccount` with the run-level account values and one compact research record per closed basket; it also implements the PR 3 `IResearchRiskGuard` role when a `MarginParameters` is supplied (sections 9 and 10) |
+| `src\SingleAnchor\Margin.cs` | the frozen PR 3 USD XM-style margin contract (`MarginParameters`), the uncovered-volume MT5/XM hedging arithmetic (`MarginModel`), the entry-assessment and terminal stop-out records and the `ResearchMarginSummary` evidence type (section 10) |
 | `tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj` | NUnit tests on deterministic synthetic quotes (same NUnit / test SDK versions as upstream's `Tests` project) |
 | `tests\Test-TradingAvailabilityEndToEnd.ps1` | end-to-end check through the real LEAN helper: a synthetic native tick fixture where a quote-only buffer quote is suppressed with the session map and trades without it (section 8.6) |
 
@@ -124,6 +125,11 @@ culture; `true`/`false` for booleans.
 | `single-anchor-symbol`, `-market`, `-security-type` | host instrument; the host is XAUUSD-focused, another ticker is accepted only with its own explicit point value | `XAUUSD`, `oanda`, `Cfd` (`Forex` accepted) |
 | `single-anchor-start-date`, `-end-date`, `-cash` | host run settings (`cash` only satisfies LEAN's setup; the strategy sizes in lots). `-cash` is also the research account's `InitialBalance` | `2014-05-02`, `2014-05-14` (the shipped sample), 100000 |
 | `single-anchor-research-account` | PR 2 research account and bounded analytics (section 9); `false` runs the pre-PR-2 strategy path with no derived account state | true |
+| `single-anchor-margin-enabled` | PR 3 target-account margin survival (section 10) on the same research account; `false` runs the pre-PR-3 strategy path exactly. Requires `single-anchor-research-account=true` | false |
+| `single-anchor-margin-contract-size` | XAUUSD contract size in ounces per lot; the approved PR 3 value is 100 | 100 |
+| `single-anchor-margin-leverage` | fixed selected leverage; the approved PR 3 value is 500 (1:500). No dynamic/equity-based tiers exist in this phase | 500 |
+| `single-anchor-margin-call-percent` | Margin Call Level in percent; at or below it new entries are blocked while exits remain possible | 50 |
+| `single-anchor-margin-stop-out-percent` | terminal Stop-out Level in percent (open positions with negative equity are terminal as well) | 20 |
 
 ## 4. Implementation choices and constraints
 
@@ -339,8 +345,10 @@ culture; `true`/`false` for booleans.
   2023-03 case delivers every accepted row (4,465,226 = 4,465,226 = 4,465,226;
   digests equal; zero session drops). The full 90-month sweep also completed
   with 90/90 PASS and 413,750,130 rows equal at every stage (section 8.7).
-  PR 2 is implemented and merged (section 9); PR 3 remains the next
-  implementation phase.
+  PR 2 is implemented and merged (section 9); PR 3 is implemented on its
+  review branch (section 10). The composed full-history data folder, the
+  complete baseline freeze and the first full-history baseline remain later
+  steps.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants
   (a partial tail fill must not be able to break the hard-BE requirement; a
@@ -415,6 +423,22 @@ own results are:
   `single-anchor-research-account=false`; the strategy records
   (`closedBaskets`, `openBasket`, the counters and the realized profit) are
   identical either way (section 9.7).
+- With PR 3 margin enabled (`single-anchor-margin-enabled=true`) the results
+  additionally carry `researchMargin` (section 10): the frozen `parameters`
+  (contract size, leverage, Margin Call and stop-out levels), current used/free
+  margin and margin level, their run extrema, the Margin Call state/episode and
+  observation counts, the Margin Call blocked attempts/episodes, the
+  InsufficientMargin attempts/episodes and the terminal `stopOut` state (null
+  when the account survived). Margin Call and InsufficientMargin are explicit
+  `EntryRejectionReason` values on the same bounded rejection-episode rows as
+  the other rejections (the strategy-facing `closedBaskets`/`openBasket`
+  `RejectionTrace` rows), with the account used/free/level at the first attempt
+  and the projected post-fill used/free margin and their min/max; a terminal
+  stop-out writes `failure.kind = AccountStopOut` and
+  `failure.condition = MarginLevel` or `NegativeEquity`. `researchMargin` is
+  null when margin is disabled; disabling margin leaves the strategy path and
+  every strategy counter and rejection parity digest identical to the pre-PR-3
+  build, with the new results fields being additive (section 10).
 
 ## 7. Validation record (2026-09-21, Windows, .NET SDK 10.0.401)
 
@@ -762,10 +786,11 @@ appropriate, but they are not the authoritative baseline. The in-code
 a baseline run that leaves them in place bypasses the qualified identity and is
 not a valid baseline. The replay-identity blocker recorded here is resolved;
 PR 2 (C# research account and bounded analytics) is implemented and merged
-(section 9). The next project steps are the plan's sequence PR 3 (target-account margin
-survival), composing the already-qualified daily partitions into one continuous
-research data folder and re-proving its delivery, the baseline configuration
-freeze, and only then the first full-history strategy baseline.
+(section 9), and PR 3 (target-account margin survival) is implemented on its
+review branch (section 10). The next project steps are composing the
+already-qualified daily partitions into one continuous research data folder and
+re-proving its delivery, the baseline configuration freeze, and only then the
+first full-history strategy baseline.
 
 ## 9. Research account and bounded analytics (PR 2)
 
@@ -1032,15 +1057,22 @@ the parity comparison in section 9.7 is produced.
   repositories is recorded in
   [src/SingleAnchor/PROVENANCE.md](src/SingleAnchor/PROVENANCE.md).
 
-## 10. Approved PR 3 account contract (design freeze; not yet implemented)
+## 10. Target-account margin survival (PR 3)
 
-The PR 3 research target was frozen on 2026-09-26 before implementation. It is
-a **USD-denominated XM Global Ultra Low Standard-style research account**, not
-an exact replay of the user's EUR-denominated live account. This choice keeps
-the survival study focused on XAUUSD and deliberately removes historical
-EURUSD conversion from PR 3.
+PR 3 is implemented on its review branch, following the frozen contract below
+(recorded 2026-09-26 before implementation) and the plan's sections 3.16-3.21.
+It extends the one `SingleAnchorResearchAccount`; it does not add a second
+Balance/Equity authority or a second position registry. `Basket`/`BasketLeg`
+remain the position truth and `SingleAnchorEngine.RealizedProfit` remains the
+only realized-P/L authority. No LEAN order, portfolio holding or LEAN margin is
+read or written, no upstream file changes, and no strategy formula changes.
 
-The approved starting contract is:
+The research target is a **USD-denominated XM Global Ultra Low Standard-style
+research account**, not an exact replay of the user's EUR-denominated live
+account. This choice keeps the survival study focused on XAUUSD and
+deliberately removes historical EURUSD conversion from PR 3.
+
+### 10.1 Frozen contract
 
 ~~~text
 account / profit / margin currency    USD
@@ -1048,7 +1080,8 @@ position accounting                   hedging
 selected leverage                     fixed 1:500
 XAUUSD calculation                    CFD Leverage
 contract size                         100 oz / lot
-volume min / step / max               0.01 / 0.01 / 50 lots
+volume min / step / max               0.01 / 0.01 / 50 lots (engine parameters; the
+                                      baseline freezes them later)
 initial / maintenance margin rate     1.0 / 1.0
 matched Gold hedge margin             0
 Margin Call                           50%
@@ -1057,44 +1090,174 @@ Islamic BUY / SELL swap               0 / 0
 CommissionPerLot baseline             0
 ~~~
 
-For the basic MT5 hedging calculation, matched BUY/SELL Gold volume contributes
-zero margin and only the uncovered side contributes ordinary margin. The
-uncovered side uses its weighted-average open price, including a candidate fill
-when projecting a new entry:
+`MarginParameters` (`src\SingleAnchor\Margin.cs`) carries the four frozen
+numbers with the approved values as defaults; the host exposes them as
+`single-anchor-margin-*` parameters (section 3) and validates
+`0 < stop-out < Margin Call < 100`, positive contract size and positive
+leverage. There is no dynamic/equity-based leverage tier, no multi-currency
+account and no multi-broker framework.
+
+Matched BUY/SELL Gold volume contributes zero margin; only the uncovered side
+contributes ordinary margin, at that side's weighted-average open price,
+including a candidate fill when projecting an entry:
 
 ~~~text
 UsedMarginUSD =
-    UncoveredLots * 100 * WeightedAverageOpenPrice / 500
+    UncoveredLots * ContractSize * WeightedAverageOpenPrice / Leverage
 ~~~
 
-PR 3 must evaluate the complete projected post-fill inventory, because an
-opposite-side SingleAnchor entry can reduce used margin by increasing the
-covered volume. It must not calculate candidate margin independently from the
-existing hedged basket.
+### 10.2 Risk-enabled behavior
 
-At or below 50% margin level the account remains alive but new entries are
-blocked. At or below 20%, stop-out is terminal for the research path and is
-checked before strategy actions that could rescue the account on that quote. A
-hedged account with open positions that enters negative equity is also terminal,
-including the zero-used-margin edge case. PR 3 does not simulate the broker's
-post-stop-out ticket liquidation; stop-out already means the intact
-SingleAnchor path failed the survival test.
+With `single-anchor-margin-enabled=true` (which requires the research account),
+`SingleAnchorResearchAccount` also implements `IResearchRiskGuard` and the
+engine applies the frozen survival order on every processed quote, including a
+quote-only quote inside a source-session buffer:
 
-`InitialBalance` remains configurable until the complete baseline is frozen.
-The approved PR 3 model keeps the selected 1:500 leverage fixed and does not
-attempt to reconstruct dynamic/equity-based leverage tiers. Risk-disabled PR 3
-must preserve the current strategy path exactly. The implementation must not
-add EURUSD history, USD/EUR conversion, a second position/account ledger, or a
-generic multi-broker margin framework.
+1. revalue the executable account equity (the PR 2 observation);
+2. derive current used margin, free margin and margin level from the same
+   balance/equity (`UsedMargin` is pure inventory state, so its maximum is
+   observed even when the executable mark is skipped; the free-margin and
+   margin-level values are as of the last observable mark);
+3. evaluate terminal stop-out: margin level **at or below 20%**, or open
+   positions with negative equity (terminal even when a fully matched hedge
+   leaves zero used margin and the margin level is undefined);
+4. only when alive, allow normal exit processing (so a same-quote rescue cannot
+   save an account that already failed survival);
+5. when an entry is otherwise triggered, enforce the 50% Margin Call entry block
+   first and then the projected post-fill financing test.
 
-Evidence used for the research contract: the user-supplied MT5 XAUUSD symbol
-specification (XMGlobal-MT5 8, Ultra Low Standard), XM's published Gold hedging
-and margin guidance, the XM Global Client Agreement, and MetaTrader 5's
+The financing test is the complete projected post-fill inventory under the
+frozen hedge rule, at the configured execution model's executable entry price
+(entry slippage included):
+
+~~~text
+projectedFreeMargin = Equity - ProjectedUsedMargin
+feasible  <=>  projectedFreeMargin >= 0
+~~~
+
+A candidate that increases the matched hedge can therefore reduce the projected
+used margin and be financed where an isolated candidate-lot margin would have
+been rejected. On stop-out the account records the terminal state and the
+engine faults with `AccountStopOutException` (`failure.kind = AccountStopOut`,
+`failure.condition = MarginLevel` or `NegativeEquity`); the run stops, no
+ticket-by-ticket liquidation is simulated and no post-stop-out recovery is
+invented. A stop-out is evaluated from the account's last observable state; a
+skipped executable mark is already explicit in
+`researchAccount.floatingObservationsSkipped`.
+
+Entry feasibility keeps the strategy's own candidate first. Only a valid
+candidate (arithmetic or hard-BE sizing) reaches the account. Two explicit
+rejection reasons extend the existing bounded episode rows:
+
+- `MarginCall`: at or below the 50% level; no leg, no trade-number advance,
+  required side unchanged, hard-BE mode stays active if activated, later quotes
+  may retry;
+- `InsufficientMargin`: valid candidate, but `projectedFreeMargin < 0`; same
+  non-advancing semantics, reported separately from `HardBreakevenInfeasible`
+  and `ExecutionFailed`. The row carries the account used/free/level at the
+  first attempt and the projected post-fill used/free margin plus the min/max
+  projected free margin over the folded attempts (the parity digest field list
+  is unchanged; the reason enum distinguishes the episode).
+
+### 10.3 Risk-disabled behavior and parity
+
+`single-anchor-margin-enabled` defaults to `false` and a disabled run is the
+pre-PR-3 strategy path in every dimension: no survival call, no entry
+assessment, no margin counters, `researchMargin` null. The strategy path is
+identical to the base build - same anchors, entries, entry sides, lots, hard-BE
+decisions, rejection episodes/attempts/reasons and parity digests, closes,
+realized P/L and final open-basket state - and the rejection-free fixture's
+strategy-projection hash matched the base build, the margin-disabled build and a
+non-binding margin-enabled build (`aebfe283...`). The results envelope adds one
+additional (null) `researchMargin` field, and the rejection trace rows add the
+new nullable margin fields (serialized as explicit nulls on the pre-existing
+rejection reasons), so a rejection-bearing `results.json` is not byte-identical
+to the pre-PR-3 file; that is the additional-fields allowance the roadmap
+states, not a strategy-path difference.
+
+### 10.4 Validation record (2026-09-26, Windows, .NET SDK 10.0.401)
+
+- `dotnet build MarketLab\src\SingleAnchor\MarketLab.SingleAnchor.csproj --configuration Release`:
+  0 errors (upstream project warnings only, as before).
+- `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`:
+  244 passed, 0 failed, 0 skipped (202 before PR 3; the 42 new tests in
+  `tests\SingleAnchor\MarginTests.cs` cover the uncovered BUY/SELL margin, the
+  matched and partially hedged inventories, projected same-side and
+  opposite-side fills (including a hedge-increasing fill that reduces the
+  projected used margin and the projected weighted average), the exact 50%
+  Margin Call and 20% stop-out boundaries, the zero-used-margin negative-equity
+  stop-out, the flat account, the closed-basket transition, InitialBalance
+  sensitivity, Margin Call blocking, exits not being blocked by Margin Call,
+  recovery and a later retry of the same blocked trade, InsufficientMargin
+  retry and non-advancing state, a margin-rejected hard-BE tail keeping hard-BE
+  mode active, the skipped-executable-mark margin state, the distinctions from
+  hard-BE infeasibility and execution failure, stop-out before a same-quote
+  rescue, quote-only buffer stop-out, bounded repeated rejections,
+  zero-allocation margin observation, serialization and configuration
+  validation).
+- `pwsh -File MarketLab\tests\Test-MarketLabBacktesting.ps1` (fast mode):
+  150 passed, 0 failed.
+- `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1`:
+  12 passed, 0 failed.
+- Strategy-projection parity, real fixture (the section 7 command:
+  step 0.2, base lot 0.01, projected spread 0.5, default 2014-05-02..14 Oanda
+  sample), with `scripts\Get-SingleAnchorStrategyProjection.ps1`: the
+  pre-change build (worktree at the base commit `e4036c3a6`), the current build
+  with margin disabled and the current build with
+  `single-anchor-margin-enabled=true,single-anchor-cash:1000000` all hashed
+  `aebfe283b8352235e6d5ceb7ec8811599ad9e930ecc6663ac5d41843f7bbd1c0`. The
+  three runs also reproduced the section 7 path exactly (1,688,736 quote ticks,
+  21 legs, 11 baskets closed, realized 17.752, open 7-leg basket #12). The
+  margin-enabled run observed max used margin 5.2457 and min margin level
+  19,062,937.7% (no entry ever bound), a diagnostic of the non-binding case.
+  That fixture contains no rejection trace; because the rejection rows gain the
+  new nullable margin fields, a rejection-bearing results file is additive
+  rather than byte-identical to the pre-PR-3 file (section 10.3).
+- Margin path, real fixture with a deliberately small `single-anchor-cash:7`
+  (same parameters plus `single-anchor-margin-enabled:true`): helper exit code 1
+  with `completed:false`, `failure.kind = AccountStopOut`,
+  `failure.condition = MarginLevel`; 17 legs, 11 baskets closed, 2 distinct
+  rejected entries over 2,079 attempts; the open basket's bounded rejection
+  rows carry `MarginCall` (1 episode / 1,509 attempts, first at margin level
+  49.975%) and `InsufficientMargin` (1 episode / 570 attempts, first projected
+  used margin 5.2457 against free margin -2.1607);
+  `researchMargin.stopOut` records `2014-05-06 20:47:07.091646`, balance 24.752,
+  floating -24.497, equity 0.255, used 5.2245990, free -4.9695990, margin level
+  4.88%, 3 open positions. A second small-cash run (`cash:5`) stopped out on
+  `2014-05-04 18:07:20.4855462` at equity 0.786 / 15.08% with 3 open positions, and
+  a larger one (`cash:12`) survived 18 legs / 11 baskets through 37 Margin Call
+  episodes before stopping at equity 1.009 / 19.23% (4 positions). No broker
+  liquidation was simulated in any run.
+- Boundedness and allocation: 100,000 repeated InsufficientMargin attempts stay
+  one episode row and one digest (unit test); in the `cash:7` fixture run the
+  1,509 Margin Call and 570 InsufficientMargin attempts are each one episode row
+  in the results; the steady-state margin observation path allocates 0 managed
+  bytes over 1,000,000 observations after a 1,000,000-observation warm-up. The
+  fixture wall clock moved within run-to-run noise (base 14.1 s, margin disabled
+  16.1 s, margin enabled non-binding 14.9 s on the same machine and day; the
+  allocation test is the stable attributable measure).
+
+### 10.5 Deferred after PR 3
+
+The USD denomination is an approved modeling simplification and must remain
+explicit in result interpretation; do not relabel a USD run as the user's EUR
+account. `InitialBalance` stays configurable until the complete baseline is
+frozen. Out of scope and intentionally absent: EURUSD history and USD/EUR
+conversion, dynamic/equity-based leverage tiers, multi-currency/multi-broker or
+multi-asset margin, LEAN native orders/portfolio margin, partial or pending
+fills, latency or order-book simulation, post-stop-out liquidation sequencing,
+swap/financing, hosted CI, and parameter optimization (StepPercent,
+HardBreakevenCeilingPercent, BaseLot). The next roadmap step is composing the
+already-qualified XAUUSD partitions into one continuous research data folder,
+re-proving its LEAN delivery, freezing the complete baseline configuration
+(including the margin values above) and running the first untouched
+full-history baseline.
+
+Evidence used for the frozen research contract: the user-supplied MT5 XAUUSD
+symbol specification (XMGlobal-MT5 8, Ultra Low Standard), XM's published Gold
+hedging and margin guidance, the XM Global Client Agreement, and MetaTrader 5's
 CFD-leverage/hedging margin documentation, reviewed on 2026-09-26:
 
 - https://www.xm.com/help-center/trading-conditions/faq-why-are-rollover-rates-tripled
 - https://www.xm.com/assets/pdf/new/terms/XMGlobal-Client-Agreement-Terms-and-Conditions-of-Business.pdf
 - https://www.metatrader5.com/en/terminal/help/trading_advanced/margin_forex
-
-The USD denomination is an approved modeling simplification and must remain
-explicit in result interpretation.

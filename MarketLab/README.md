@@ -551,17 +551,29 @@ validation record and the retired-repository provenance in
 `src\SingleAnchor\PROVENANCE.md`). The parity hash and the acceptance benchmark
 are reproducible with `scripts\Get-SingleAnchorStrategyProjection.ps1` and
 `scripts\Measure-SingleAnchorResearchOverhead.ps1`, and the paired per-quote
-cost with `tools\research-account-probe\`. **PR 3**
-(target-account margin survival) remains unimplemented, but its research
-account contract is now frozen: USD-denominated XM Global Ultra Low
-Standard-style XAUUSD, hedging, fixed selected leverage 1:500, 100 oz/lot,
-0.01/0.01/50 lot min/step/max, zero margin on matched Gold volume, 50% Margin
-Call, 20% terminal stop-out, and zero swap/commission for the Islamic baseline.
-The user's live account is EUR-denominated; historical EURUSD conversion is
-deliberately out of scope, so the research result must not be presented as an
-exact reconstruction of the live EUR monetary path. The full-history
-composition, the baseline freeze and the first full-history baseline are still
-later steps.
+cost with `tools\research-account-probe\`. **PR 3** (target-account margin
+survival) is implemented on its review branch following the frozen research
+contract: USD-denominated XM Global Ultra Low Standard-style XAUUSD, hedging,
+fixed selected leverage 1:500, 100 oz/lot, 0.01/0.01/50 lot min/step/max, zero
+margin on matched Gold volume, 50% Margin Call (new entries blocked, exits
+allowed), 20% terminal stop-out plus the open-position negative-equity rule,
+and zero swap/commission for the Islamic baseline. It is toggled by
+`single-anchor-margin-enabled` (default false) with
+`single-anchor-margin-contract-size`, `-margin-leverage`, `-margin-call-percent`
+and `-margin-stop-out-percent` as the frozen values; on the same research
+account it adds `researchMargin` (current/extreme used and free margin, margin
+level, Margin Call and InsufficientMargin counts, terminal `stopOut`) and two
+explicit rejection reasons (`MarginCall`, `InsufficientMargin`), and a terminal
+stop-out stops the run as an `AccountStopOut` failure without simulating broker
+liquidation. Margin disabled is the pre-PR-3 strategy path exactly: identical
+counters, legs, rejection episodes/reasons/parity digests, closes, realized P/L
+and final basket state, with strategy-path parity and the rejection-free
+fixture's projection hash recorded in the implementation note section 10; the
+added results fields are additive. The user's live account is EUR-denominated; historical EURUSD
+conversion is deliberately out of scope, so the USD research result must not be
+presented as an exact reconstruction of the live EUR monetary path. The
+full-history composition, the baseline freeze and the first full-history
+baseline are still later steps.
 
 ## 10. When required data is missing
 
