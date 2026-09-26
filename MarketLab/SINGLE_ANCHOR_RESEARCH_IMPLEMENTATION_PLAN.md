@@ -39,8 +39,9 @@ position truth and the engine's realized result remains the only realized-P/L
 authority. PR 2 changes no strategy formula and no PR 1 or PR 7 semantics.
 
 Implementation note (PR 3 record): PR 3 (target-account margin survival) is
-implemented through GitHub PR #11 following sections 3.16-3.21 and the frozen
-contract in section 10 of SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md: the one
+implemented and merged through GitHub PR #11 following sections 3.16-3.21 and
+the frozen contract in section 10 of SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md:
+the one
 `SingleAnchorResearchAccount` gains the approved USD XM-style margin state and
 an optional `IResearchRiskGuard` role (`SingleAnchorEngine` consults it at the
 frozen survival order: revalue, current margin state, terminal stop-out before
@@ -57,9 +58,9 @@ reproduce the pre-PR-3 path (verified by the strategy-only projection hash,
 including a rejection-bearing scenario, and the full unit/helper suites; see the
 validation record in SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10). The USD
 denomination is a research simplification, not a reproduction of the user's EUR
-live account. The PR is not merged yet; the composed full-history data folder,
-the complete baseline freeze and the first full-history baseline remain
-unimplemented.
+live account. PR 3 is merged through GitHub PR #11; the composed full-history
+data folder, the complete baseline freeze and the first full-history baseline
+remain unimplemented.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
@@ -434,7 +435,7 @@ PR 1 is complete when:
 10. tests pass on Windows/local;
 11. no hosted CI or upstream LEAN modification is introduced.
 
-PR 1 is implemented and merged (see the implementation note at the top); PR 2 is implemented and merged (see the PR 2 implementation note at the top); PR 3 is implemented through GitHub PR #11 (see the PR 3 implementation note at the top).
+PR 1 is implemented and merged (see the implementation note at the top); PR 2 is implemented and merged (see the PR 2 implementation note at the top); PR 3 is implemented and merged through GitHub PR #11 (see the PR 3 implementation note at the top).
 
 ### PR 2 -- C# research account view and bounded analytics
 

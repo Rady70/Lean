@@ -552,8 +552,8 @@ validation record and the retired-repository provenance in
 are reproducible with `scripts\Get-SingleAnchorStrategyProjection.ps1` and
 `scripts\Measure-SingleAnchorResearchOverhead.ps1`, and the paired per-quote
 cost with `tools\research-account-probe\`. **PR 3** (target-account margin
-survival) is implemented through GitHub PR #11 following the frozen research
-contract: USD-denominated XM Global Ultra Low Standard-style XAUUSD, hedging,
+survival) is implemented and merged through GitHub PR #11 following the frozen
+research contract: USD-denominated XM Global Ultra Low Standard-style XAUUSD, hedging,
 fixed selected leverage 1:500, 100 oz/lot, 0.01/0.01/50 lot min/step/max, zero
 margin on matched Gold volume, 50% Margin Call (new entries blocked, exits
 allowed), 20% terminal stop-out plus the open-position negative-equity rule,

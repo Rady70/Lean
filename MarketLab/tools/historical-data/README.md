@@ -546,10 +546,11 @@ material only; nothing here is a runtime dependency on them.
   baseline. That composition step is deliberately not implemented in PR 1.
   **PR 2** (C# research account view and bounded analytics) is implemented and
   merged (SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 9), and **PR 3**
-  (target-account margin survival) is implemented through GitHub PR #11
-  (section 10 of the same note). The next roadmap step after PR 3 is composition of the
-  already-qualified partitions into one continuous research data folder, the
-  baseline configuration freeze and the first full-history baseline. PR 3 uses
+  (target-account margin survival) is implemented and merged through GitHub
+  PR #11 (section 10 of the same note). The next roadmap step after PR 3 is
+  composition of the already-qualified partitions into one continuous research
+  data folder, the baseline configuration freeze and the first full-history
+  baseline. PR 3 uses
   the approved USD-denominated XM-style research account, so it does **not**
   require an EURUSD conversion dataset or any additional FX-conversion
   qualification; the qualified XAUUSD history remains the market-data input for
