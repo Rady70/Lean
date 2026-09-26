@@ -125,11 +125,7 @@ culture; `true`/`false` for booleans.
 | `single-anchor-symbol`, `-market`, `-security-type` | host instrument; the host is XAUUSD-focused, another ticker is accepted only with its own explicit point value | `XAUUSD`, `oanda`, `Cfd` (`Forex` accepted) |
 | `single-anchor-start-date`, `-end-date`, `-cash` | host run settings (`cash` only satisfies LEAN's setup; the strategy sizes in lots). `-cash` is also the research account's `InitialBalance` | `2014-05-02`, `2014-05-14` (the shipped sample), 100000 |
 | `single-anchor-research-account` | PR 2 research account and bounded analytics (section 9); `false` runs the pre-PR-2 strategy path with no derived account state | true |
-| `single-anchor-margin-enabled` | PR 3 target-account margin survival (section 10) on the same research account; `false` runs the pre-PR-3 strategy path exactly. Requires `single-anchor-research-account=true` | false |
-| `single-anchor-margin-contract-size` | XAUUSD contract size in ounces per lot; the approved PR 3 value is 100 | 100 |
-| `single-anchor-margin-leverage` | fixed selected leverage; the approved PR 3 value is 500 (1:500). No dynamic/equity-based tiers exist in this phase | 500 |
-| `single-anchor-margin-call-percent` | Margin Call Level in percent; at or below it new entries are blocked while exits remain possible | 50 |
-| `single-anchor-margin-stop-out-percent` | terminal Stop-out Level in percent (open positions with negative equity are terminal as well) | 20 |
+| `single-anchor-margin-enabled` | PR 3 target-account margin survival (section 10) on the same research account; `false` runs the pre-PR-3 strategy path exactly. Requires `single-anchor-research-account=true`, `single-anchor-symbol=XAUUSD`, `single-anchor-security-type=Cfd` and the 100-per-lot point value; the frozen account contract (100 oz/lot, fixed 1:500, Margin Call 50%, Stop-out 20%) is instantiated by the host and is not a configurable generic broker model | false |
 
 ## 4. Implementation choices and constraints
 
@@ -383,9 +379,10 @@ own results are:
   market (raw, exit and executable profit; never closed);
 - `<run dir>\storage\single-anchor\results.json` (written through LEAN's object
   store at the end of the run, or at the moment a strategy invariant, a
-  data-quality condition or a session-map coverage mismatch fails): `completed`
-  and, on a stop, `failure` (kind `StrategyInvariant`, `DataQuality` or
-  `SessionMap`, the condition, the quote, the message);
+  data-quality condition, a session-map coverage mismatch or a PR 3 account
+  condition fails): `completed` and, on a stop, `failure` (kind
+  `StrategyInvariant`, `DataQuality`, `SessionMap`, `AccountStopOut` or
+  `AccountSurvival`, the condition, the quote, the message);
   `hardBreakevenVerification` (`StrategyDefinitionResolved`,
   `HardBEVerifiedUnderConfiguredExecutionModel`, scope, assumptions, what is
   not covered); the symbol, market and `quoteTimeZone`; the parameters; quote
@@ -1091,11 +1088,19 @@ CommissionPerLot baseline             0
 ~~~
 
 `MarginParameters` (`src\SingleAnchor\Margin.cs`) carries the four frozen
-numbers with the approved values as defaults; the host exposes them as
-`single-anchor-margin-*` parameters (section 3) and validates
+numbers with the approved values as defaults. The production host instantiates
+exactly those values when margin is enabled and additionally enforces the
+frozen instrument contract: `single-anchor-symbol=XAUUSD`,
+`single-anchor-security-type=Cfd` (CFD Leverage) and the 100-per-lot USD point
+value (the 100 oz/lot contract). Another symbol, security type or point value,
+or a different contract size, leverage, Margin Call or stop-out value, is
+refused rather than described as the frozen model; the record stays internally
+parameterizable only so the arithmetic can be tested, and it validates
 `0 < stop-out < Margin Call < 100`, positive contract size and positive
-leverage. There is no dynamic/equity-based leverage tier, no multi-currency
-account and no multi-broker framework.
+leverage. The LEAN data market (Dukascopy/Oanda) is the replay identity, not
+the modeled broker, and is deliberately not constrained. There is no
+dynamic/equity-based leverage tier, no multi-currency account and no
+multi-broker framework.
 
 Matched BUY/SELL Gold volume contributes zero margin; only the uncovered side
 contributes ordinary margin, at that side's weighted-average open price,
@@ -1116,15 +1121,28 @@ quote-only quote inside a source-session buffer:
 1. revalue the executable account equity (the PR 2 observation);
 2. derive current used margin, free margin and margin level from the same
    balance/equity (`UsedMargin` is pure inventory state, so its maximum is
-   observed even when the executable mark is skipped; the free-margin and
-   margin-level values are as of the last observable mark);
-3. evaluate terminal stop-out: margin level **at or below 20%**, or open
+   observed even when the executable mark is skipped);
+3. establish that the account state is current: if a needed executable close
+   price is not positive under the configured slippage, the current equity,
+   used margin, free margin and margin level are undefined and the run stops
+   with `failure.kind = AccountSurvival`,
+   `failure.condition = ExecutableMarkUnavailable`; PR 3 never certifies or
+   evaluates survival from a stale state (`researchAccount` keeps the last
+   observable values and `floatingObservationsSkipped` for the record);
+4. evaluate terminal stop-out: margin level **at or below 20%**, or open
    positions with negative equity (terminal even when a fully matched hedge
    leaves zero used margin and the margin level is undefined);
-4. only when alive, allow normal exit processing (so a same-quote rescue cannot
+5. only when alive, allow normal exit processing (so a same-quote rescue cannot
    save an account that already failed survival);
-5. when an entry is otherwise triggered, enforce the 50% Margin Call entry block
-   first and then the projected post-fill financing test.
+6. when an entry is otherwise triggered, enforce the 50% Margin Call entry block
+   first and then the projected post-fill financing test;
+7. after a fill, revalue the account and evaluate terminal stop-out on the
+   post-fill state as well, so a fill whose immediate spread/slippage/commission
+   costs put the account at stop-out is terminal on the same quote instead of
+   waiting for a next quote that may never arrive. The filled leg stays in the
+   ledger and in the recorded terminal state, but the entry is not published as
+   a normal successful entry (the same post-mortem convention as a hard-BE
+   invariant fault).
 
 The financing test is the complete projected post-fill inventory under the
 frozen hedge rule, at the configured execution model's executable entry price
@@ -1141,9 +1159,7 @@ been rejected. On stop-out the account records the terminal state and the
 engine faults with `AccountStopOutException` (`failure.kind = AccountStopOut`,
 `failure.condition = MarginLevel` or `NegativeEquity`); the run stops, no
 ticket-by-ticket liquidation is simulated and no post-stop-out recovery is
-invented. A stop-out is evaluated from the account's last observable state; a
-skipped executable mark is already explicit in
-`researchAccount.floatingObservationsSkipped`.
+invented.
 
 Entry feasibility keeps the strategy's own candidate first. Only a valid
 candidate (arithmetic or hard-BE sizing) reaches the account. Two explicit
@@ -1166,21 +1182,29 @@ pre-PR-3 strategy path in every dimension: no survival call, no entry
 assessment, no margin counters, `researchMargin` null. The strategy path is
 identical to the base build - same anchors, entries, entry sides, lots, hard-BE
 decisions, rejection episodes/attempts/reasons and parity digests, closes,
-realized P/L and final open-basket state - and the rejection-free fixture's
-strategy-projection hash matched the base build, the margin-disabled build and a
-non-binding margin-enabled build (`aebfe283...`). The results envelope adds one
-additional (null) `researchMargin` field, and the rejection trace rows add the
-new nullable margin fields (serialized as explicit nulls on the pre-existing
-rejection reasons), so a rejection-bearing `results.json` is not byte-identical
-to the pre-PR-3 file; that is the additional-fields allowance the roadmap
-states, not a strategy-path difference.
+realized P/L and final open-basket state.
+
+`scripts\Get-SingleAnchorStrategyProjection.ps1` is genuinely strategy-only: it
+removes the PR 3 account-only fields from every rejection row inside the
+closed-basket and open-basket objects before hashing, so a pre-PR-3 result and a
+PR 3 result of the same path hash identically even when rejection episodes
+exist. Evidence on the shipped fixture: the rejection-free run (section 10.4)
+hashed `aebfe283...` for the base build, the margin-disabled build and a
+non-binding margin-enabled build, and the rejection-bearing scenario
+(`single-anchor-hard-be-ceiling-percent:0.1`, 1 episode / 985,370 folded
+attempts) hashed `b0efc7ff...` for all three. The results envelope still adds
+one (null) `researchMargin` field and the raw rejection rows carry the new
+nullable margin fields (explicit nulls on the pre-existing reasons), so a
+rejection-bearing `results.json` is not byte-identical to the pre-PR-3 file;
+that is the additive-fields allowance the roadmap states, not a strategy-path
+difference.
 
 ### 10.4 Validation record (2026-09-26, Windows, .NET SDK 10.0.401)
 
 - `dotnet build MarketLab\src\SingleAnchor\MarketLab.SingleAnchor.csproj --configuration Release`:
   0 errors (upstream project warnings only, as before).
 - `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`:
-  244 passed, 0 failed, 0 skipped (202 before PR 3; the 42 new tests in
+  251 passed, 0 failed, 0 skipped (202 before PR 3; the 49 new tests in
   `tests\SingleAnchor\MarginTests.cs` cover the uncovered BUY/SELL margin, the
   matched and partially hedged inventories, projected same-side and
   opposite-side fills (including a hedge-increasing fill that reduces the
@@ -1190,11 +1214,16 @@ states, not a strategy-path difference.
   sensitivity, Margin Call blocking, exits not being blocked by Margin Call,
   recovery and a later retry of the same blocked trade, InsufficientMargin
   retry and non-advancing state, a margin-rejected hard-BE tail keeping hard-BE
-  mode active, the skipped-executable-mark margin state, the distinctions from
-  hard-BE infeasibility and execution failure, stop-out before a same-quote
-  rescue, quote-only buffer stop-out, bounded repeated rejections,
-  zero-allocation margin observation, serialization and configuration
-  validation).
+  mode active, the skipped-executable-mark margin state, the post-fill
+  immediate stop-out (the fill stays in the ledger and in the terminal state
+  and is not published as a normal entry), the explicit AccountSurvival stop
+  when a current executable mark cannot be computed, the frozen host contract
+  (XAUUSD/Cfd/100 accepted; another symbol, security type or point value
+  refused), the approved 0.01/0.01/50 volume profile (with the global engine
+  default still 100), the distinctions from hard-BE infeasibility and execution
+  failure, stop-out before a same-quote rescue, quote-only buffer stop-out,
+  bounded repeated rejections, zero-allocation margin observation,
+  serialization and configuration validation).
 - `pwsh -File MarketLab\tests\Test-MarketLabBacktesting.ps1` (fast mode):
   150 passed, 0 failed.
 - `powershell -File MarketLab\tests\Test-TradingAvailabilityEndToEnd.ps1`:
@@ -1210,9 +1239,15 @@ states, not a strategy-path difference.
   21 legs, 11 baskets closed, realized 17.752, open 7-leg basket #12). The
   margin-enabled run observed max used margin 5.2457 and min margin level
   19,062,937.7% (no entry ever bound), a diagnostic of the non-binding case.
-  That fixture contains no rejection trace; because the rejection rows gain the
-  new nullable margin fields, a rejection-bearing results file is additive
-  rather than byte-identical to the pre-PR-3 file (section 10.3).
+  That fixture contains no rejection trace, so the rejection-bearing parity was
+  proven separately with the strategy-only projection: the
+  `single-anchor-hard-be-ceiling-percent:0.1` scenario (1 distinct rejection
+  episode / 985,370 folded attempts, 18 legs, 11 baskets closed) hashed
+  `b0efc7ff3e63a4d56939708f53d239bcf7e780f322c91c195bb842e2e9f64972` for the
+  base build at `e4036c3a6`, the margin-disabled build and the non-binding
+  margin-enabled build. The rejection rows really do carry the PR 3
+  account-only fields in the head JSON; the script removes them before hashing
+  (section 10.3).
 - Margin path, real fixture with a deliberately small `single-anchor-cash:7`
   (same parameters plus `single-anchor-margin-enabled:true`): helper exit code 1
   with `completed:false`, `failure.kind = AccountStopOut`,
@@ -1232,10 +1267,15 @@ states, not a strategy-path difference.
   one episode row and one digest (unit test); in the `cash:7` fixture run the
   1,509 Margin Call and 570 InsufficientMargin attempts are each one episode row
   in the results; the steady-state margin observation path allocates 0 managed
-  bytes over 1,000,000 observations after a 1,000,000-observation warm-up. The
-  fixture wall clock moved within run-to-run noise (base 14.1 s, margin disabled
-  16.1 s, margin enabled non-binding 14.9 s on the same machine and day; the
-  allocation test is the stable attributable measure).
+  bytes over 1,000,000 observations after a 1,000,000-observation warm-up.
+- Performance, repeated measurement on the shipped fixture (same command as
+  section 7, one warm-up then five measured runs per configuration, in the same
+  session on the same host): pre-change base median 19.60 s (86,160 ticks/s;
+  measured 19.10-20.50), margin-disabled head median 19.50 s (86,602 ticks/s;
+  19.10-19.90), margin-enabled non-binding head median 20.00 s (84,437 ticks/s;
+  19.20-20.40). The risk-disabled median is within run-to-run noise of the base
+  build (no material regression); the earlier single-run 14.1 s vs 16.1 s
+  comparison was measurement noise, not a regression.
 
 ### 10.5 Deferred after PR 3
 

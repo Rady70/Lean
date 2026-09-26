@@ -558,14 +558,17 @@ fixed selected leverage 1:500, 100 oz/lot, 0.01/0.01/50 lot min/step/max, zero
 margin on matched Gold volume, 50% Margin Call (new entries blocked, exits
 allowed), 20% terminal stop-out plus the open-position negative-equity rule,
 and zero swap/commission for the Islamic baseline. It is toggled by
-`single-anchor-margin-enabled` (default false) with
-`single-anchor-margin-contract-size`, `-margin-leverage`, `-margin-call-percent`
-and `-margin-stop-out-percent` as the frozen values; on the same research
-account it adds `researchMargin` (current/extreme used and free margin, margin
-level, Margin Call and InsufficientMargin counts, terminal `stopOut`) and two
-explicit rejection reasons (`MarginCall`, `InsufficientMargin`), and a terminal
-stop-out stops the run as an `AccountStopOut` failure without simulating broker
-liquidation. Margin disabled is the pre-PR-3 strategy path exactly: identical
+`single-anchor-margin-enabled` (default false); the host instantiates the frozen
+values itself and refuses another symbol, security type or point value (margin
+mode requires `XAUUSD`, `Cfd` and 100 per lot), so the account contract cannot
+silently vary. On the same research account it adds `researchMargin`
+(current/extreme used and free margin, margin level, Margin Call and
+InsufficientMargin counts, terminal `stopOut`) and two explicit rejection
+reasons (`MarginCall`, `InsufficientMargin`); a fill that immediately stops the
+account out is terminal on the same quote, a terminal stop-out stops the run as
+an `AccountStopOut` failure without simulating broker liquidation, and a quote
+whose executable mark cannot be computed stops the run as an `AccountSurvival`
+failure instead of certifying survival from a stale state. Margin disabled is the pre-PR-3 strategy path exactly: identical
 counters, legs, rejection episodes/reasons/parity digests, closes, realized P/L
 and final basket state, with strategy-path parity and the rejection-free
 fixture's projection hash recorded in the implementation note section 10; the
