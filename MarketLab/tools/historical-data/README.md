@@ -454,7 +454,7 @@ unsupported identity and an in-worktree data folder that must be refused. It
 creates scratch data folders outside the repository and removes the junctions
 as links during cleanup.
 
-## 9. Canonical historical-data location and relocation (2026-09-26)
+## 9. Canonical historical-data location and relocation (2026-09-26; implemented and merged through GitHub PR #12)
 
 The single canonical copy of the qualified 90-file Dukascopy/JForex XAUUSD
 source history is owned by this Lean/MarketLab workspace and lives outside Git:

@@ -1302,7 +1302,8 @@ completed first (2026-09-26): the qualified XAUUSD source now has one
 physical copy at the Lean-owned `E:\MarketLab\data\XAUUSD_raw_history`,
 and the unchanged 90-month qualification/LEAN replay route reproduced
 90/90 PASS with the identical 413,750,130-row population and aggregate
-digests (`tools/historical-data/README.md` section 9). The next roadmap
+digests (`tools/historical-data/README.md` section 9); the milestone is
+implemented and merged through GitHub PR #12. The next roadmap
 step is composing the already-qualified XAUUSD partitions into one
 continuous research data folder, re-proving its LEAN delivery, freezing
 the complete baseline configuration (including the margin values above)

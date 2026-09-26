@@ -79,8 +79,9 @@ re-derived with the identical SHA-256
 strategy, conversion or qualification-rule change. Evidence:
 `tools/historical-data/README.md` section 9 and
 `tools/historical-data/fixtures/xauusd-history-relocation-evidence.json`. The
-composed full-history
-data folder, the complete baseline freeze and the first full-history baseline
+milestone is implemented and merged through GitHub PR #12 (merge commit
+`81dcd26b504f5daa2da1b4392765bd747295562c`). The composed full-history data
+folder, the complete baseline freeze and the first full-history baseline
 remain unimplemented.
 
 This document is the authoritative implementation roadmap after the current

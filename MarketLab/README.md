@@ -536,7 +536,8 @@ The complete qualified 90-file source set now has one physical canonical copy
 at the Lean-owned
 `E:\MarketLab\data\XAUUSD_raw_history`, relocated from the retired workspace on
 2026-09-26 and re-qualified from there with 90/90 PASS and the identical
-413,750,130-row population and aggregate digests
+413,750,130-row population and aggregate digests; implemented and merged
+through GitHub PR #12
 ([tools README](tools/historical-data/README.md) section 9).
 The sweep is a decomposed per-file acceptance that produced 90 separate native
 data folders; composing the already-qualified daily partitions into one
