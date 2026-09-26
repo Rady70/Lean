@@ -341,8 +341,8 @@ culture; `true`/`false` for booleans.
   2023-03 case delivers every accepted row (4,465,226 = 4,465,226 = 4,465,226;
   digests equal; zero session drops). The full 90-month sweep also completed
   with 90/90 PASS and 413,750,130 rows equal at every stage (section 8.7).
-  PR 2 is implemented and merged (section 9); PR 3 is implemented on its
-  review branch (section 10). The composed full-history data folder, the
+  PR 2 is implemented and merged (section 9); PR 3 is implemented through
+  GitHub PR #11 (section 10). The composed full-history data folder, the
   complete baseline freeze and the first full-history baseline remain later
   steps.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
@@ -783,8 +783,8 @@ appropriate, but they are not the authoritative baseline. The in-code
 a baseline run that leaves them in place bypasses the qualified identity and is
 not a valid baseline. The replay-identity blocker recorded here is resolved;
 PR 2 (C# research account and bounded analytics) is implemented and merged
-(section 9), and PR 3 (target-account margin survival) is implemented on its
-review branch (section 10). The next project steps are composing the
+(section 9), and PR 3 (target-account margin survival) is implemented through
+GitHub PR #11 (section 10). The next project steps are composing the
 already-qualified daily partitions into one continuous research data folder and
 re-proving its delivery, the baseline configuration freeze, and only then the
 first full-history strategy baseline.
@@ -1056,7 +1056,7 @@ the parity comparison in section 9.7 is produced.
 
 ## 10. Target-account margin survival (PR 3)
 
-PR 3 is implemented on its review branch, following the frozen contract below
+PR 3 is implemented through GitHub PR #11, following the frozen contract below
 (recorded 2026-09-26 before implementation) and the plan's sections 3.16-3.21.
 It extends the one `SingleAnchorResearchAccount`; it does not add a second
 Balance/Equity authority or a second position registry. `Basket`/`BasketLeg`

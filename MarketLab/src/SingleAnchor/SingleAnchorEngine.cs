@@ -173,7 +173,15 @@ namespace MarketLab.SingleAnchor
         /// </summary>
         public long StrategyEligibleQuotes => QuotesProcessed - QuoteOnlyQuotes;
 
-        /// <summary>Legs opened and published over the engine's lifetime (a tail leg that fails the post-fill invariant is not published).</summary>
+        /// <summary>
+        /// Legs opened and published over the engine's lifetime. A filled leg is not published and
+        /// does not count when the fill cannot become a normal successful entry: a tail leg that
+        /// fails the post-fill hard-BE invariant, or a fill whose immediate post-fill account
+        /// state causes terminal stop-out (<see cref="AccountStopOutException"/>) or an
+        /// unavailable executable account mark (<see cref="AccountSurvivalException"/>). In those
+        /// cases the filled leg stays in the basket ledger for the post-mortem or the recorded
+        /// terminal state.
+        /// </summary>
         public long EntriesOpened { get; private set; }
 
         /// <summary>Distinct rejected-entry episodes (each raised as one <see cref="EntryRejected"/>); an episode covers every attempt with the same trade, side, reason and hard-BE outcome.</summary>
@@ -194,7 +202,12 @@ namespace MarketLab.SingleAnchor
         /// <summary>Raised once per basket on the first quote that satisfies both first-entry boundaries of a still-empty basket.</summary>
         public event Action<FirstEntrySkippedEvent>? FirstEntrySkipped;
 
-        /// <summary>Raised when a leg is filled, is in the ledger and has passed the post-fill hard-BE verification (for a tail leg).</summary>
+        /// <summary>
+        /// Raised when a leg is filled, is in the ledger, has passed the post-fill hard-BE
+        /// verification (for a tail leg) and the post-fill account state did not terminate the run
+        /// (<see cref="AccountStopOutException"/> or <see cref="AccountSurvivalException"/>). A
+        /// faulting fill is not raised as a normal entry; it stays in the ledger.
+        /// </summary>
         public event Action<EntryOpenedEvent>? EntryOpened;
 
         /// <summary>Raised once per distinct rejected-entry episode, including hard-BE infeasibility.</summary>
@@ -216,10 +229,11 @@ namespace MarketLab.SingleAnchor
         /// Processes one quote. Throws <see cref="DataQualityException"/> for a quote with invalid
         /// prices or one earlier than an already processed quote, <see cref="SessionMapException"/>
         /// for a quote outside the configured session-map coverage, <see cref="StrategyInvariantException"/>
-        /// when a strategy invariant fails and (with a PR 3 risk guard) <see cref="AccountStopOutException"/>
-        /// when the account is terminally stopped out; each faults the engine, which then throws
-        /// again on every call. A quote that satisfies both first-entry boundaries of a still-empty
-        /// basket is skipped, not an error.
+        /// when a strategy invariant fails and (with a PR 3 risk guard)
+        /// <see cref="AccountStopOutException"/> when the account is terminally stopped out or
+        /// <see cref="AccountSurvivalException"/> when the account cannot be revalued on the quote;
+        /// each faults the engine, which then throws again on every call. A quote that satisfies
+        /// both first-entry boundaries of a still-empty basket is skipped, not an error.
         /// </summary>
         public void OnQuote(in Quote quote)
         {

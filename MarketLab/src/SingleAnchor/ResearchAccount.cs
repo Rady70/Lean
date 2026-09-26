@@ -94,10 +94,12 @@ namespace MarketLab.SingleAnchor
         /// <summary>
         /// Assesses one strategy-validated candidate order against the account: the Margin Call
         /// entry block first, then the projected post-fill margin feasibility under the frozen
-        /// hedging rule. Must be O(1) and allocate nothing on the path. The account state used is
-        /// the one observed for the quote the candidate was decided on; when that observation
-        /// skipped an unavailable executable mark, the last observable state is used (the skip is
-        /// explicit in <c>researchAccount.floatingObservationsSkipped</c>).
+        /// hedging rule. Must be O(1) and allocate nothing on the path. The engine calls this only
+        /// after it has established a current observable account state for the quote (the same
+        /// state <see cref="EvaluateSurvival"/> uses); if the executable account mark is
+        /// unavailable, the engine terminates the run with
+        /// <c>AccountSurvival / ExecutableMarkUnavailable</c> before entry assessment can
+        /// proceed.
         /// </summary>
         MarginEntryAssessment AssessEntry(EntryOrder order, Basket basket);
 

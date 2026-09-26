@@ -364,8 +364,10 @@ namespace MarketLab.SingleAnchor
             {
                 // LEAN ends the run on the rethrow without calling OnEndOfAlgorithm, so the
                 // results are written here, with the failure recorded. Every engine fault kind
-                // (strategy invariant, data quality, session-map coverage) ends the run the same
-                // way.
+                // ends the run the same way: strategy invariant, data quality, session-map
+                // coverage and, with the PR 3 margin layer enabled, terminal account stop-out
+                // (AccountStopOut) or an account that cannot be revalued on the quote
+                // (AccountSurvival).
                 Error($"SingleAnchor {failure.Kind} failure ({failure.Condition}): {failure.Message}");
                 Log($"SingleAnchor run stopped by the {failure.Condition} condition at {failure.Quote}.");
                 WriteResults(new RunFailure(failure.Kind, failure.Condition, failure.Quote, failure.Message));
