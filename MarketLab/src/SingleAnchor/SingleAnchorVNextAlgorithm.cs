@@ -41,11 +41,24 @@ namespace MarketLab.SingleAnchor
     /// basket still open at end of data or at a fault); it owns no positions and changes
     /// no strategy decision, and the results carry it as <c>researchAccount</c>,
     /// <c>researchBaskets</c> and <c>researchOpenBasket</c> (implementation note section 9).
+    /// The optional PR 3 target-account margin layer (<c>single-anchor-margin-enabled</c>,
+    /// default false) extends that same account with the frozen USD XM-style contract
+    /// (<c>single-anchor-margin-contract-size</c> 100, <c>single-anchor-margin-leverage</c> 500,
+    /// <c>single-anchor-margin-call-percent</c> 50, <c>single-anchor-margin-stop-out-percent</c>
+    /// 20): used/free margin and margin level derived from the same balance/equity, the 50%
+    /// Margin Call entry block, explicit <c>InsufficientMargin</c> rejections against the
+    /// projected post-fill inventory, and terminal 20% (or open-position negative-equity)
+    /// stop-out that stops the run as an <c>AccountStopOut</c> failure. The extra evidence is
+    /// written to <c>researchMargin</c>; disabling margin leaves the pre-PR-3 strategy path
+    /// exactly unchanged. The account currency is USD as a research simplification (the user's
+    /// live account is EUR-denominated; historical EURUSD conversion is out of scope), and no
+    /// LEAN portfolio, order or margin state is used.
     /// A strategy invariant
     /// failure (<see cref="StrategyInvariantException"/>), a data-quality failure
-    /// (<see cref="DataQualityException"/>) or a session-map coverage mismatch
-    /// (<see cref="SessionMapException"/>) writes the results with the failure recorded and then
-    /// stops the run as a LEAN runtime error. The results also carry the hard-BE verification
+    /// (<see cref="DataQualityException"/>), a session-map coverage mismatch
+    /// (<see cref="SessionMapException"/>) or — with the PR 3 margin layer enabled — terminal
+    /// account stop-out (<see cref="AccountStopOutException"/>) writes the results with the
+    /// failure recorded and then stops the run as a LEAN runtime error. The results also carry the hard-BE verification
     /// metadata (strategy definition resolved, requirement verified at each tail entry under the
     /// configured execution model).
     /// </summary>
@@ -96,6 +109,13 @@ namespace MarketLab.SingleAnchor
 
         // ---- Research account / bounded analytics (approved roadmap PR 2) ----
         [Parameter("single-anchor-research-account")] private bool _researchAccountEnabled = true;
+
+        // ---- Target-account margin survival (approved roadmap PR 3) ----
+        [Parameter("single-anchor-margin-enabled")] private bool _marginEnabled = false;
+        [Parameter("single-anchor-margin-contract-size")] private decimal _marginContractSize = 100m;
+        [Parameter("single-anchor-margin-leverage")] private decimal _marginLeverage = 500m;
+        [Parameter("single-anchor-margin-call-percent")] private decimal _marginCallPercent = 50m;
+        [Parameter("single-anchor-margin-stop-out-percent")] private decimal _marginStopOutPercent = 20m;
 
         private Symbol _symbol = null!;
         private SingleAnchorEngine _engine = null!;
@@ -175,13 +195,38 @@ namespace MarketLab.SingleAnchor
             }
 
             var availability = ResolveTradingAvailability(security);
-            _researchAccount = _researchAccountEnabled ? new SingleAnchorResearchAccount(_parameters, _cash) : null;
-            _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters), availability, _researchAccount);
+            MarginParameters? margin = null;
+            if (_marginEnabled)
+            {
+                if (!_researchAccountEnabled)
+                {
+                    throw new ArgumentException(
+                        "single-anchor-margin-enabled=true requires single-anchor-research-account=true: the PR 3 margin/survival model extends the one research account and must not create a second Balance/Equity authority.");
+                }
+                margin = new MarginParameters
+                {
+                    ContractSize = _marginContractSize,
+                    Leverage = _marginLeverage,
+                    MarginCallLevelPercent = _marginCallPercent,
+                    StopOutLevelPercent = _marginStopOutPercent
+                };
+                var marginErrors = margin.GetValidationErrors();
+                if (marginErrors.Count > 0)
+                {
+                    throw new ArgumentException("SingleAnchor margin parameters are invalid (see the single-anchor-margin-* parameters): " + string.Join(" ", marginErrors));
+                }
+            }
+            _researchAccount = _researchAccountEnabled ? new SingleAnchorResearchAccount(_parameters, _cash, margin) : null;
+            _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters), availability, _researchAccount, margin != null ? _researchAccount : null);
             WireEvents();
 
             Log(_researchAccount != null
                 ? $"SingleAnchor research account enabled: initial balance {F(_cash)}; derived Balance/FloatingPL/Equity and the run/basket analytics are written in the results (the strategy path is unchanged)."
                 : "SingleAnchor research account disabled (single-anchor-research-account=false): the run is the pre-PR-2 strategy path with no derived account state.");
+            if (margin != null)
+            {
+                Log($"SingleAnchor target-account margin enabled: USD XM-style research account (not the EUR live account), contract {F(margin.ContractSize)} oz/lot, fixed leverage 1:{F(margin.Leverage)}, initial/maintenance margin rate 1.0, matched BUY/SELL volume has zero margin and only the uncovered side is charged {F(margin.ContractSize)} oz/lot * weighted-average open price / {F(margin.Leverage)}; Margin Call {F(margin.MarginCallLevelPercent)}% blocks new entries while exits stay possible, terminal Stop Out {F(margin.StopOutLevelPercent)}% (or open positions with negative equity) stops the run, no broker liquidation is simulated; BUY/SELL swap 0 and commission per lot {F(_parameters.CommissionPerLot)}.");
+            }
 
             var verification = _engine.HardBreakevenStatus;
             Log($"SingleAnchor hard-BE verification: strategyDefinitionResolved={verification.StrategyDefinitionResolved}; hardBEVerifiedUnderConfiguredExecutionModel={verification.HardBEVerifiedUnderConfiguredExecutionModel}; scope: {verification.Scope} Assumptions: {string.Join("; ", verification.Assumptions)}. Not covered: {string.Join("; ", verification.NotCovered)}.");
@@ -339,6 +384,10 @@ namespace MarketLab.SingleAnchor
                     ? $"floating {F(a.FloatingProfit)}, equity {F(a.Equity)}"
                     : $"floating/equity not current (the last executable mark was unavailable; {a.FloatingObservationsSkipped} observation(s) skipped overall); last observable floating {F(a.FloatingProfit)}, equity {F(a.Equity)}";
                 Log($"SingleAnchor research account: balance {F(a.Balance)} ({mark}), realized {F(a.RealizedProfit)}, peak balance {F(a.PeakBalance)}, max balance drawdown {F(a.MaxBalanceDrawdown)}, peak equity {F(a.PeakEquity)}, max equity drawdown {F(a.MaxEquityDrawdown)}; exposure max {a.MaxOpenPositions} positions / {F(a.MaxGrossLots)} gross / {F(a.MaxAbsoluteNetLots)} |net| lots (final {a.CurrentOpenPositions} / {F(a.CurrentGrossLots)} / {F(a.CurrentAbsoluteNetLots)}); max executable floating loss {FNullable(a.MaxExecutableFloatingLoss)}, max executable floating profit {FNullable(a.MaxExecutableFloatingProfit)}; skipped executable marks {a.FloatingObservationsSkipped}; {a.ClosedBasketsObserved} closed-basket research record(s).");
+                if (_researchAccount.MarginSummary is { } m)
+                {
+                    Log($"SingleAnchor target-account margin: used {F(m.CurrentUsedMargin)}, free {FNullable(m.CurrentFreeMargin)}, margin level {FPercent(m.CurrentMarginLevelPercent)} (max used {F(m.MaxUsedMargin)}, min free {FNullable(m.MinFreeMargin)}, min level {FPercent(m.MinMarginLevelPercent)}); Margin Call {m.MarginCallActive} ({m.MarginCallEpisodes} episode(s), {m.MarginCallObservations} observation(s), {m.MarginCallBlockedEpisodes} blocked episode(s)/{m.MarginCallBlockedAttempts} attempt(s)); insufficient-margin {m.InsufficientMarginEpisodes} episode(s)/{m.InsufficientMarginAttempts} attempt(s); stop-out {(m.StopOut == null ? "none" : m.StopOut.Reason + " at " + m.StopOut.Time.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture))}.");
+                }
             }
 
             WriteResults(null);
@@ -379,6 +428,7 @@ namespace MarketLab.SingleAnchor
                 ["researchAccount"] = _researchAccount?.Summary,
                 ["researchBaskets"] = _researchAccount?.BasketRecords,
                 ["researchOpenBasket"] = _researchAccount?.SnapshotActiveBasket(_engine.Basket),
+                ["researchMargin"] = _researchAccount?.MarginSummary,
                 ["closedBaskets"] = _engine.ClosedBaskets,
                 ["openBasket"] = CurrentBasketSnapshot()
             };
@@ -413,6 +463,11 @@ namespace MarketLab.SingleAnchor
         private static string FNullable(decimal? value)
         {
             return value.HasValue ? F(value.Value) : "n/a";
+        }
+
+        private static string FPercent(decimal? value)
+        {
+            return value.HasValue ? F(value.Value) + "%" : "n/a (zero used margin)";
         }
     }
 }

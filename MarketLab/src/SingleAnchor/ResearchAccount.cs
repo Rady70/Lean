@@ -56,6 +56,50 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
+    /// The engine's optional PR 3 target-account survival and entry-financing contract. It is a
+    /// derived account view, not a second ledger: the implementation reads the engine's basket and
+    /// realized profit and answers two questions under the frozen USD XM-style margin contract
+    /// (approved roadmap sections 3.16-3.21): is the account already terminally stopped out, and
+    /// can the projected post-fill account finance a candidate order?
+    /// </summary>
+    /// <remarks>
+    /// The engine calls <see cref="EvaluateSurvival"/> on every processed quote after the
+    /// account's own observation and before any strategy action that could rescue an account that
+    /// should already have failed survival, and <see cref="AssessEntry"/> only after a valid
+    /// candidate order exists. A non-null <see cref="EvaluateSurvival"/> result is terminal and
+    /// the engine stops; a non-<see cref="MarginEntryDecision.Allowed"/> entry assessment becomes
+    /// an explicit rejection. The implementation owns no positions and never mutates the engine.
+    /// A run without a risk guard is the pre-PR-3 strategy path.
+    /// </remarks>
+    public interface IResearchRiskGuard
+    {
+        /// <summary>
+        /// Evaluates terminal stop-out from the account state already observed for this quote
+        /// (Step 3 of the frozen survival order). Returns the recorded terminal state the first
+        /// time the account stops out; null while the run may continue. The call is idempotent and
+        /// the engine stops the run when it is non-null, so no later quote is delivered.
+        /// </summary>
+        MarginStopOut? EvaluateSurvival(in Quote quote);
+
+        /// <summary>
+        /// Assesses one strategy-validated candidate order against the account: the Margin Call
+        /// entry block first, then the projected post-fill margin feasibility under the frozen
+        /// hedging rule. Must be O(1) and allocate nothing on the path. The account state used is
+        /// the one observed for the quote the candidate was decided on; when that observation
+        /// skipped an unavailable executable mark, the last observable state is used (the skip is
+        /// explicit in <c>researchAccount.floatingObservationsSkipped</c>).
+        /// </summary>
+        MarginEntryAssessment AssessEntry(EntryOrder order, Basket basket);
+
+        /// <summary>
+        /// Folds the engine's rejection-episode accounting into the account's run-level margin
+        /// counters. Called once per recorded attempt; <paramref name="isNewEpisode"/> is true
+        /// when the engine started a new episode row rather than appending to an existing one.
+        /// </summary>
+        void ObserveEntryRejection(EntryRejection rejection, bool isNewEpisode);
+    }
+
+    /// <summary>
     /// Derived research account and bounded analytics for a SingleAnchor run (approved roadmap
     /// PR 2, sections 3.10-3.15). This is not a second trading ledger: it owns no positions and
     /// makes no decisions. It observes the engine's basket and realized profit and keeps
@@ -65,6 +109,17 @@ namespace MarketLab.SingleAnchor
     /// <c>Equity = Balance + FloatingPL</c>. The optional <c>CommissionBuffer</c> is an
     /// exit-decision threshold only and is never subtracted here.
     /// </summary>
+    /// <remarks>
+    /// With <see cref="MarginParameters"/> configured, the same account also implements the
+    /// approved PR 3 target-account capability (<see cref="IResearchRiskGuard"/>): it derives
+    /// used margin, free margin and margin level from the same balance/equity state under the
+    /// frozen USD XM-style contract, records their run extrema, counts Margin Call and
+    /// insufficient-margin events and records a terminal stop-out. Margin state is derived from
+    /// the engine's basket aggregates; it is never a second position registry or Balance/Equity
+    /// authority. The observation half of this class remains read-only; only the explicitly
+    /// requested risk-guard role can influence the engine, and only by reporting account state
+    /// (the engine still decides to reject or stop).
+    /// </remarks>
     /// <remarks>
     /// Run-level values are constant-time accumulators; the only retained records are one
     /// compact record per closed basket (its path extrema plus the values derived from the
@@ -76,9 +131,10 @@ namespace MarketLab.SingleAnchor
     /// explicitly not complete for a run or basket with a non-zero count, so a skipped worst
     /// point can never make the remaining extrema look complete.
     /// </remarks>
-    public sealed class SingleAnchorResearchAccount : IResearchObserver
+    public sealed class SingleAnchorResearchAccount : IResearchObserver, IResearchRiskGuard
     {
         private readonly SingleAnchorParameters _parameters;
+        private readonly MarginParameters? _margin;
         private readonly decimal _slippage;
         private readonly decimal _costPerLot;
         private readonly List<BasketResearchRecord> _basketRecords = new List<BasketResearchRecord>();
@@ -109,13 +165,36 @@ namespace MarketLab.SingleAnchor
         private int _lastOpenPositions = -1;
         private decimal _lastRealizedProfit;
 
+        // ---- PR 3 target-account margin state (active only when _margin is configured) ----
+        private decimal _currentUsedMargin;
+        private decimal? _currentFreeMargin;
+        private decimal? _currentMarginLevelPercent;
+        private decimal _maxUsedMargin;
+        private decimal? _minFreeMargin;
+        private decimal? _minMarginLevelPercent;
+        private bool _marginCallActive;
+        private long _marginCallObservations;
+        private long _marginCallEpisodes;
+        private long _marginCallBlockedAttempts;
+        private long _marginCallBlockedEpisodes;
+        private long _insufficientMarginAttempts;
+        private long _insufficientMarginEpisodes;
+        private MarginStopOut? _stopOut;
+
         /// <summary>
         /// Creates an account for a validated parameter set and the run's initial balance
-        /// (<c>single-anchor-cash</c> in the LEAN host).
+        /// (<c>single-anchor-cash</c> in the LEAN host). <paramref name="margin"/> is the optional
+        /// approved PR 3 target-account margin configuration; null creates the PR 2 read-only
+        /// account only, and the host does not hand such an account to the engine as a risk guard.
         /// </summary>
-        public SingleAnchorResearchAccount(SingleAnchorParameters parameters, decimal initialBalance)
+        public SingleAnchorResearchAccount(SingleAnchorParameters parameters, decimal initialBalance, MarginParameters? margin = null)
         {
             _parameters = parameters ?? throw new ArgumentNullException(nameof(parameters));
+            if (margin != null)
+            {
+                margin.Validate();
+            }
+            _margin = margin;
             _slippage = parameters.Slippage;
             // The executable mark of a raw profit is raw - (slippage * point value + round-trip
             // commission) * gross lots; the coefficient is constant for the run.
@@ -125,6 +204,7 @@ namespace MarketLab.SingleAnchor
             _peakBalance = initialBalance;
             _peakEquity = initialBalance;
             _equity = initialBalance;
+            _currentFreeMargin = margin == null ? null : initialBalance;
         }
 
         /// <summary>The run's starting balance; the account never changes it.</summary>
@@ -222,6 +302,31 @@ namespace MarketLab.SingleAnchor
             _maxExecutableFloatingProfit,
             _maxExecutableFloatingLoss,
             _basketRecords.Count);
+
+        /// <summary>
+        /// The run's target-account margin/survival evidence, or null when the account was created
+        /// without <see cref="MarginParameters"/> (PR 3 margin disabled). The current values are
+        /// the last observed account state; <see cref="MarginStopOut"/> is non-null exactly when
+        /// the run stopped out.
+        /// </summary>
+        public ResearchMarginSummary? MarginSummary => _margin == null
+            ? null
+            : new ResearchMarginSummary(
+                _margin,
+                _currentUsedMargin,
+                _currentFreeMargin,
+                _currentMarginLevelPercent,
+                _maxUsedMargin,
+                _minFreeMargin,
+                _minMarginLevelPercent,
+                _marginCallActive,
+                _marginCallObservations,
+                _marginCallEpisodes,
+                _marginCallBlockedAttempts,
+                _marginCallBlockedEpisodes,
+                _insufficientMarginAttempts,
+                _insufficientMarginEpisodes,
+                _stopOut);
 
         /// <summary>
         /// The compact research state of a basket that is still open (ordinary end of data or a
@@ -323,6 +428,109 @@ namespace MarketLab.SingleAnchor
             Observe(default, null, realizedProfit, null);
         }
 
+        /// <inheritdoc />
+        public MarginStopOut? EvaluateSurvival(in Quote quote)
+        {
+            var margin = RequireMargin();
+            if (_stopOut != null)
+            {
+                return _stopOut;
+            }
+            if (_openPositions <= 0)
+            {
+                // No open leg can be stopped out. A flat account with a negative balance is not a
+                // broker stop-out: there is nothing to liquidate, and the negative free margin
+                // already blocks every candidate under the financing test.
+                return null;
+            }
+
+            var marginLevel = _currentMarginLevelPercent;
+            StopOutReason reason;
+            if (marginLevel.HasValue && marginLevel.Value <= margin.StopOutLevelPercent)
+            {
+                reason = StopOutReason.MarginLevel;
+            }
+            else if (_equity < 0m)
+            {
+                // The approved hedged-account rule: open positions and negative equity are
+                // terminal even when the matched hedge leaves zero used margin and the margin
+                // level is therefore undefined.
+                reason = StopOutReason.NegativeEquity;
+            }
+            else
+            {
+                return null;
+            }
+
+            // The state is the last observed one: the engine calls this immediately after the
+            // observation of the same quote, and when that observation skipped an unavailable
+            // executable mark the account keeps its last observable values (the skip is already
+            // counted by FloatingObservationsSkipped).
+            _stopOut = new MarginStopOut(
+                reason,
+                quote.Time,
+                _balance,
+                _floatingProfit,
+                _equity,
+                _currentUsedMargin,
+                _currentFreeMargin ?? _equity - _currentUsedMargin,
+                marginLevel,
+                _openPositions);
+            return _stopOut;
+        }
+
+        /// <inheritdoc />
+        public MarginEntryAssessment AssessEntry(EntryOrder order, Basket basket)
+        {
+            var margin = RequireMargin();
+            if (basket == null) throw new ArgumentNullException(nameof(basket));
+
+            // Approved order: the Margin Call entry block comes first, so an account at or below
+            // the Margin Call Level rejects every candidate before any projection is made.
+            var marginLevel = _currentMarginLevelPercent;
+            if (marginLevel.HasValue && marginLevel.Value <= margin.MarginCallLevelPercent)
+            {
+                return new MarginEntryAssessment(MarginEntryDecision.MarginCall, _currentUsedMargin, _currentFreeMargin, marginLevel, null, null);
+            }
+
+            // Financing: the candidate fills into the complete projected post-fill inventory at
+            // the configured execution model's executable entry price, and the projected account
+            // must have non-negative free margin (equity at the current quote at least the
+            // projected used margin). This is deliberately not an isolated candidate-lot charge:
+            // an opposite-side entry can reduce the projected used margin by increasing the
+            // matched volume.
+            var candidateEntryPrice = BasketEconomics.ExecutableEntryPrice(order.Side, order.Quote, _parameters);
+            var projectedUsedMargin = MarginModel.ProjectedUsedMargin(basket, order.Side, order.Lots, candidateEntryPrice, margin);
+            var projectedFreeMargin = _equity - projectedUsedMargin;
+            var decision = projectedFreeMargin < 0m ? MarginEntryDecision.InsufficientMargin : MarginEntryDecision.Allowed;
+            return new MarginEntryAssessment(decision, _currentUsedMargin, _currentFreeMargin, marginLevel, projectedUsedMargin, projectedFreeMargin);
+        }
+
+        /// <inheritdoc />
+        public void ObserveEntryRejection(EntryRejection rejection, bool isNewEpisode)
+        {
+            switch (rejection.Reason)
+            {
+                case EntryRejectionReason.MarginCall:
+                    _marginCallBlockedAttempts++;
+                    if (isNewEpisode) _marginCallBlockedEpisodes++;
+                    break;
+                case EntryRejectionReason.InsufficientMargin:
+                    _insufficientMarginAttempts++;
+                    if (isNewEpisode) _insufficientMarginEpisodes++;
+                    break;
+            }
+        }
+
+        private MarginParameters RequireMargin()
+        {
+            if (_margin == null)
+            {
+                throw new InvalidOperationException("This research account was created without margin parameters; it is not a PR 3 risk guard.");
+            }
+            return _margin;
+        }
+
         private void Observe(in Quote quote, Basket? basket, decimal realizedProfit, decimal? rawProfit)
         {
             // Remember the exact observation state so ObserveEndOfRun can recognise a repeat
@@ -378,6 +586,15 @@ namespace MarketLab.SingleAnchor
                 }
             }
 
+            // PR 3: used margin is pure inventory state, so its maximum is observed on every
+            // observation, including one whose executable mark below is skipped.
+            var usedMargin = 0m;
+            if (_margin != null)
+            {
+                usedMargin = openPositions > 0 ? MarginModel.UsedMargin(basket!, _margin) : 0m;
+                if (usedMargin > _maxUsedMargin) _maxUsedMargin = usedMargin;
+            }
+
             var floating = 0m;
             var observable = true;
             if (openPositions > 0)
@@ -418,6 +635,11 @@ namespace MarketLab.SingleAnchor
             var equityDrawdown = _peakEquity - _equity;
             if (equityDrawdown > _maxEquityDrawdown) _maxEquityDrawdown = equityDrawdown;
 
+            if (_margin != null)
+            {
+                ObserveMarginState(usedMargin);
+            }
+
             if (openPositions > 0)
             {
                 if (!_maxExecutableFloatingProfit.HasValue || floating > _maxExecutableFloatingProfit.Value)
@@ -430,6 +652,45 @@ namespace MarketLab.SingleAnchor
                 }
                 _active?.ObserveFloating(floating);
             }
+        }
+
+        /// <summary>
+        /// Updates the PR 3 margin state from the current executable equity and the inventory used
+        /// margin. The current values and the free-margin/margin-level extrema are exact decimal
+        /// ratios of the observed state; the minimum free margin and minimum margin level may be
+        /// incomplete when an executable mark was skipped, which
+        /// <see cref="FloatingObservationsSkipped"/> makes explicit for the run.
+        /// </summary>
+        private void ObserveMarginState(decimal usedMargin)
+        {
+            _currentUsedMargin = usedMargin;
+            _currentFreeMargin = _equity - usedMargin;
+            _currentMarginLevelPercent = MarginModel.MarginLevelPercent(_equity, usedMargin);
+
+            if (!_minFreeMargin.HasValue || _currentFreeMargin.Value < _minFreeMargin.Value)
+            {
+                _minFreeMargin = _currentFreeMargin;
+            }
+            if (_currentMarginLevelPercent.HasValue
+                && (!_minMarginLevelPercent.HasValue || _currentMarginLevelPercent.Value < _minMarginLevelPercent.Value))
+            {
+                _minMarginLevelPercent = _currentMarginLevelPercent;
+            }
+
+            // Margin Call is not diagnostic-only: the engine consults the recorded state through
+            // the risk guard before any candidate is financed. At or below the level no new
+            // position may be opened; a later quote above it may clear the state.
+            var marginCall = _currentMarginLevelPercent.HasValue
+                && _currentMarginLevelPercent.Value <= _margin!.MarginCallLevelPercent;
+            if (marginCall)
+            {
+                _marginCallObservations++;
+                if (!_marginCallActive)
+                {
+                    _marginCallEpisodes++;
+                }
+            }
+            _marginCallActive = marginCall;
         }
 
         private BasketResearchRecord BuildRecord(BasketCloseRecord record, ActiveBasket? activeExtrema)

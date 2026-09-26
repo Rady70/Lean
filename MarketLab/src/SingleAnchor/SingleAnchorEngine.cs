@@ -37,8 +37,11 @@ namespace MarketLab.SingleAnchor
     /// layer, so no host can continue a deterministic replay after a market quote was lost. A
     /// quote outside the configured session-map coverage faults it with a
     /// <see cref="SessionMapException"/> the same way: the map describes a different source
-    /// revision, and continuing would silently misclassify trading availability. A faulted engine
-    /// refuses every further quote; a host must stop the run.
+    /// revision, and continuing would silently misclassify trading availability. With a PR 3
+    /// risk guard, terminal account stop-out faults it with an
+    /// <see cref="AccountStopOutException"/> after the quote's account observation and before any
+    /// exit or entry on that quote, so no strategy action can rescue an account that already
+    /// failed survival. A faulted engine refuses every further quote; a host must stop the run.
     /// </remarks>
     public sealed class SingleAnchorEngine
     {
@@ -46,6 +49,7 @@ namespace MarketLab.SingleAnchor
         private readonly IBasketExecutor _executor;
         private readonly HistoricalTradingAvailability? _availability;
         private readonly IResearchObserver? _research;
+        private readonly IResearchRiskGuard? _risk;
         private readonly List<BasketCloseRecord> _closedBaskets = new List<BasketCloseRecord>();
         private Basket? _basket;
         private int _basketSequence;
@@ -73,16 +77,29 @@ namespace MarketLab.SingleAnchor
         /// <see cref="IResearchObserver"/>; it never decides, never mutates the ledger and
         /// changes no strategy outcome. A run without it is the pre-PR-2 strategy path.
         /// </param>
+        /// <param name="riskGuard">
+        /// Optional PR 3 target-account risk guard. When it is given, the frozen survival order
+        /// applies on every processed quote: after the account observation, the guard's
+        /// <see cref="IResearchRiskGuard.EvaluateSurvival"/> is asked whether the account is
+        /// terminally stopped out (the run then stops before any exit could rescue it), and a
+        /// candidate entry is first assessed for the Margin Call block and then for projected
+        /// post-fill financing. A run without a guard is the pre-PR-3 strategy path in every
+        /// dimension. In the approved host the guard is the same research account passed as
+        /// <paramref name="researchObserver"/>, so the state it reports is the state this engine
+        /// observed; attaching a guard that has not observed the account is a host error.
+        /// </param>
         public SingleAnchorEngine(
             SingleAnchorParameters parameters,
             IBasketExecutor executor,
             HistoricalTradingAvailability? tradingAvailability,
-            IResearchObserver? researchObserver = null)
+            IResearchObserver? researchObserver = null,
+            IResearchRiskGuard? riskGuard = null)
         {
             _p = parameters ?? throw new ArgumentNullException(nameof(parameters));
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
             _availability = tradingAvailability;
             _research = researchObserver;
+            _risk = riskGuard;
             _p.Validate();
         }
 
@@ -198,10 +215,11 @@ namespace MarketLab.SingleAnchor
         /// <summary>
         /// Processes one quote. Throws <see cref="DataQualityException"/> for a quote with invalid
         /// prices or one earlier than an already processed quote, <see cref="SessionMapException"/>
-        /// for a quote outside the configured session-map coverage, and
-        /// <see cref="StrategyInvariantException"/> when a strategy invariant fails; each faults
-        /// the engine, which then throws again on every call. A quote that satisfies both
-        /// first-entry boundaries of a still-empty basket is skipped, not an error.
+        /// for a quote outside the configured session-map coverage, <see cref="StrategyInvariantException"/>
+        /// when a strategy invariant fails and (with a PR 3 risk guard) <see cref="AccountStopOutException"/>
+        /// when the account is terminally stopped out; each faults the engine, which then throws
+        /// again on every call. A quote that satisfies both first-entry boundaries of a still-empty
+        /// basket is skipped, not an error.
         /// </summary>
         public void OnQuote(in Quote quote)
         {
@@ -247,6 +265,10 @@ namespace MarketLab.SingleAnchor
                 // sees the market mark of the unchanged basket on the delivered quote.
                 QuoteOnlyQuotes++;
                 _research?.ObserveQuote(quote, _basket, RealizedProfit, null);
+                // The account is revalued on the delivered quote even inside a buffer; survival
+                // is a broker-account condition, not a strategy action, so a terminal stop-out
+                // stops the run here too (there is no strategy action to rescue on this quote).
+                EvaluateSurvival(quote);
                 return;
             }
 
@@ -267,6 +289,11 @@ namespace MarketLab.SingleAnchor
                 // exit evaluation needs anyway is passed on, so the observer does not recompute
                 // it.
                 _research?.ObserveQuote(quote, basket, RealizedProfit, rawProfit);
+
+                // Approved PR 3 survival order step 3: terminal stop-out is evaluated before any
+                // exit on this quote could rescue an account that should already have failed
+                // survival.
+                EvaluateSurvival(quote);
 
                 var exitProfit = rawProfit - _p.CommissionBuffer;
                 var stepMoney = BasketEconomics.StepMoney(basket, _p);
@@ -294,11 +321,37 @@ namespace MarketLab.SingleAnchor
             else
             {
                 // No open leg: the incoming quote is observed before the entry evaluation, but
-                // there is no raw basket profit to pass.
+                // there is no raw basket profit to pass. A flat account cannot stop out (there is
+                // no position to liquidate); the call keeps the frozen order uniform.
                 _research?.ObserveQuote(quote, basket, RealizedProfit, null);
+                EvaluateSurvival(quote);
             }
 
             EvaluateEntry(basket, quote);
+        }
+
+        /// <summary>
+        /// Approved PR 3 survival order step 3: asks the account risk guard whether the state
+        /// observed for this quote is terminal stop-out. The guard records the terminal account
+        /// state; the engine faults here, before exits or entries, so no later action can rescue an
+        /// account that already failed survival, and no post-stop-out liquidation is simulated.
+        /// No-op without a risk guard (the pre-PR-3 path).
+        /// </summary>
+        private void EvaluateSurvival(in Quote quote)
+        {
+            if (_risk == null)
+            {
+                return;
+            }
+            var stopOut = _risk.EvaluateSurvival(quote);
+            if (stopOut == null)
+            {
+                return;
+            }
+            throw RecordFault(new AccountStopOutException(stopOut.Reason, quote,
+                $"The research account stopped out ({stopOut.Reason}) at {quote}: equity {F(stopOut.Equity)}, balance {F(stopOut.Balance)}, floating {F(stopOut.FloatingProfit)}, used margin {F(stopOut.UsedMargin)}, free margin {F(stopOut.FreeMargin)}" +
+                (stopOut.MarginLevelPercent.HasValue ? $", margin level {F(stopOut.MarginLevelPercent.Value)}%" : ", margin level n/a (zero used margin)") +
+                $", {stopOut.OpenPositions} open position(s); the intact SingleAnchor path did not survive and the run is stopped."));
         }
 
         /// <summary>
@@ -449,6 +502,29 @@ namespace MarketLab.SingleAnchor
             }
 
             var order = new EntryOrder(tradeNumber, side, lots, quote, regime, sizing);
+
+            // Approved PR 3 entry feasibility (roadmap section 3.18): the strategy has produced
+            // the actual candidate lot including its hard-BE sizing; only now does account
+            // financing decide. The Margin Call block is enforced first, then the projected
+            // post-fill margin. Both are explicit rejections: no leg is added, the trade number
+            // does not advance, the required side is unchanged and hard-BE mode stays active if
+            // it had already activated, so a later eligible quote may retry.
+            if (_risk != null)
+            {
+                var assessment = _risk.AssessEntry(order, basket);
+                if (assessment.Decision != MarginEntryDecision.Allowed)
+                {
+                    var reason = assessment.Decision == MarginEntryDecision.MarginCall
+                        ? EntryRejectionReason.MarginCall
+                        : EntryRejectionReason.InsufficientMargin;
+                    Reject(basket, quote, new EntryRejection(tradeNumber, side, reason,
+                        rawRequested, sizing?.ExactRequired, sizing?.NormalizedRequiredLot ?? lots, sizing, maximum, null,
+                        assessment.CurrentUsedMargin, assessment.CurrentFreeMargin, assessment.CurrentMarginLevelPercent,
+                        assessment.ProjectedUsedMargin, assessment.ProjectedFreeMargin));
+                    return;
+                }
+            }
+
             var execution = _executor.OpenPosition(order);
             if (!execution.Succeeded)
             {
@@ -529,6 +605,10 @@ namespace MarketLab.SingleAnchor
             {
                 row.AppendAttempt(QuotesProcessed, quote.Time, quote.Bid, quote.Ask, rejection);
             }
+
+            // The account folds the episode structure into its run-level margin counters (a
+            // repeated margin block stays one episode and one growing attempt count).
+            _risk?.ObserveEntryRejection(rejection, row == null);
         }
 
         private static EntryRejectionRecord? FindEpisode(Basket basket, EntryRejection rejection)
