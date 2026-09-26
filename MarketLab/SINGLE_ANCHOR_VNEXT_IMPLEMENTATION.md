@@ -1303,11 +1303,15 @@ physical copy at the Lean-owned `E:\MarketLab\data\XAUUSD_raw_history`,
 and the unchanged 90-month qualification/LEAN replay route reproduced
 90/90 PASS with the identical 413,750,130-row population and aggregate
 digests (`tools/historical-data/README.md` section 9); the milestone is
-implemented and merged through GitHub PR #12. The next roadmap
-step is composing the already-qualified XAUUSD partitions into one
-continuous research data folder, re-proving its LEAN delivery, freezing
-the complete baseline configuration (including the margin values above)
-and running the first untouched full-history baseline.
+implemented and merged through GitHub PR #12. The composition was then
+implemented: the already-qualified partitions are composed into the continuous
+LEAN data folder at `E:\MarketLab\data\lean\xauusd-dukascopy`, whose single
+uninterrupted LEAN replay reproduced the qualified 413,750,130 quotes,
+boundaries and per-partition digests, and the redundant complete 90-folder
+native representations were retired
+(`tools/historical-data/README.md` section 10). The next roadmap step is
+freezing the complete baseline configuration (including the margin values
+above) and running the first untouched full-history baseline.
 
 Evidence used for the frozen research contract: the user-supplied MT5 XAUUSD
 symbol specification (XMGlobal-MT5 8, Ultra Low Standard), XM's published Gold

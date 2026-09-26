@@ -517,7 +517,8 @@ for the real Dukascopy/JForex source is resolved: the source is replayed under
 the derived always-open `XAUUSD/dukascopy/Cfd` identity, so LEAN's session
 filter removes no legitimate source quote. A real historical strategy run must
 be launched with `single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,
-single-anchor-security-type:Cfd` against the qualified data folder; the
+single-anchor-security-type:Cfd` against the continuous qualified data folder
+at `E:\MarketLab\data\lean\xauusd-dukascopy`; the
 authoritative full-history Dukascopy baseline additionally requires the
 qualified source-derived session map (SHA-256
 `33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`) so the
@@ -539,11 +540,16 @@ at the Lean-owned
 413,750,130-row population and aggregate digests; implemented and merged
 through GitHub PR #12
 ([tools README](tools/historical-data/README.md) section 9).
-The sweep is a decomposed per-file acceptance that produced 90 separate native
-data folders; composing the already-qualified daily partitions into one
-continuous research data folder under the same identity is required after
-PR 2/PR 3 and before the frozen baseline, and is deliberately not implemented
-in PR 1. **PR 2** (C# research account and bounded analytics) is implemented
+The sweep is a decomposed per-file acceptance. Its already-qualified daily
+partitions have since been composed into one continuous LEAN data tree at
+`E:\MarketLab\data\lean\xauusd-dukascopy`, and one uninterrupted LEAN replay of
+the complete history reproduced the qualified 413,750,130 quotes, the qualified
+boundaries and every per-partition count and semantic digest; after that
+verification the redundant complete 90-folder native representations were
+retired, so exactly one complete derived native representation remains. The
+canonical raw source is unchanged. The baseline configuration freeze and the
+first untouched full-history baseline remain later steps
+([tools README](tools/historical-data/README.md) section 10). **PR 2** (C# research account and bounded analytics) is implemented
 and merged (GitHub PR #9):
 the engine can feed a read-only `IResearchObserver`, and
 `SingleAnchorResearchAccount` (`src\SingleAnchor\ResearchAccount.cs`) derives

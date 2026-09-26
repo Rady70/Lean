@@ -433,7 +433,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (239 tests)
+# Python offline tool (255 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -539,17 +539,102 @@ is recomputed and cross-checked against
 converted native partitions and the run outputs stay outside Git under
 `E:\MarketLab\work\lean\pr1-xauusd-full-history-dukascopy\` (aggregate:
 `full-history-summary.json`); no tool writes to the canonical source. No
-historical value, identity, timestamp or conversion rule changed. Composing
-the partitioned folders into one continuous research data folder, the
-baseline configuration freeze and the first full-history baseline remain
+historical value, identity, timestamp or conversion rule changed. The
+composition of the partitioned folders into one continuous research data
+folder and its continuous replay qualification are recorded in section 10;
+the baseline configuration freeze and the first full-history baseline remain
 later steps.
 
-## 10. Provenance of adapted retired code
+## 10. Continuous full-history native history (2019-01..2026-06)
+
+The already-qualified daily native partitions are composed into one continuous
+LEAN data folder that is the single historical-data input for the
+full-history research run:
+
+```text
+E:\MarketLab\data\lean\xauusd-dukascopy
+```
+
+`E:\MarketLab\data` is the Lean workspace's persistent research-data root; the
+continuous folder is a derived LEAN-native tree, separate from (and never a
+replacement for) the canonical raw CSV source, which stays unchanged at
+`E:\MarketLab\data\XAUUSD_raw_history`. The composed tree contains 2,332 daily
+`cfd/dukascopy/tick/xauusd/YYYYMMDD_quote.zip` partitions (2,706,616,139 bytes),
+the derived always-open runtime identity, the qualified source-derived session
+map under `marketlab-sessions\xauusd-sessions.json` (SHA-256
+`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`), and the
+composition/qualification artifacts under `marketlab-qualification\`.
+
+### Composition
+
+`python -m marketlab_historical_data compose-history` (driven by
+`scripts\Invoke-ContinuousQualification.ps1`) validates the 90 month records
+with the tracked full-history aggregation, then composes without re-converting
+and without re-reading the raw source:
+
+- every partition zip is copied byte for byte only after its SHA-256 matches
+  the hash its month manifest recorded, so the previously qualified native
+  inputs are used exactly as qualified;
+- the continuous replay expectation
+  (`marketlab-qualification\replay-expectation.json`) is rebuilt from the
+  composed partitions: the ordered semantic digest is recomputed over the
+  concatenated rows with continuous ordinals (SHA-256
+  `sha256:231cf63850cd033ea8167ab7d0017bdfbd7744f40412c1a899c2b9d98942886a`,
+  first delivered `2019-01-01T23:00:07.151Z`, last
+  `2026-06-30T23:59:59.678Z`), while the per-partition expectations are the
+  recorded monthly evidence, unchanged;
+- the composition file
+  (`marketlab-qualification\continuous-composition.json`) is manifest-shaped
+  plus a `composition` block, so the continuous verification uses the same
+  established record contract, checks and semantics as a single-file
+  qualification.
+
+### Continuous replay qualification (2026-09-26)
+
+One uninterrupted LEAN replay of the complete history was run over the composed
+folder with the unchanged replay probe (`SingleAnchorReplayProbeAlgorithm`),
+and the continuous record
+(`marketlab-qualification\continuous-qualification-record.json`) is
+**PASS**: accepted = converted = LEAN-delivered = probe-processed =
+**413,750,130** quotes, 0 rejected rows, 0 session delivery difference,
+0 missing partitions, 0 source coverage gaps, every per-partition count and
+semantic digest equal, runtime identity UTC/UTC with the qualified derived
+market-hours database, helper exit code 0, and the complete runtime binary set
+recorded. The only failed data requests are 406 calendar days the always-open
+identity requests that carry no source rows (the continuous window also
+requests month-boundary days the per-month windows skipped) and one unrelated
+request for the absent `cfd/dukascopy/hour` benchmark file; both are evidence,
+not delivery loss.
+
+### One complete derived native representation
+
+After the continuous delivery passed, the two complete 90-folder native
+representations were verified against their records and their partition zips
+were removed, so exactly one complete derived native representation remains
+(the continuous tree):
+
+| Retired native set | Partitions | Bytes | Verification |
+|---|---|---|---|
+| requalification work root (`E:\MarketLab\work\lean\pr1-xauusd-full-history-dukascopy\months`) | 2,332 | 2,706,616,139 | every zip matched its month manifest `zip_sha256` and the continuous composition (0 missing, 0 mismatches, 0 unexpected) |
+| retired-workspace original sweep (`D:\quant_research_workspace\work\lean\pr1-xauusd-full-history-dukascopy\months`) | 2,332 | 2,706,616,139 | same, cross-checked byte-identical against the continuous composition |
+
+The per-month qualification records, manifests, expectations, runtime-identity
+provenance and derived databases remain outside Git as lightweight evidence;
+the raw CSV source remains in full. Tracked distilled evidence:
+`fixtures\continuous-history-evidence.json`, recomputed and cross-checked
+against the original sweep and relocation fixtures by
+`python\tests\test_continuous_evidence.py`. The composition and the continuous
+run outputs stay outside Git.
+
+The baseline configuration freeze and the first untouched full-history
+baseline remain later steps; parameter research remains later still.
+
+## 11. Provenance of adapted retired code
 
 See [`PROVENANCE.md`](PROVENANCE.md). The retired repositories are reference
 material only; nothing here is a runtime dependency on them.
 
-## 11. Known limitations
+## 12. Known limitations
 
 - The offline session preview is diagnostic. It is exact for the XAUUSD entry
   (no early closes or late opens) but simplified when an entry defines them;
@@ -628,7 +713,9 @@ material only; nothing here is a runtime dependency on them.
   That sweep and its records predate the relocation: its source path is the
   retired location as it was then. The canonical location and the successful
   re-qualification from it are recorded in section 9; the values above remain
-  the record of the original qualification.
+  the record of the original qualification. The continuous composition of
+  those partitions and the single full-history replay that re-proved the
+  delivery are recorded in section 10.
 
   The sweep is a decomposed per-file acceptance: PR 1 writes one native data
   folder per run and does not compose multiple source files into one data tree.
