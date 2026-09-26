@@ -1,4 +1,4 @@
-# Retired-source provenance for PR 2
+# Retired-source provenance for PR 2 and PR 3
 
 The retired repositories are reference material, not runtime dependencies, and
 no retired code is loaded or executed by MarketLab. This file records every
@@ -9,6 +9,16 @@ observation ordering, the run-level metric definitions and the per-basket
 record contract were used, and all of them were reimplemented in C# against the
 existing `Basket`/`BasketEconomics` model. No position-owning account object, no
 Python runtime and no generic analytics framework was migrated.
+
+PR 3 (target-account margin survival, `Margin.cs`, the PR 3 additions in
+`ResearchAccount.cs`/`Execution.cs`/`SingleAnchorEngine.cs` and
+`tests\SingleAnchor\MarginTests.cs`) adapts no retired-repository code or
+behaviour: the retired repositories contain no margin, leverage or stop-out
+state (see "Deliberately not migrated" below), and the PR 3 arithmetic is the
+approved MT5/XM USD research contract recorded in
+`SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md` sections 3.16-3.21 and
+`SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` section 10, implemented directly against
+the existing `Basket` aggregates.
 
 ## Pinned sources
 

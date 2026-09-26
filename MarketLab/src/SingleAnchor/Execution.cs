@@ -130,7 +130,20 @@ namespace MarketLab.SingleAnchor
         VolumeExceedsMaximum,
 
         /// <summary>The executor did not fill the order.</summary>
-        ExecutionFailed
+        ExecutionFailed,
+
+        /// <summary>
+        /// The PR 3 research account is at or below the Margin Call Level: no new position may be
+        /// opened. The candidate was valid; the account state, not the strategy, blocked it.
+        /// </summary>
+        MarginCall,
+
+        /// <summary>
+        /// The PR 3 research account cannot finance the complete projected post-fill inventory:
+        /// the projected used margin exceeds the account equity. The candidate was valid, no leg
+        /// was added, and a later eligible quote may retry.
+        /// </summary>
+        InsufficientMargin
     }
 
     /// <summary>
@@ -150,7 +163,12 @@ namespace MarketLab.SingleAnchor
         decimal NormalizedRequiredLots,
         HardBreakevenSizing? Sizing,
         decimal MaximumVolume,
-        string? ExecutionMessage)
+        string? ExecutionMessage,
+        decimal? AccountUsedMargin = null,
+        decimal? AccountFreeMargin = null,
+        decimal? AccountMarginLevelPercent = null,
+        decimal? ProjectedUsedMargin = null,
+        decimal? ProjectedFreeMargin = null)
     {
         /// <summary>Human-readable account of the rejection, built on demand.</summary>
         public string Message
@@ -163,6 +181,10 @@ namespace MarketLab.SingleAnchor
                         return Sizing.HasValue ? Sizing.Value.Message : "Hard-BE sizing is not available.";
                     case EntryRejectionReason.VolumeExceedsMaximum:
                         return $"Arithmetic lot for trade {TradeNumber} ({F(RawRequestedLots ?? 0m)} raw -> {F(NormalizedRequiredLots)} normalized) exceeds the maximum volume {F(MaximumVolume)}; the order is not placed.";
+                    case EntryRejectionReason.MarginCall:
+                        return $"Trade {TradeNumber} {Side} of {F(NormalizedRequiredLots)} lots was not placed: the research account is in Margin Call (margin level {(AccountMarginLevelPercent.HasValue ? F(AccountMarginLevelPercent.Value) + "%" : "at or below the configured level")}), where no new position may be opened. The basket stays open and exits remain possible.";
+                    case EntryRejectionReason.InsufficientMargin:
+                        return $"Trade {TradeNumber} {Side} of {F(NormalizedRequiredLots)} lots was not placed: the research account cannot finance the projected post-fill inventory (projected used margin {F(ProjectedUsedMargin ?? 0m)}, projected free margin {F(ProjectedFreeMargin ?? 0m)}). No leg was added and the trade may be retried on a later eligible quote.";
                     default:
                         return ExecutionMessage ?? "The executor rejected the entry.";
                 }
@@ -326,6 +348,88 @@ namespace MarketLab.SingleAnchor
         public override SingleAnchorRunException AsRefusal()
         {
             return new SessionMapException(Issue, Quote, "The engine is faulted and accepts no further quotes: " + Message);
+        }
+    }
+
+    /// <summary>
+    /// Why a PR 3 survival run cannot establish the account's current survival state.
+    /// </summary>
+    public enum AccountSurvivalIssue
+    {
+        /// <summary>
+        /// A needed executable close price is not positive under the configured slippage, so the
+        /// current executable account equity, used margin, free margin and margin level cannot be
+        /// computed for this quote. PR 3 does not certify survival from a stale account state, so
+        /// the run stops instead of continuing or fabricating a valuation.
+        /// </summary>
+        ExecutableMarkUnavailable
+    }
+
+    /// <summary>
+    /// Thrown by the engine when a PR 3 survival run cannot revalue the account on an incoming
+    /// quote because the configured execution economics make a needed executable close price
+    /// non-positive. The frozen survival order requires a current executable valuation on every
+    /// quote; continuing on the last observable state would silently certify an account that may
+    /// already be terminally stopped out. This is a run-ending condition like the stop-out and
+    /// data-quality faults, not a stop-out itself; the last observable account state and the
+    /// skipped-mark count remain in the results.
+    /// </summary>
+    public sealed class AccountSurvivalException : SingleAnchorRunException
+    {
+        /// <summary>Creates the exception.</summary>
+        public AccountSurvivalException(AccountSurvivalIssue issue, Quote quote, string message)
+            : base(quote, message)
+        {
+            Issue = issue;
+        }
+
+        /// <summary>Which survival condition could not be established.</summary>
+        public AccountSurvivalIssue Issue { get; }
+
+        /// <inheritdoc />
+        public override string Kind => "AccountSurvival";
+
+        /// <inheritdoc />
+        public override string Condition => Issue.ToString();
+
+        /// <inheritdoc />
+        public override SingleAnchorRunException AsRefusal()
+        {
+            return new AccountSurvivalException(Issue, Quote, "The engine is faulted and accepts no further quotes: " + Message);
+        }
+    }
+
+    /// <summary>
+    /// Thrown by the engine when the PR 3 research account reaches terminal stop-out. Stop-out is
+    /// evaluated before any strategy action that could rescue the account on the same quote and
+    /// again on the post-fill state of an entry, and it is a run-ending condition like the
+    /// strategy-invariant and data-quality faults: the intact SingleAnchor path did not survive,
+    /// the engine refuses every further quote, and no broker ticket-liquidation sequence is
+    /// simulated. The terminal account state is recorded by the account
+    /// (<c>researchMargin.stopOut</c>).
+    /// </summary>
+    public sealed class AccountStopOutException : SingleAnchorRunException
+    {
+        /// <summary>Creates the exception.</summary>
+        public AccountStopOutException(StopOutReason reason, Quote quote, string message)
+            : base(quote, message)
+        {
+            Reason = reason;
+        }
+
+        /// <summary>Why the account stopped out.</summary>
+        public StopOutReason Reason { get; }
+
+        /// <inheritdoc />
+        public override string Kind => "AccountStopOut";
+
+        /// <inheritdoc />
+        public override string Condition => Reason.ToString();
+
+        /// <inheritdoc />
+        public override SingleAnchorRunException AsRefusal()
+        {
+            return new AccountStopOutException(Reason, Quote, "The engine is faulted and accepts no further quotes: " + Message);
         }
     }
 
@@ -536,6 +640,13 @@ namespace MarketLab.SingleAnchor
     /// field is '\n'-terminated, decimals use the canonical numeric form of
     /// <see cref="ParityHasher"/>, enums their exact names and a not-applicable value is empty.
     /// </summary>
+    /// <remarks>
+    /// The canonical field list is deliberately unchanged by PR 3: a Margin Call or
+    /// InsufficientMargin rejection folds the same tuple, with every sizing field empty for an
+    /// arithmetic candidate and the reason enum distinguishing the episode. The margin
+    /// assessment values are stored on the trace row for research, not hashed, so a risk-disabled
+    /// run reproduces the pre-PR-3 parity digest byte for byte.
+    /// </remarks>
     internal static class RejectionParity
     {
         /// <summary>Human-readable description of the digest, stored with each row.</summary>
@@ -599,6 +710,12 @@ namespace MarketLab.SingleAnchor
                     break;
                 case EntryRejectionReason.VolumeExceedsMaximum:
                     hasher.AddAscii("VolumeExceedsMaximum");
+                    break;
+                case EntryRejectionReason.MarginCall:
+                    hasher.AddAscii("MarginCall");
+                    break;
+                case EntryRejectionReason.InsufficientMargin:
+                    hasher.AddAscii("InsufficientMargin");
                     break;
                 default:
                     hasher.AddAscii("ExecutionFailed");
@@ -711,6 +828,11 @@ namespace MarketLab.SingleAnchor
             MarginalProfitPerLot = s?.MarginalProfitPerLot;
             ProjectedProfitAfter = s?.ProjectedProfitAfter;
             Message = rejection.Message;
+            AccountUsedMargin = rejection.AccountUsedMargin;
+            AccountFreeMargin = rejection.AccountFreeMargin;
+            AccountMarginLevelPercent = rejection.AccountMarginLevelPercent;
+            ProjectedUsedMargin = rejection.ProjectedUsedMargin;
+            ProjectedFreeMargin = rejection.ProjectedFreeMargin;
             Attempts = 1;
             LastQuoteSequence = quoteSequence;
             LastTime = time;
@@ -783,6 +905,21 @@ namespace MarketLab.SingleAnchor
         /// <summary>Projected PL_after of the first attempt; null otherwise.</summary>
         public decimal? ProjectedProfitAfter { get; }
 
+        /// <summary>The account's used margin at the first attempt; null for a non-margin rejection.</summary>
+        public decimal? AccountUsedMargin { get; }
+
+        /// <summary>The account's free margin at the first attempt (as of the last observable executable mark); null for a non-margin rejection.</summary>
+        public decimal? AccountFreeMargin { get; }
+
+        /// <summary>The account's margin level at the first attempt; null when undefined (zero used margin) or not a margin rejection.</summary>
+        public decimal? AccountMarginLevelPercent { get; }
+
+        /// <summary>Projected post-fill used margin of the first attempt; null for a non-margin rejection or a Margin Call block (which is evaluated before any projection).</summary>
+        public decimal? ProjectedUsedMargin { get; }
+
+        /// <summary>Projected post-fill free margin of the first attempt; null as for <see cref="ProjectedUsedMargin"/>.</summary>
+        public decimal? ProjectedFreeMargin { get; }
+
         /// <summary>The engine's message for the first attempt.</summary>
         public string Message { get; }
 
@@ -837,6 +974,12 @@ namespace MarketLab.SingleAnchor
         /// <summary>Largest broker-normalized required lot over the attempts (the row aggregates across normalized-requirement changes).</summary>
         public decimal MaxNormalizedRequiredLots { get; private set; }
 
+        /// <summary>Smallest projected post-fill free margin over the attempts; null when no attempt was projected (non-margin rejections and Margin Call blocks).</summary>
+        public decimal? MinProjectedFreeMargin { get; private set; }
+
+        /// <summary>Largest projected post-fill free margin over the attempts; null when no attempt was projected.</summary>
+        public decimal? MaxProjectedFreeMargin { get; private set; }
+
         internal void AppendAttempt(long quoteSequence, DateTime time, decimal bid, decimal ask, EntryRejection rejection)
         {
             Attempts++;
@@ -870,6 +1013,7 @@ namespace MarketLab.SingleAnchor
             IfSet(s?.MarginalProfitPerLot, ref minMarginal, ref maxMarginal);
             IfSet(s?.ProjectedProfitAfter, ref minAfter, ref maxAfter);
             IfSet(rejection.ExactRequiredLots, ref minExact, ref maxExact);
+            IfSet(rejection.ProjectedFreeMargin, ref minFree, ref maxFree);
             if (Attempts <= 1 || rejection.NormalizedRequiredLots < MinNormalizedRequiredLots)
             {
                 MinNormalizedRequiredLots = rejection.NormalizedRequiredLots;
@@ -887,6 +1031,8 @@ namespace MarketLab.SingleAnchor
             MaxProjectedProfitAfter = maxAfter;
             MinExactRequiredLots = minExact;
             MaxExactRequiredLots = maxExact;
+            MinProjectedFreeMargin = minFree;
+            MaxProjectedFreeMargin = maxFree;
         }
 
         private decimal? minExisting;
@@ -897,6 +1043,8 @@ namespace MarketLab.SingleAnchor
         private decimal? maxAfter;
         private decimal? minExact;
         private decimal? maxExact;
+        private decimal? minFree;
+        private decimal? maxFree;
 
         private static void IfSet(decimal? value, ref decimal? min, ref decimal? max)
         {
