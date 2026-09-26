@@ -78,7 +78,8 @@ re-derived with the identical SHA-256
 `33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`. No
 strategy, conversion or qualification-rule change. Evidence:
 `tools/historical-data/README.md` section 9 and
-`fixtures/xauusd-history-relocation-evidence.json`. The composed full-history
+`tools/historical-data/fixtures/xauusd-history-relocation-evidence.json`. The
+composed full-history
 data folder, the complete baseline freeze and the first full-history baseline
 remain unimplemented.
 
