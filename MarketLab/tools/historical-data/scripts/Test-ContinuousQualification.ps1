@@ -142,7 +142,21 @@ try {
     Assert-True ($record.helper_exit_code -eq 0) 'the record carries the clean helper exit code'
     Assert-True ($record.native_replay.lean_delivered_row_count -eq 5) 'the continuous delivery holds 5 quotes'
 
-    Write-Host 'case 2: a deliberate replay mismatch yields a recorded FAIL and exit 1 (not exit 3)'
+    Write-Host 'case 2: a destination inside the raw source is refused without being created'
+    $unsafeDestination = Join-Path $raw 'accidental-child'
+    $unsafeLog = Invoke-External 'powershell.exe' @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $continuousDriver,
+        '-MonthsRoot', (Join-Path $scratch 'months'), '-DataFolder', $unsafeDestination,
+        '-ExpectedFirstMonth', '2014_05', '-ExpectedLastMonth', '2014_05',
+        '-PythonExe', $PythonExe, '-OutputRoot', (Join-Path $scratch 'output')
+    )
+    Set-Content -LiteralPath (Join-Path $scratch 'continuous-unsafe.log') -Value $unsafeLog -Encoding UTF8
+    $exitUnsafe = $script:externalExit
+    Assert-True ($exitUnsafe -eq 2) "an unsafe destination is refused with exit 2 (was $exitUnsafe)"
+    Assert-True (-not (Test-Path -LiteralPath $unsafeDestination)) 'the unsafe destination was not created'
+    Assert-True ($unsafeLog -match 'DataFolderOverlapsInput') 'the refusal names the overlap guard'
+
+    Write-Host 'case 3: a deliberate replay mismatch yields a recorded FAIL and exit 1 (not exit 3)'
     $expectationPath = Join-Path $continuous 'marketlab-qualification\replay-expectation.json'
     $expectation = Read-Json $expectationPath
     $firstDay = @($expectation.partitions.PSObject.Properties.Name)[0]
@@ -172,7 +186,7 @@ try {
         Assert-True ($probeResult.qualification -eq 'FAIL') 'the probe deliberately reported the mismatch'
     }
 
-    Write-Host 'case 3: a forced recomposition invalidates the previous record before replacing'
+    Write-Host 'case 4: a forced recomposition invalidates the previous record before replacing'
     $env:PYTHONPATH = $pythonPackageRoot
     $composeLog = Invoke-External $PythonExe @(
         '-m', 'marketlab_historical_data', 'compose-history',

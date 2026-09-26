@@ -592,18 +592,20 @@ and without re-reading the raw source:
   established record contract, checks and semantics as a single-file
   qualification.
 
-Forced replacement is fail-safe. A previously recorded continuous
-qualification record is invalidated before any write, so an interrupted or
-failed replacement can never leave a stale PASS (or FAIL) record next to a
-changed generation; the auxiliary data source is derived in memory and
-compared with the qualified identity hashes before the runtime databases are
-published, so a wrong auxiliary source aborts without touching anything; and
-the destination must not overlap the Git worktree, the months root, the
-qualified raw source directory or the auxiliary engine-fixture folder. The
-driver also preserves the established deliberate-fail semantics (a
+Forced replacement is fail-safe. After every no-write preflight (including
+deriving the auxiliary identity in memory and comparing it with the qualified
+identity hashes, with malformed or conflicting auxiliary input normalized to a
+controlled configuration failure) has succeeded, a previously recorded
+continuous qualification record is invalidated immediately before the first
+operation that can modify the generation, so an interrupted or failed
+replacement can never leave a stale PASS (or FAIL) record next to a changed
+generation, while a preflight abort leaves the untouched generation and its
+record in place. The destination must not overlap the Git worktree, the months
+root, the qualified raw source directory or the auxiliary engine-fixture
+folder, and it is created by `compose_history` only after those checks have
+passed. The driver also preserves the established deliberate-fail semantics (a
 probe-reported replay mismatch produces a machine-readable FAIL record and
-driver exit 1, not an unrecorded unclean run) and creates a missing
-destination folder safely.
+driver exit 1, not an unrecorded unclean run).
 
 ### Continuous replay qualification (2026-09-26)
 

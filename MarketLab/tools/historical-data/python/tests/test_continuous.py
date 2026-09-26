@@ -455,10 +455,74 @@ class ContinuousCompositionTests(unittest.TestCase):
         self.assertTrue(
             any("RuntimeIdentityProvenanceMismatch" in failure for failure in outcome.failures)
         )
-        self.assertFalse(record.exists())
+        # A no-write preflight failure leaves the certified generation and its
+        # record untouched.
+        self.assertTrue(record.exists())
+        self.assertEqual(record.read_text(encoding="utf-8"), '{"overall_qualification": "PASS"}')
         self.assertEqual(market_hours_file.read_bytes(), market_hours_before)
         self.assertEqual(symbol_properties_file.read_bytes(), symbol_properties_before)
         self.assertEqual(identity_file.read_bytes(), identity_before)
+
+    def test_compose_aborts_cleanly_on_a_malformed_auxiliary_identity(self):
+        months_root, data_folder = _compose_fixture(self.root)
+        record = continuous_record_path(data_folder)
+        record.write_text('{"overall_qualification": "PASS"}', encoding="utf-8")
+        market_hours_file = data_folder / "market-hours" / "market-hours-database.json"
+        market_hours_before = market_hours_file.read_bytes()
+
+        conflicting_aux = self.root / "conflicting-aux"
+        (conflicting_aux / "market-hours").mkdir(parents=True)
+        (conflicting_aux / "symbol-properties").mkdir(parents=True)
+        (conflicting_aux / "market-hours" / "market-hours-database.json").write_bytes(
+            (REPO_DATA / "market-hours" / "market-hours-database.json").read_bytes()
+        )
+        header = (REPO_DATA / "symbol-properties" / "symbol-properties-database.csv").read_text(
+            encoding="utf-8-sig"
+        )
+        (conflicting_aux / "symbol-properties" / "symbol-properties-database.csv").write_text(
+            header.rstrip("\n") + "\ndukascopy,XAUUSD,cfd,Gold,USD,1,0.001,1,conflict\n",
+            encoding="utf-8",
+        )
+        outcome = compose_history(
+            months_root,
+            data_folder,
+            expected_first_month="2023_01",
+            expected_last_month="2023_02",
+            source_data_folder=conflicting_aux,
+            force=True,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(
+            any("RuntimeIdentityUnusable" in failure for failure in outcome.failures),
+            outcome.failures,
+        )
+        self.assertEqual(market_hours_file.read_bytes(), market_hours_before)
+        self.assertTrue(record.exists())
+
+        malformed_aux = self.root / "malformed-aux"
+        (malformed_aux / "market-hours").mkdir(parents=True)
+        (malformed_aux / "symbol-properties").mkdir(parents=True)
+        (malformed_aux / "market-hours" / "market-hours-database.json").write_text(
+            "{not json", encoding="utf-8"
+        )
+        (malformed_aux / "symbol-properties" / "symbol-properties-database.csv").write_bytes(
+            (REPO_DATA / "symbol-properties" / "symbol-properties-database.csv").read_bytes()
+        )
+        outcome = compose_history(
+            months_root,
+            data_folder,
+            expected_first_month="2023_01",
+            expected_last_month="2023_02",
+            source_data_folder=malformed_aux,
+            force=True,
+        )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(
+            any("RuntimeIdentityUnusable" in failure for failure in outcome.failures),
+            outcome.failures,
+        )
+        self.assertEqual(market_hours_file.read_bytes(), market_hours_before)
+        self.assertTrue(record.exists())
 
     def test_compose_copies_the_session_map_and_records_its_hash(self):
         session_map = b'{"contract": "marketlab-single-anchor-session-map-v1"}'

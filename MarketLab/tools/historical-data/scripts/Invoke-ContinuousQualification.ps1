@@ -144,15 +144,9 @@ foreach ($checkout in @($LeanRoot, $scriptCheckout) | Select-Object -Unique) {
         exit 2
     }
 }
-if (-not (Test-Path -LiteralPath $dataRoot)) {
-    $dataParent = Split-Path -Parent $dataRoot
-    if (-not $dataParent -or -not (Test-Path -LiteralPath $dataParent)) {
-        Write-ErrorMessage "the data folder parent does not exist: $dataParent (create it first)"
-        exit 2
-    }
-    New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
-    Write-Host "created the continuous data folder: $dataRoot"
-}
+# The destination is deliberately NOT created here: compose-history creates it
+# itself after its overlap checks (raw source, months root, auxiliary source,
+# worktree), so a caller cannot create a directory inside a protected input.
 
 $pythonPackageRoot = Join-Path $PSScriptRoot '..\python'
 $pythonPackageRoot = (Resolve-Path -LiteralPath $pythonPackageRoot).Path

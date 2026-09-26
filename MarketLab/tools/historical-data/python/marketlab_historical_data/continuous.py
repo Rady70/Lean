@@ -36,6 +36,7 @@ from pathlib import Path
 
 from .canonical import sha256_file
 from .identity import (
+    RuntimeIdentityError,
     derive_market_hours_payload,
     derive_symbol_properties_text,
     dump_market_hours_payload,
@@ -142,20 +143,17 @@ def _preflight_identity_hashes(
     )
     try:
         payload = json.loads(market_hours.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ContinuousHistoryError(
-            f"auxiliary market-hours database is not usable: {market_hours}: {error}"
-        ) from error
-    try:
         text = symbol_properties.read_text(encoding="utf-8-sig")
-    except OSError as error:
+        key = entry_key(symbol, market, security_type)
+        derived_market_hours = dump_market_hours_payload(
+            derive_market_hours_payload(payload, key)
+        )
+        row = symbol_properties_row(symbol, market, security_type)
+        derived_symbol_properties = derive_symbol_properties_text(text, row).encode("utf-8")
+    except (RuntimeIdentityError, UnicodeDecodeError, json.JSONDecodeError, OSError) as error:
         raise ContinuousHistoryError(
-            f"auxiliary symbol-properties database is not usable: {symbol_properties}: {error}"
+            f"the auxiliary runtime identity cannot be derived: {error}"
         ) from error
-    key = entry_key(symbol, market, security_type)
-    derived_market_hours = dump_market_hours_payload(derive_market_hours_payload(payload, key))
-    row = symbol_properties_row(symbol, market, security_type)
-    derived_symbol_properties = derive_symbol_properties_text(text, row).encode("utf-8")
     return (
         hashlib.sha256(derived_market_hours).hexdigest(),
         hashlib.sha256(derived_symbol_properties).hexdigest(),
@@ -487,19 +485,6 @@ def compose_history(
                 )
         session_record = recorded_session
 
-    # A previously recorded PASS certifies the generation that is about to be
-    # replaced; it must not survive the start of the replacement. It is removed
-    # before any write (including the runtime identity), so an interrupted or
-    # failed replacement can never leave a stale PASS next to a changed
-    # generation, and an aborted replacement leaves no PASS at all.
-    if force:
-        stale_record = continuous_record_path(data_folder)
-        if stale_record.is_file():
-            try:
-                stale_record.unlink()
-            except OSError as error:
-                return ContinuousOutcome(2, [f"StaleRecordNotInvalidated: {error}"], None, None)
-
     try:
         derived_market_hours_preflight, derived_symbol_properties_preflight = (
             _preflight_identity_hashes(source_data_folder, symbol, market, security_type)
@@ -526,6 +511,20 @@ def compose_history(
         data_folder.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         return ContinuousOutcome(2, [f"DataFolderUnusable: {error}"], None, None)
+
+    # Every no-write preflight has succeeded, so this is the point immediately
+    # before the first operation that can modify the certified generation. A
+    # previously recorded PASS certifies the generation that is about to be
+    # replaced and must not survive that replacement, so it is removed here;
+    # an aborted replacement leaves no PASS at all, while a preflight abort
+    # leaves the untouched generation's record in place.
+    if force:
+        stale_record = continuous_record_path(data_folder)
+        if stale_record.is_file():
+            try:
+                stale_record.unlink()
+            except OSError as error:
+                return ContinuousOutcome(2, [f"StaleRecordNotInvalidated: {error}"], None, None)
 
     try:
         runtime_identity = prepare_runtime_identity(
