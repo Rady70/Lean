@@ -468,15 +468,24 @@ def compose_history(
         session_map = Path(session_map)
         if not session_map.is_file():
             return ContinuousOutcome(2, [f"SessionMapNotFound: {session_map}"], None, None)
-        session_bytes = session_map.read_bytes()
-        recorded_session = {
-            "source_path": str(session_map),
-            "sha256": hashlib.sha256(session_bytes).hexdigest(),
-            "relative_path": session_map_relative_path(),
-        }
-        target = data_folder / SESSION_MAP_RELATIVE
-        if target.is_file():
-            if hashlib.sha256(target.read_bytes()).hexdigest() != recorded_session["sha256"] and not force:
+        try:
+            session_bytes = session_map.read_bytes()
+            recorded_session = {
+                "source_path": str(session_map),
+                "sha256": hashlib.sha256(session_bytes).hexdigest(),
+                "relative_path": session_map_relative_path(),
+            }
+            target = data_folder / SESSION_MAP_RELATIVE
+            existing_session = target.read_bytes() if target.is_file() else None
+        except OSError as error:
+            return ContinuousOutcome(
+                2, [f"SessionMapUnreadable: the session map cannot be read: {error}"], None, None
+            )
+        if existing_session is not None:
+            if (
+                hashlib.sha256(existing_session).hexdigest() != recorded_session["sha256"]
+                and not force
+            ):
                 return ContinuousOutcome(
                     2,
                     [f"SessionMapExists: {target} differs from {session_map}; pass --force to replace it"],

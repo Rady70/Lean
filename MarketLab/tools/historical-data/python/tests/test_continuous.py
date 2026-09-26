@@ -18,6 +18,7 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -523,6 +524,64 @@ class ContinuousCompositionTests(unittest.TestCase):
         )
         self.assertEqual(market_hours_file.read_bytes(), market_hours_before)
         self.assertTrue(record.exists())
+
+    def test_compose_reports_unreadable_session_maps_as_configuration_errors(self):
+        months_root, data_folder = _compose_fixture(
+            self.root, session_map=b'{"contract": "marketlab-single-anchor-session-map-v1"}'
+        )
+        record = continuous_record_path(data_folder)
+        record.write_text('{"overall_qualification": "PASS"}', encoding="utf-8")
+        market_hours_file = data_folder / "market-hours" / "market-hours-database.json"
+        market_hours_before = market_hours_file.read_bytes()
+        source_map = self.root / "xauusd-sessions.json"
+        source_map.write_bytes(b'{"contract": "marketlab-single-anchor-session-map-v1"}')
+        target_map = data_folder / "marketlab-sessions" / "xauusd-sessions.json"
+        self.assertTrue(target_map.is_file())
+        original_read_bytes = Path.read_bytes
+
+        def unreadable_source(self):
+            if self == source_map:
+                raise PermissionError("simulated unreadable source session map")
+            return original_read_bytes(self)
+
+        with mock.patch.object(Path, "read_bytes", unreadable_source):
+            outcome = compose_history(
+                months_root,
+                data_folder,
+                expected_first_month="2023_01",
+                expected_last_month="2023_02",
+                source_data_folder=REPO_DATA,
+                session_map=source_map,
+                force=True,
+            )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(
+            any("SessionMapUnreadable" in failure for failure in outcome.failures), outcome.failures
+        )
+        self.assertTrue(record.exists())
+        self.assertEqual(market_hours_file.read_bytes(), market_hours_before)
+
+        def unreadable_target(self):
+            if self == target_map:
+                raise PermissionError("simulated unreadable destination session map")
+            return original_read_bytes(self)
+
+        with mock.patch.object(Path, "read_bytes", unreadable_target):
+            outcome = compose_history(
+                months_root,
+                data_folder,
+                expected_first_month="2023_01",
+                expected_last_month="2023_02",
+                source_data_folder=REPO_DATA,
+                session_map=source_map,
+                force=True,
+            )
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertTrue(
+            any("SessionMapUnreadable" in failure for failure in outcome.failures), outcome.failures
+        )
+        self.assertTrue(record.exists())
+        self.assertEqual(market_hours_file.read_bytes(), market_hours_before)
 
     def test_compose_copies_the_session_map_and_records_its_hash(self):
         session_map = b'{"contract": "marketlab-single-anchor-session-map-v1"}'
