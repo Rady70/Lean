@@ -113,7 +113,9 @@ class RelocationEvidenceTests(unittest.TestCase):
             DOCUMENTED_SOURCE_FILE_SET,
         )
 
-    def test_relocation_is_a_verified_move_with_one_remaining_copy(self):
+    def test_relocation_record_asserts_a_verified_move(self):
+        # Filesystem reality (old path absent, one copy present) is re-checked
+        # with the PR evidence; this test validates the recorded claims.
         relocation = self.fixture["relocation"]
         self.assertIn("XAUUSD_raw_history", relocation["old_location"])
         self.assertIn("XAUUSD_raw_history", relocation["new_location"])

@@ -456,7 +456,7 @@ as links during cleanup.
 
 ## 9. Canonical historical-data location and relocation (2026-09-26)
 
-The single canonical copy of the already-qualified Dukascopy/JForex XAUUSD
+The single canonical copy of the qualified 90-file Dukascopy/JForex XAUUSD
 source history is owned by this Lean/MarketLab workspace and lives outside Git:
 
 ```text
@@ -471,14 +471,16 @@ All 179 files moved together: the 90 monthly
 `XAUUSD_<YYYY>_<MM>_DUKASCOPY_JFOREX_FULL.csv` sources and their 89
 `.meta.txt` sidecars, 23,995,922,711 bytes.
 
-Until 2026-09-26 the only copy lived at
+Until 2026-09-26 the only copy of the qualified 90-file source set lived at
 `D:\quant_research_workspace\common\market_data\raw\XAUUSD_raw_history`, which
 belonged to the retired quant-research workspace. The relocation was a
 verified move, not a copy and not a re-acquisition:
 
-- every one of the 179 files was hashed in place first and compared with the
-  retired workspace's own pre-move manifest
+- every one of the 179 files was SHA-256-hashed in place first and compared
+  with the retired workspace's own pre-move manifest
   (`inventory\manifests\XAUUSD_raw_history.pre.sha256.csv`): zero differences;
+  that 179-file hash list is the `relocation.inventory` recorded in the
+  tracked fixture;
 - the 90-file source set hash computed from those hashes equals the qualified
   identity recorded by the original 90-month sweep,
   `8ce98dd27c2df3166a0dc3ec30c6be4756887f323934a6a0ca1c348592c6f1fd`;
@@ -524,7 +526,8 @@ wall time 9,420 s):
 The session map was also re-derived from the canonical source with
 `MarketLab.SessionMapTool`: 90 files, 413,750,130 rows, 1,935 sessions /
 1,934 junctions, 1,347,651 quote-only rows, and the map is byte-identical to
-the previously recorded qualified map (section 8.6;
+the previously recorded qualified map
+(`SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` section 8.6;
 `33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`).
 
 The distilled, market-data-free evidence is tracked at
@@ -535,7 +538,7 @@ is recomputed and cross-checked against
 `python\tests\test_relocation_evidence.py`. The per-month records, the
 converted native partitions and the run outputs stay outside Git under
 `E:\MarketLab\work\lean\pr1-xauusd-full-history-dukascopy\` (aggregate:
-`full-history-summary.json`); the canonical source itself is read-only. No
+`full-history-summary.json`); no tool writes to the canonical source. No
 historical value, identity, timestamp or conversion rule changed. Composing
 the partitioned folders into one continuous research data folder, the
 baseline configuration freeze and the first full-history baseline remain
