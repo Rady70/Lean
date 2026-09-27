@@ -4,7 +4,10 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using QuantConnect;
 using QuantConnect.Configuration;
@@ -54,8 +57,12 @@ namespace MarketLab.SingleAnchor.Tests
             "sourceFileSetSha256",
             "orderedMonthDigestChainSha256",
             "leanBacktestingConfig",
+            "leanBacktestingConfigSha256",
             "algorithmTypeName",
             "algorithmLanguage",
+            "buildConfiguration",
+            "algorithmLocation",
+            "allowEngineErrors",
             "tradingAvailabilityBufferMinutes",
             "normalTradeCount",
             "hardBreakevenCeilingPercent",
@@ -160,6 +167,35 @@ namespace MarketLab.SingleAnchor.Tests
             "single-anchor-session-map",
             "single-anchor-maximum-volume",
             "single-anchor-point-value-per-lot"
+        };
+
+        /// <summary>
+        /// The run-backtest.ps1 parameters that can affect the authoritative baseline, mapped to the
+        /// register field that inventories them. The Parameters channel carries the inventoried
+        /// single-anchor-* fields and is checked separately.
+        /// </summary>
+        private static readonly Dictionary<string, string> BaselineHelperInputs = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Configuration"] = "buildConfiguration",
+            ["Config"] = "leanBacktestingConfig",
+            ["AlgorithmTypeName"] = "algorithmTypeName",
+            ["AlgorithmLanguage"] = "algorithmLanguage",
+            ["AlgorithmLocation"] = "algorithmLocation",
+            ["DataFolder"] = "dataFolder",
+            ["AllowMissingData"] = "helperFailedDataRequestPolicy",
+            ["AllowEngineErrors"] = "allowEngineErrors"
+        };
+
+        /// <summary>
+        /// Helper parameters that are run mechanics or unrelated to the C# authoritative baseline.
+        /// A new helper parameter fails the classification test until it is deliberately handled.
+        /// </summary>
+        private static readonly string[] MechanicalHelperParameters =
+        {
+            "LeanRoot",
+            "PythonDll",
+            "OutputRoot",
+            "DryRun"
         };
 
         [Test]
@@ -293,14 +329,31 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(RequiredText(fields["exchangeTimeZone"], "value"), Is.EqualTo("UTC"));
             Assert.That(RequiredDecimal(fields["tradingAvailabilityBufferMinutes"], "value"), Is.EqualTo(5m));
             Assert.That(RequiredText(fields["leanBacktestingConfig"], "value"), Is.EqualTo("MarketLab/config/backtesting.json"));
+            Assert.That(
+                RequiredText(fields["leanBacktestingConfigSha256"], "value"),
+                Is.EqualTo(Sha256LfNormalized(Path.Combine(FindMarketLabRoot(), "config", "backtesting.json"))),
+                "the qualified backtesting configuration content must still match the audit hash");
             Assert.That(RequiredText(fields["algorithmTypeName"], "value"), Is.EqualTo("SingleAnchorVNextAlgorithm"));
             Assert.That(RequiredText(fields["algorithmLanguage"], "value"), Is.EqualTo("CSharp"));
+            Assert.That(RequiredText(fields["buildConfiguration"], "value"), Is.EqualTo("Release"));
+            Assert.That(
+                RequiredText(fields["algorithmLocation"], "value"),
+                Is.EqualTo(@"MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll"),
+                "the authoritative run must name the SingleAnchor assembly, not the helper's upstream default");
+            Assert.That(RequiredBool(fields["allowEngineErrors"], "value"), Is.False, "the authoritative run must not suppress engine errors");
 
             Assert.That(replay.GetProperty("overall_qualification").GetString(), Is.EqualTo("PASS"));
             Assert.That(replay.GetProperty("probe_qualification").GetString(), Is.EqualTo("PASS"));
             Assert.That(replay.GetProperty("helper_exit_code").GetInt32(), Is.EqualTo(0));
             Assert.That(replay.GetProperty("missing_native_partitions").GetInt32(), Is.EqualTo(0));
             Assert.That(replay.GetProperty("source_coverage_gap_days").GetInt32(), Is.EqualTo(0));
+            // The factual basis of the unresolved helper failed-data-request policy (audit section 10.8):
+            // every failed request is a calendar day the always-open identity requests that carries no
+            // source rows, plus the unrelated missing benchmark hour file.
+            Assert.That(replay.GetProperty("native_partition_failed_data_requests").GetInt32(), Is.EqualTo(406));
+            Assert.That(replay.GetProperty("source_absent_days").GetInt32(), Is.EqualTo(406));
+            Assert.That(replay.GetProperty("unrelated_failed_data_requests").GetInt32(), Is.EqualTo(1));
+            Assert.That(replay.GetProperty("out_of_window_failed_data_requests").GetInt32(), Is.EqualTo(0));
             Assert.That(totals.GetProperty("rejected_row_count").GetInt64(), Is.EqualTo(0L));
             Assert.That(totals.GetProperty("first_canonical_utc").GetString(), Is.EqualTo(composition.GetProperty("first_canonical_utc").GetString()));
             Assert.That(totals.GetProperty("last_canonical_utc").GetString(), Is.EqualTo(composition.GetProperty("last_canonical_utc").GetString()));
@@ -440,6 +493,34 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void HelperRunInputsAreClassifiedAndInventoried()
+        {
+            using var audit = ReadAudit();
+            var fields = Fields(audit.RootElement);
+            var script = File.ReadAllText(Path.Combine(FindMarketLabRoot(), "scripts", "run-backtest.ps1"));
+            var paramBlock = Regex.Match(script, @"param\(([\s\S]*?)\n\)");
+            Assert.That(paramBlock.Success, Is.True, "run-backtest.ps1 param block was not found");
+
+            var declared = Regex.Matches(paramBlock.Groups[1].Value, @"\$(\w+)")
+                .Select(match => match.Groups[1].Value)
+                .ToArray();
+            var expected = BaselineHelperInputs.Keys.Concat(MechanicalHelperParameters).Append("Parameters").ToArray();
+            Assert.That(
+                declared,
+                Is.EquivalentTo(expected),
+                "every run-backtest.ps1 parameter must be classified as a baseline input, the parameter channel or run mechanics");
+
+            foreach (var entry in BaselineHelperInputs)
+            {
+                Assert.That(fields.ContainsKey(entry.Value), Is.True, $"-{entry.Key} must be inventoried as field '{entry.Value}'");
+            }
+            Assert.That(
+                fields.Values.Select(RunParameterOf).Any(name => name != null && name.StartsWith("single-anchor-", StringComparison.Ordinal)),
+                Is.True,
+                "-Parameters must carry the inventoried single-anchor fields");
+        }
+
+        [Test]
         public void FixtureAndExampleValuesAreInventoriedAndNotPromoted()
         {
             using var audit = ReadAudit();
@@ -514,6 +595,13 @@ namespace MarketLab.SingleAnchor.Tests
                 fields[id] = entry;
             }
             return fields;
+        }
+
+        private static string Sha256LfNormalized(string path)
+        {
+            var text = File.ReadAllText(path).Replace("\r\n", "\n");
+            using var sha = SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
         }
 
         private static string? RunParameterOf(JsonElement field)

@@ -175,6 +175,14 @@
       "source": "README.md section 3 (complete backtesting-only configuration; handler set enforced by run-backtest.ps1 pre-flight)"
     },
     {
+      "field": "leanBacktestingConfigSha256",
+      "class": "A",
+      "value": "877dadf1ff325ed836970cd36090a2b1ba48f3d687d4ad68ef11ba56e7b1a99f",
+      "runParameter": null,
+      "source": "the tracked MarketLab/config/backtesting.json content at this audit; the helper validates the file against the backtesting-only invariant set before every run",
+      "note": "SHA-256 of the tracked file's UTF-8 text content with CRLF normalized to LF. The Windows working-tree file holds CRLF (Git normalizes it to LF on commit); the normalized hash is the content identity on any checkout."
+    },
+    {
       "field": "algorithmTypeName",
       "class": "A",
       "value": "SingleAnchorVNextAlgorithm",
@@ -187,6 +195,27 @@
       "value": "CSharp",
       "runParameter": "-AlgorithmLanguage (run-backtest.ps1)",
       "source": "README.md sections 2, 9 (the C# path is the qualified Release path; the Python path is a fixture-only route and is not this baseline)"
+    },
+    {
+      "field": "buildConfiguration",
+      "class": "A",
+      "value": "Release",
+      "runParameter": "-Configuration (run-backtest.ps1; default Release)",
+      "source": "README.md sections 2 and 9 (the C# strategy is built and run from Launcher and strategy Release binaries; the Debug route exists only for Python)"
+    },
+    {
+      "field": "algorithmLocation",
+      "class": "A",
+      "value": "MarketLab\\src\\SingleAnchor\\bin\\Release\\MarketLab.SingleAnchor.dll",
+      "runParameter": "-AlgorithmLocation (run-backtest.ps1)",
+      "source": "README.md section 9 and SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 2 (the MarketLab helper's default -AlgorithmLocation is the unrelated QuantConnect.Algorithm.CSharp.dll, so the authoritative run must name this assembly explicitly)"
+    },
+    {
+      "field": "allowEngineErrors",
+      "class": "A",
+      "value": false,
+      "runParameter": "-AllowEngineErrors (run-backtest.ps1; must be absent)",
+      "source": "README.md sections 5 and 10 (an exit-0 run with engine ERROR:: lines fails the helper with exit code 4; the override is not part of any qualified run and must not suppress engine errors in the authoritative baseline)"
     },
     {
       "field": "tradingAvailabilityBufferMinutes",

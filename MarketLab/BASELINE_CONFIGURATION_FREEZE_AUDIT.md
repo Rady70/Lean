@@ -106,17 +106,24 @@ this audit: selecting one would be a policy decision, not an audit result.
 | continuous semantic digest | `sha256:231cf638...42886a` | carried by the data folder | tools README section 10; evidence |
 | continuous population | 90 months, 2,332 partitions, 413,750,130 quotes, first `2019-01-01T23:00:07.151Z`, last `2026-06-30T23:59:59.678Z` | carried by the data folder | tools README sections 9-10; evidence |
 | source file-set / month-digest chain | `8ce98dd2...f1fd` / `9d29c36b...f769` | carried by the source identity | tools README section 9; evidence |
-| LEAN environment | `MarketLab/config/backtesting.json`, backtesting-only handler set | `-Config` | README section 3; helper pre-flight |
-| algorithm | `SingleAnchorVNextAlgorithm`, C#, Release | `-AlgorithmTypeName/-AlgorithmLocation/-AlgorithmLanguage` | README section 9 |
+| LEAN environment | `MarketLab/config/backtesting.json`, SHA-256 `877dadf1...b1a99f` (LF-normalized tracked content), backtesting-only handler set | `-Config` | README section 3; helper pre-flight |
+| build configuration | `Release` | `-Configuration` | README sections 2, 9 |
+| algorithm | `SingleAnchorVNextAlgorithm`, C# | `-AlgorithmTypeName/-AlgorithmLanguage` | README section 9 |
+| algorithm location | `MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll` (the helper's default is the unrelated upstream `QuantConnect.Algorithm.CSharp.dll`) | `-AlgorithmLocation` | README section 9; implementation note section 2 |
+| engine-error policy | `false`: `-AllowEngineErrors` must be absent; a run with engine `ERROR::` lines fails (exit 4) | `-AllowEngineErrors` | README sections 5, 10 |
 | trading-availability buffers | first and last five minutes of every complete session quote-only | fixed implementation constant (not configurable) | strategy spec section 1.1; plan section 5; implementation note section 8.2 |
 
 The data tree is the bound input: the run must point `-DataFolder` at the
 continuous folder and pass the three identity parameters explicitly, because the
 in-code `Market.Oanda` default and the 2014 fixture dates are not a research
-configuration (implementation note section 8.7). The five-minute buffer width
-and the New York settlement-window junction rule are fixed implementation
-constants, not operator settings, and are therefore accounted for here rather
-than configured.
+configuration (implementation note section 8.7). The run must also name
+`-AlgorithmLocation` and `-Configuration` explicitly: the helper otherwise
+defaults to the unrelated upstream `QuantConnect.Algorithm.CSharp.dll` and
+would still build `Release`, so neither may be inferred. The tracked
+`backtesting.json` is bound by its content hash as well as its path. The
+five-minute buffer width and the New York settlement-window junction rule are
+fixed implementation constants, not operator settings, and are therefore
+accounted for here rather than configured.
 
 ## 4. Strategy geometry and sizing
 
@@ -370,7 +377,12 @@ accounted for:
   mandatory `market-hours` and `symbol-properties` auxiliary files, and
   `object-store-root: ./storage` relative to the run directory. The helper
   pre-flight enforces the backtesting boundary; a material change there is a
-  configuration drift that the helper rejects.
+  configuration drift that the helper rejects. All nine baseline-relevant
+  helper inputs (`-Configuration`, `-Config`, `-AlgorithmTypeName`,
+  `-AlgorithmLanguage`, `-AlgorithmLocation`, `-DataFolder`, `-Parameters`,
+  `-AllowMissingData`, `-AllowEngineErrors`) are classified in the register;
+  the mechanical helper options (`-LeanRoot`, `-PythonDll`, `-OutputRoot`,
+  `-DryRun`) cannot change the strategy result.
 - Run-evidence requirements for the eventual authoritative run: the run must be
   launched from the reviewed and merged freeze commit and must record the
   repository commit, the runtime binary hashes (the PR 1 route already records
@@ -378,8 +390,9 @@ accounted for:
   `storage\single-anchor\results.json`), and the session-map/data provenance
   block. These are evidence requirements, not values to freeze.
 - Helper post-run policy: engine `ERROR::` lines fail the run (exit 4) and
-  `-AllowEngineErrors` must not be used for the authoritative baseline. The
-  failed-data-request policy is the unresolved entry 10.8.
+  `-AllowEngineErrors` must not be used for the authoritative baseline
+  (class A field `allowEngineErrors = false`). The failed-data-request policy
+  is the unresolved entry 10.8.
 
 ## 12. Completeness mapping
 
@@ -388,7 +401,8 @@ Every requested completeness category is covered by an entry:
 ```text
 data/run identity            section 3 (symbol, market, security type, data folder,
                              period, session map, market hours, symbol properties,
-                             continuous digest, resolution, environment, algorithm)
+                             continuous digest, resolution, environment, build
+                             configuration, algorithm, algorithm location, run policies)
 strategy geometry/sizing     section 4 (StepPercent D, BaseLot D, NormalTradeCount,
                              HardBreakevenCeilingPercent, MinimumVolume, VolumeStep,
                              MaximumVolume)
@@ -397,6 +411,8 @@ execution economics          section 6 (ProjectedSpread D, CommissionPerLot,
                              CommissionBuffer D, Slippage D, PointValuePerLot, swaps)
 research account             section 7 (enabled B, currency USD, InitialBalance D)
 margin/survival              section 8 (model A; enablement D)
+helper run inputs            section 11 (all nine baseline-relevant run-backtest.ps1
+                             inputs classified; mechanical options enumerated)
 additional inputs            section 11
 ```
 
@@ -421,6 +437,14 @@ verify that:
   evidence, that the evidence itself is a PASS with zero missing partitions and
   zero coverage gaps, and that exactly one complete derived native
   representation is recorded;
+- the tracked `backtesting.json` still hashes to the recorded LF-normalized
+  SHA-256, the helper run identity is pinned (`Release`, the exact
+  `MarketLab.SingleAnchor.dll` location, `allowEngineErrors = false`), and the
+  helper's own parameter list is exactly the classified baseline inputs plus the
+  enumerated mechanical options (a new helper parameter fails the check);
+- the failed-request counts that justify the unresolved helper policy
+  (406 source-absent-day failed requests, 1 unrelated benchmark request, 0
+  out-of-window requests) are bound to the tracked evidence;
 - the host `SingleAnchorVNextAlgorithm` `[Parameter]` members (LEAN's own
   field/property discovery) are exactly the inventoried `single-anchor-*`
   parameters, each pinned host default still matches,
