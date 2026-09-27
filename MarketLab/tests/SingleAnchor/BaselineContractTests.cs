@@ -208,7 +208,7 @@ namespace MarketLab.SingleAnchor.Tests
                 + " -AlgorithmLocation " + RequiredText(root.GetProperty("runHost"), "algorithmLocation")
                 + " -DataFolder " + RequiredText(root.GetProperty("qualifiedDataIdentity"), "dataFolder")
                 + " -Parameters \"" + rendered + "\""
-                + " -AllowMissingData";
+                + " -AllowMissingData -RunEvidence";
 
             var runProcedure = root.GetProperty("runProcedure");
             Assert.That(RequiredText(root.GetProperty("runHost"), "buildConfiguration"), Is.EqualTo("Release"));
@@ -222,11 +222,14 @@ namespace MarketLab.SingleAnchor.Tests
             var recordedCommand = RequiredText(runProcedure, "exactRunCommand");
             Assert.That(recordedCommand, Is.EqualTo(expectedCommand), "the recorded exactRunCommand must be exactly the invocation rendered from the contract");
             Assert.That(recordedCommand, Does.Not.Contain("-AllowEngineErrors"));
+            Assert.That(recordedCommand, Does.Contain("-AllowMissingData").And.Contain("-RunEvidence"));
             Assert.That(recordedCommand, Does.Contain("2019-01-01").And.Contain("2026-06-30"));
             Assert.That(recordedCommand, Does.Contain("E:\\MarketLab\\data\\lean\\xauusd-dukascopy"));
 
             Assert.That(RequiredText(runProcedure, "postRunAuditCommand"), Does.Contain("Test-SingleAnchorBaselineFailedData.ps1"));
-            Assert.That(RequiredText(runProcedure, "runEvidenceRequirements"), Does.Contain("contract identity").IgnoreCase);
+            Assert.That(RequiredText(runProcedure, "runEvidenceRequirements"), Does.Contain("invocation evidence").IgnoreCase);
+            Assert.That(RequiredText(runProcedure, "runEvidenceRequirements"), Does.Contain("composition manifest").IgnoreCase);
+            Assert.That(RequiredText(root.GetProperty("runHost"), "runEvidence"), Does.Contain("-RunEvidence"));
 
             var humanContract = File.ReadAllText(Path.Combine(FindMarketLabRoot(), "BASELINE_CONTRACT.md"));
             Assert.That(humanContract, Does.Contain(rendered), "the human-auditable contract must record the exact frozen parameters string");
@@ -274,6 +277,48 @@ namespace MarketLab.SingleAnchor.Tests
             {
                 Assert.That(RequiredText(parameters[name], "value"), Is.Not.Empty, $"'{name}' must be passed explicitly");
             }
+        }
+
+        [Test]
+        public void FixedImplementationBehaviourIsBoundAndDriftChecked()
+        {
+            using var contract = ReadContract();
+            var fixedBehaviour = contract.RootElement.GetProperty("fixedImplementationContract");
+            Assert.That(RequiredText(fixedBehaviour, "description"), Is.Not.Empty);
+            Assert.That(RequiredText(fixedBehaviour, "dataResolution"), Is.EqualTo("Tick"));
+            Assert.That(fixedBehaviour.GetProperty("fillForward").GetBoolean(), Is.False);
+            Assert.That(fixedBehaviour.GetProperty("quoteOnlyBufferMinutes").GetInt32(), Is.EqualTo(5));
+            Assert.That(RequiredText(fixedBehaviour, "sessionJunctionTimeZone"), Is.EqualTo("America/New_York"));
+            Assert.That(RequiredText(fixedBehaviour, "sessionJunctionWindow"), Does.Contain("17:00:00"));
+            Assert.That(RequiredText(fixedBehaviour, "benchmark"), Does.Contain("traded symbol"));
+            Assert.That(RequiredText(fixedBehaviour, "sessionMapSemantics"), Does.Contain("quote-only"));
+
+            // Live implementation values (public constants and the host source lines that cannot be
+            // expressed as [Parameter]s): a change here must fail this test deliberately.
+            Assert.That(HistoricalTradingAvailability.QuoteOnlyBuffer, Is.EqualTo(TimeSpan.FromMinutes(5)));
+            Assert.That(SessionJunctionRule.TimeZoneId, Is.EqualTo("America/New_York"));
+            Assert.That(SessionJunctionRule.SettlementStart.Hour, Is.EqualTo(17));
+            Assert.That(SessionJunctionRule.SettlementStart.Minute, Is.EqualTo(0));
+            Assert.That(SessionJunctionRule.SettlementEnd.Hour, Is.EqualTo(18));
+            Assert.That(SessionJunctionRule.SettlementEnd.Minute, Is.EqualTo(0));
+            Assert.That(HistoricalSessionMap.JunctionRuleText, Does.Contain("17:00:00").And.Contain("18:00:00").And.Contain("America/New_York"));
+
+            var hostSource = File.ReadAllText(Path.Combine(FindMarketLabRoot(), "src", "SingleAnchor", "SingleAnchorVNextAlgorithm.cs"));
+            Assert.That(hostSource, Does.Contain("AddCfd(_ticker, Resolution.Tick, _market, fillForward: false)"));
+            Assert.That(hostSource, Does.Contain("AddForex(_ticker, Resolution.Tick, _market, fillForward: false)"));
+            Assert.That(hostSource, Does.Contain("SetBenchmark(_symbol)"));
+        }
+
+        [Test]
+        public void TerminationPolicyDistinguishesApprovedOutcomeFromFailures()
+        {
+            using var contract = ReadContract();
+            var policy = contract.RootElement.GetProperty("failedDataRequestPolicy");
+            var rule = RequiredText(policy, "terminationRule");
+            Assert.That(rule, Does.Contain("AccountStopOut"));
+            Assert.That(rule, Does.Contain("not an approved baseline outcome").IgnoreCase);
+            Assert.That(rule, Does.Contain("invalid"));
+            Assert.That(rule, Does.Not.Contain("or another recorded strategy/data failure"));
         }
 
         [Test]

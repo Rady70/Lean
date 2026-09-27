@@ -238,6 +238,7 @@ namespace MarketLab.SingleAnchor.Tests
             "LeanRoot",
             "PythonDll",
             "OutputRoot",
+            "RunEvidence",
             "DryRun"
         };
 

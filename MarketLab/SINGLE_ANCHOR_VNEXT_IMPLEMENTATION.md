@@ -1354,7 +1354,7 @@ the freeze is **complete**: the canonical, complete, immutable configuration is
 [config/baseline-contract.json](config/baseline-contract.json) with its
 human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), and
 baseline contract identity (LF-normalized SHA-256)
-`bcef6c6b22c7bf7dbd660b5aa4f2ba5274950332ad601b155a9474b691fb05f4`. The
+`2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c`. The
 approved values are StepPercent 0.25, BaseLot 0.10, InitialBalance 20,000 USD,
 ProjectedSpread 0.50 (a fixed hard-BE projection assumption, not an empirical
 optimum), Slippage 0 and CommissionBuffer 0 (explicit baseline decisions even
@@ -1368,16 +1368,34 @@ were not promoted as the authority; where an approved value happens to equal a
 former fixture/default value, the register records that the authority is the
 approved baseline decision.
 
+The authoritative run is procedurally bound to the contract: the helper is
+launched with `-RunEvidence`, which persists the actual resolved invocation
+(`marketlab-run-invocation.json`: paths, parameter pairs, allow flags, launcher
+argv and the config/algorithm hashes) into the run directory before LEAN
+launches, and the classifier refuses to qualify a run without it or with a
+different resolved invocation. The classifier additionally verifies that the
+contract file is the register-pinned frozen contract, that the continuous tree
+still matches its composition manifest (all 2,332 partition hashes, the
+partition name set, the per-day semantic map and the market-hours/
+symbol-properties/session-map hashes  -  without replaying the 413,750,130
+rows), and that the engine's data-monitor failed-request count equals the
+failed-request lines; only normal completion or the intended `AccountStopOut`
+terminal outcome is classifiable.
+
 The Windows-local checks are
 [tests/SingleAnchor/BaselineDecisionAuditTests.cs](tests/SingleAnchor/BaselineDecisionAuditTests.cs)
 (resolved register, implementation defaults, margin contract, PR #13 evidence),
 [tests/SingleAnchor/BaselineContractTests.cs](tests/SingleAnchor/BaselineContractTests.cs)
-(contract completeness, frozen values, identity, exact invocation, data/margin
-identity, failed-data policy) and
+(contract completeness, frozen values, identity, exact invocation, fixed
+non-parameter behaviour, termination policy, data/margin identity,
+failed-data policy),
 [tests/Test-SingleAnchorBaselineFailedData.ps1](tests/Test-SingleAnchorBaselineFailedData.ps1)
-(classifier edge cases); the exact future invocation is rendered by
-[scripts/Get-SingleAnchorBaselineInvocation.ps1](scripts/Get-SingleAnchorBaselineInvocation.ps1)
-and recorded in the human-auditable contract. No strategy behavior,
+(classifier edge cases and mutation cases) and
+[tests/Test-SingleAnchorBaselineInvocation.ps1](tests/Test-SingleAnchorBaselineInvocation.ps1)
+(reporter register-pin refusal); the exact future invocation is rendered by
+[scripts/Get-SingleAnchorBaselineInvocation.ps1](scripts/Get-SingleAnchorBaselineInvocation.ps1),
+which refuses an unpinned contract, and recorded in the human-auditable
+contract. No strategy behavior,
 account/margin contract, data or qualification semantics changed, the first
 untouched full-history strategy baseline was not run and parameter
 optimization has not started.

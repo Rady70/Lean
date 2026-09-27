@@ -3,19 +3,29 @@
 Windows-local tests for scripts\Test-SingleAnchorBaselineFailedData.ps1 on synthetic fixtures.
 
 .DESCRIPTION
-Creates a temporary synthetic data tree, contract, evidence and run directories outside the
-repository and checks the classifier's expected, invalid and controlled-failure paths:
+Creates a temporary synthetic qualified tree (partitions, auxiliary databases, session map
+and composition manifest), a synthetic contract/evidence and synthetic run directories
+outside the repository, then checks the classifier's provenance chain and its classification
+paths:
 
-  A expected-only failed list                     -> exit 0, qualification EXPECTED
-  B failed request for an existing partition      -> exit 1, unexpected-missing-qualified-partition
-  C unknown failed request path                   -> exit 1, unexpected-unknown-request
-  D out-of-window partition failed request        -> exit 1, unexpected-out-of-window-request
-  E frozen-window absent day not requested at all -> exit 1, unexpected-unrequested-absence
-  F data tree partition count no longer matches   -> exit 2, controlled failure
-  G run is not the frozen baseline identity       -> exit 2, controlled failure
-  H approved early termination bounds the horizon -> exit 0, absence after termination recorded
-  I unrequested absence within a terminated horizon -> exit 1, unexpected-unrequested-absence
-  J contract missing top-level fields             -> exit 2, controlled failure
+  A expected-only failed list                      -> exit 0, EXPECTED
+  B failed request for an existing partition       -> exit 1, unexpected-missing-qualified-partition
+  C unknown failed request path                    -> exit 1, unexpected-unknown-request
+  D out-of-window partition failed request         -> exit 1, unexpected-out-of-window-request
+  E frozen-window absent day not requested at all  -> exit 1, unexpected-unrequested-absence
+  F contract/manifest partition-count drift        -> exit 2, controlled failure
+  G run is not the frozen baseline identity        -> exit 2, controlled failure
+  H AccountStopOut bounds the horizon              -> exit 0, absence after termination recorded
+  I unrequested absence within a stop-out horizon  -> exit 1, unexpected-unrequested-absence
+  J contract missing top-level fields              -> exit 2, controlled failure
+  K modified partition, unchanged partition count  -> exit 2, controlled failure (manifest hash)
+  L present/absent day swap, count still 2,332     -> exit 2, controlled failure (manifest set)
+  M invocation evidence data folder mismatch       -> exit 2, controlled failure
+  N data-monitor count vs failed-request lines     -> exit 1, failed-request-accounting-mismatch
+  O non-approved run termination                   -> exit 2, controlled failure
+  P auxiliary request count vs tracked evidence    -> exit 1, contract-evidence-mismatch
+  Q unpinned contract without the test override    -> exit 2, controlled failure
+  R data-folder override without the test override -> exit 2, controlled failure
 
 No real market data is used and nothing outside the temporary directory is touched.
 
@@ -41,107 +51,195 @@ function Check([string]$Description, [bool]$Condition) {
     }
 }
 
+function Get-RawSha256([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try { $hash = $sha.ComputeHash($stream) } finally { $stream.Dispose() }
+    }
+    finally { $sha.Dispose() }
+    return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+function Get-LfSha256([string]$Path) {
+    $text = [System.IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text)) } finally { $sha.Dispose() }
+    return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+function Write-JsonFile([string]$Path, $Object) {
+    [System.IO.File]::WriteAllText($Path, ($Object | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
+}
+
 $classifier = Join-Path $PSScriptRoot '..\scripts\Test-SingleAnchorBaselineFailedData.ps1'
 if (-not (Test-Path -LiteralPath $classifier -PathType Leaf)) {
     [Console]::Error.WriteLine("ERROR: classifier script not found at '$classifier'.")
     exit 1
 }
-$repoContract = Join-Path $PSScriptRoot '..\config\baseline-contract.json'
-$contractData = [System.IO.File]::ReadAllText($repoContract) | ConvertFrom-Json
+$marketLabRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$repoRoot = (Resolve-Path (Join-Path $marketLabRoot '..')).Path
+$realContract = Join-Path $marketLabRoot 'config\baseline-contract.json'
+$realRegister = Join-Path $marketLabRoot 'config\baseline-decision-audit.json'
+$realConfig = Join-Path $marketLabRoot 'config\backtesting.json'
+$realConfigHash = Get-LfSha256 $realConfig
+# A stable existing file stands in for the built algorithm assembly in the synthetic contract.
+$algorithmFilePath = Join-Path $marketLabRoot 'scripts\run-backtest.ps1'
+$algorithmFileHash = Get-RawSha256 $algorithmFilePath
+$algorithmFileRelative = 'MarketLab\scripts\run-backtest.ps1'
 
 $root = Join-Path $env:TEMP ("marketlab-baseline-classifier-" + [guid]::NewGuid().ToString('N'))
 $dataRoot = Join-Path $root 'data'
-$tickRoot = Join-Path $dataRoot 'cfd\dukascopy\tick\xauusd'
-$sessionRoot = Join-Path $dataRoot 'marketlab-sessions'
 $runRoot = Join-Path $root 'run'
-New-Item -ItemType Directory -Path $tickRoot -Force | Out-Null
-New-Item -ItemType Directory -Path $sessionRoot -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $runRoot 'storage\single-anchor') -Force | Out-Null
-
-$startDate = '2019-01-01'
-$endDate = '2019-01-03'
+$invariant = [System.Globalization.CultureInfo]::InvariantCulture
+$startText = '2019-01-01'
+$endDateText = '2019-01-03'
 $presentDays = @('20190101', '20190102')
 $absentDay = '20190103'
-foreach ($day in $presentDays) {
-    [System.IO.File]::WriteAllText((Join-Path $tickRoot ($day + '_quote.zip')), 'synthetic')
-}
-$sessionMapPath = Join-Path $sessionRoot 'xauusd-sessions.json'
-[System.IO.File]::WriteAllText($sessionMapPath, '{"syntheticSessionMap":true}')
-$sha = [System.Security.Cryptography.SHA256]::Create()
-try {
-    $stream = [System.IO.File]::OpenRead($sessionMapPath)
-    try { $mapBytes = $sha.ComputeHash($stream) } finally { $stream.Dispose() }
-}
-finally { $sha.Dispose() }
-$mapHash = (($mapBytes | ForEach-Object { $_.ToString('x2') }) -join '')
 
-# Synthetic contract: same frozen values, synthetic identity/window/tree.
-$contractData.qualifiedDataIdentity.dataFolder = $dataRoot
-$contractData.qualifiedDataIdentity.startDate = $startDate
-$contractData.qualifiedDataIdentity.endDate = $endDate
-$contractData.qualifiedDataIdentity.continuousHistoryPartitionCount = $presentDays.Count
-$contractData.qualifiedDataIdentity.sessionMapSha256 = $mapHash
-$syntheticContractPath = Join-Path $root 'baseline-contract.json'
-$contractJson = $contractData | ConvertTo-Json -Depth 10
-[System.IO.File]::WriteAllText($syntheticContractPath, $contractJson, (New-Object System.Text.UTF8Encoding($false)))
-
-# Synthetic evidence: one expected-absent day, no gaps.
-$evidence = [ordered]@{
-    replay = [ordered]@{
-        source_absent_days = 1
-        missing_native_partitions = 0
-        source_coverage_gap_days = 0
-        unrelated_failed_data_requests = 1
+function New-Tree([string]$TreeRoot, [string[]]$Days) {
+    $tick = Join-Path $TreeRoot 'cfd\dukascopy\tick\xauusd'
+    $mh = Join-Path $TreeRoot 'market-hours'
+    $sp = Join-Path $TreeRoot 'symbol-properties'
+    $sm = Join-Path $TreeRoot 'marketlab-sessions'
+    $mq = Join-Path $TreeRoot 'marketlab-qualification'
+    foreach ($dir in @($tick, $mh, $sp, $sm, $mq)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $zipHashes = @{}
+    foreach ($day in $Days) {
+        $zipPath = Join-Path $tick ($day + '_quote.zip')
+        [System.IO.File]::WriteAllText($zipPath, ("zip-content-" + $day))
+        $zipHashes[$day] = Get-RawSha256 $zipPath
+    }
+    $mhPath = Join-Path $mh 'market-hours-database.json'
+    $spPath = Join-Path $sp 'symbol-properties-database.csv'
+    $smPath = Join-Path $sm 'xauusd-sessions.json'
+    [System.IO.File]::WriteAllText($mhPath, '{"syntheticMarketHours":true}')
+    [System.IO.File]::WriteAllText($spPath, 'synthetic,symbol,properties')
+    [System.IO.File]::WriteAllText($smPath, '{"syntheticSessionMap":true}')
+    return [pscustomobject]@{
+        Root = $TreeRoot
+        ZipHashes = $zipHashes
+        MarketHoursHash = Get-RawSha256 $mhPath
+        SymbolPropertiesHash = Get-RawSha256 $spPath
+        SessionMapHash = Get-RawSha256 $smPath
     }
 }
-$syntheticEvidencePath = Join-Path $root 'continuous-history-evidence.json'
-[System.IO.File]::WriteAllText($syntheticEvidencePath, ($evidence | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
 
-# results.json carrying the frozen parameter block.
-$parameterToResult = [ordered]@{
-    'single-anchor-step-percent' = 'StepPercent'
-    'single-anchor-base-lot' = 'BaseLot'
-    'single-anchor-normal-trade-count' = 'NormalTradeCount'
-    'single-anchor-hard-be-ceiling-percent' = 'HardBreakevenCeilingPercent'
-    'single-anchor-escape-enabled' = 'EscapeEnabled'
-    'single-anchor-escape-profit-units' = 'EscapeProfitUnits'
-    'single-anchor-escape-minimum-open-positions' = 'EscapeMinimumOpenPositions'
-    'single-anchor-fixed-tp-units' = 'FixedTakeProfitUnits'
-    'single-anchor-trailing-enabled' = 'TrailingEnabled'
-    'single-anchor-trailing-activation-units' = 'TrailingActivationUnits'
-    'single-anchor-trailing-drop-units' = 'TrailingDropUnits'
-    'single-anchor-commission-buffer' = 'CommissionBuffer'
-    'single-anchor-point-value-per-lot' = 'PointValuePerLot'
-    'single-anchor-volume-step' = 'VolumeStep'
-    'single-anchor-minimum-volume' = 'MinimumVolume'
-    'single-anchor-maximum-volume' = 'MaximumVolume'
-    'single-anchor-commission-per-lot' = 'CommissionPerLot'
-    'single-anchor-slippage' = 'Slippage'
-    'single-anchor-projected-spread' = 'ProjectedSpread'
-    'single-anchor-buy-swap-per-lot-per-day' = 'BuySwapPerLotPerDay'
-    'single-anchor-sell-swap-per-lot-per-day' = 'SellSwapPerLotPerDay'
+function New-Manifest($Tree, [string[]]$Days) {
+    $partitions = @()
+    $perPartition = [ordered]@{}
+    foreach ($day in $Days) {
+        $dayText = $day.Substring(0, 4) + '-' + $day.Substring(4, 2) + '-' + $day.Substring(6, 2)
+        $partitions += [ordered]@{
+            zip_relative_path = 'cfd/dukascopy/tick/xauusd/' + $day + '_quote.zip'
+            zip_sha256 = $Tree.ZipHashes[$day]
+        }
+        $perPartition[$dayText] = [ordered]@{ accepted_row_count = 1; semantic_digest = 'sha256:synthetic' }
+    }
+    $manifest = [ordered]@{
+        contract = 'marketlab-historical-data-qualification-v1'
+        composition = [ordered]@{
+            contract = 'marketlab-continuous-history-composition-v1'
+            partition_count = $Days.Count
+            ordered_source_semantic_digest = 'sha256:synthetic'
+            session_map = [ordered]@{ relative_path = 'marketlab-sessions/xauusd-sessions.json'; sha256 = $Tree.SessionMapHash }
+            lean_run_window = [ordered]@{ start_date = $startText; end_date = $endDateText }
+            first_canonical_utc = '2019-01-01T00:00:00.000Z'
+            last_canonical_utc = '2019-01-02T23:59:59.000Z'
+        }
+        lean = [ordered]@{
+            market_hours_database = [ordered]@{ database_sha256 = $Tree.MarketHoursHash }
+            symbol_properties_database = [ordered]@{ sha256 = $Tree.SymbolPropertiesHash }
+        }
+        native = [ordered]@{ partitions = $partitions }
+        semantic = [ordered]@{ per_partition = $perPartition }
+        qualification = [ordered]@{
+            source_qualification = 'PASS'
+            native_conversion = 'PASS'
+            native_lean_timestamp_parity = 'PASS'
+            native_price_decimal_parity = 'PASS'
+        }
+    }
+    Write-JsonFile (Join-Path $Tree.Root 'marketlab-qualification\continuous-composition.json') $manifest
 }
-$invariant = [System.Globalization.CultureInfo]::InvariantCulture
-$frozenByName = @{}
-foreach ($parameter in $contractData.parameters) { $frozenByName[[string]$parameter.name] = [string]$parameter.value }
-$resultParameters = [ordered]@{}
-foreach ($entry in $parameterToResult.GetEnumerator()) {
-    $text = $frozenByName[$entry.Key]
-    if ($text -eq 'true') { $resultParameters[$entry.Value] = $true }
-    elseif ($text -eq 'false') { $resultParameters[$entry.Value] = $false }
-    else { $resultParameters[$entry.Value] = [decimal]::Parse($text, $invariant) }
+
+function New-Contract([string]$Path, $Tree, [int]$PartitionCount) {
+    $contract = [System.IO.File]::ReadAllText($realContract) | ConvertFrom-Json
+    $identity = $contract.qualifiedDataIdentity
+    $identity.dataFolder = $Tree.Root
+    $identity.startDate = $startText
+    $identity.endDate = $endDateText
+    $identity.continuousHistoryPartitionCount = $PartitionCount
+    $identity.sessionMapSha256 = $Tree.SessionMapHash
+    $identity.marketHoursDatabaseSha256 = $Tree.MarketHoursHash
+    $identity.symbolPropertiesDatabaseSha256 = $Tree.SymbolPropertiesHash
+    $identity.continuousHistorySemanticDigest = 'sha256:synthetic'
+    $identity.continuousHistoryFirstQuoteUtc = '2019-01-01T00:00:00.000Z'
+    $identity.continuousHistoryLastQuoteUtc = '2019-01-02T23:59:59.000Z'
+    $contract.runHost.algorithmLocation = $algorithmFileRelative
+    Write-JsonFile $Path $contract
+    return $contract
 }
-$cash = [decimal]::Parse($frozenByName['single-anchor-cash'], $invariant)
-function Write-Results([string]$Market, [string]$Path, [string]$FailureKind, [string]$FailureQuoteTime) {
+
+function Get-ContractParametersString($Contract) {
+    return (@($Contract.parameters | ForEach-Object { $_.name + ':' + $_.value }) -join ',')
+}
+
+function New-Evidence([string]$Path, [int]$Unrelated) {
+    $evidence = [ordered]@{
+        replay = [ordered]@{
+            source_absent_days = 1
+            missing_native_partitions = 0
+            source_coverage_gap_days = 0
+            unrelated_failed_data_requests = $Unrelated
+        }
+    }
+    Write-JsonFile $Path $evidence
+}
+
+function New-Results([string]$Path, $Contract, [string]$Market, [string]$FailureKind, [string]$FailureQuoteTime) {
+    $parameterToResult = [ordered]@{
+        'single-anchor-step-percent' = 'StepPercent'
+        'single-anchor-base-lot' = 'BaseLot'
+        'single-anchor-normal-trade-count' = 'NormalTradeCount'
+        'single-anchor-hard-be-ceiling-percent' = 'HardBreakevenCeilingPercent'
+        'single-anchor-escape-enabled' = 'EscapeEnabled'
+        'single-anchor-escape-profit-units' = 'EscapeProfitUnits'
+        'single-anchor-escape-minimum-open-positions' = 'EscapeMinimumOpenPositions'
+        'single-anchor-fixed-tp-units' = 'FixedTakeProfitUnits'
+        'single-anchor-trailing-enabled' = 'TrailingEnabled'
+        'single-anchor-trailing-activation-units' = 'TrailingActivationUnits'
+        'single-anchor-trailing-drop-units' = 'TrailingDropUnits'
+        'single-anchor-commission-buffer' = 'CommissionBuffer'
+        'single-anchor-point-value-per-lot' = 'PointValuePerLot'
+        'single-anchor-volume-step' = 'VolumeStep'
+        'single-anchor-minimum-volume' = 'MinimumVolume'
+        'single-anchor-maximum-volume' = 'MaximumVolume'
+        'single-anchor-commission-per-lot' = 'CommissionPerLot'
+        'single-anchor-slippage' = 'Slippage'
+        'single-anchor-projected-spread' = 'ProjectedSpread'
+        'single-anchor-buy-swap-per-lot-per-day' = 'BuySwapPerLotPerDay'
+        'single-anchor-sell-swap-per-lot-per-day' = 'SellSwapPerLotPerDay'
+    }
+    $frozenByName = @{}
+    foreach ($parameter in $Contract.parameters) { $frozenByName[[string]$parameter.name] = [string]$parameter.value }
+    $resultParameters = [ordered]@{}
+    foreach ($entry in $parameterToResult.GetEnumerator()) {
+        $text = $frozenByName[$entry.Key]
+        if ($text -eq 'true') { $resultParameters[$entry.Value] = $true }
+        elseif ($text -eq 'false') { $resultParameters[$entry.Value] = $false }
+        else { $resultParameters[$entry.Value] = [decimal]::Parse($text, $invariant) }
+    }
+    $cash = [decimal]::Parse($frozenByName['single-anchor-cash'], $invariant)
     $results = [ordered]@{
         symbol = 'XAUUSD'
         market = $Market
-        startDate = $startDate
-        endDate = $endDate
+        startDate = $startText
+        endDate = $endDateText
         parameters = $resultParameters
         researchAccount = [ordered]@{ InitialBalance = $cash }
         researchMargin = [ordered]@{ MarginCallActive = $false }
-        sessionMap = [ordered]@{ Sha256 = $mapHash }
+        sessionMap = [ordered]@{ Sha256 = $Tree.SessionMapHash }
         failure = $null
         lastProcessedQuote = $null
     }
@@ -154,21 +252,63 @@ function Write-Results([string]$Market, [string]$Path, [string]$FailureKind, [st
         }
         $results['lastProcessedQuote'] = [ordered]@{ Time = $FailureQuoteTime }
     }
-    [System.IO.File]::WriteAllText($Path, ($results | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+    Write-JsonFile $Path $results
 }
-function Write-FailedRequests([string]$RunDirectory, [string[]]$Lines) {
+
+function New-InvocationEvidence([string]$Path, $Contract, [string]$DataFolder, [string]$ParametersString, [string]$RunDirectory, [string]$AlgorithmLocation, [string]$AlgorithmHash) {
+    $invocation = [ordered]@{
+        contract = 'marketlab-run-invocation-evidence-v1'
+        generatedUtc = '2019-01-01T00:00:00Z'
+        leanRoot = $repoRoot
+        configuration = 'Release'
+        dotnet = 'synthetic'
+        launcher = 'synthetic'
+        launcherSha256 = 'synthetic'
+        configPath = $realConfig
+        configSha256LfNormalized = $realConfigHash
+        algorithmTypeName = $Contract.runHost.algorithmTypeName
+        algorithmLanguage = $Contract.runHost.algorithmLanguage
+        algorithmLocation = $AlgorithmLocation
+        algorithmSha256 = $AlgorithmHash
+        dataFolder = $DataFolder
+        parametersString = $ParametersString
+        closeAutomatically = $true
+        allowMissingData = $true
+        allowEngineErrors = $false
+        commandLine = @('synthetic')
+        workingDirectory = $RunDirectory
+        runDirectory = $RunDirectory
+    }
+    Write-JsonFile $Path $invocation
+}
+
+function New-FailedRequests([string]$RunDirectory, [string[]]$Lines) {
     $failedPath = Join-Path $RunDirectory 'failed-data-requests-20190101000000000.txt'
     [System.IO.File]::WriteAllLines($failedPath, $Lines, (New-Object System.Text.UTF8Encoding($false)))
 }
-function New-Case([string]$Name) {
+
+function New-Monitor([string]$RunDirectory, [int]$FailedCount) {
+    $monitor = [ordered]@{ 'failed-data-requests-count' = $FailedCount; 'total-data-requests-count' = $FailedCount }
+    Write-JsonFile (Join-Path $RunDirectory 'data-monitor-report-20190101000000000.json') $monitor
+}
+
+function New-RunCase([string]$Name, $Contract, [string]$DataFolder, [string[]]$FailedLines, [int]$MonitorCount, [string]$FailureKind, [string]$FailureQuoteTime, [string]$EvidenceDataFolder, [string]$AlgorithmLocation, [string]$AlgorithmHash) {
     $caseDir = Join-Path $runRoot $Name
     New-Item -ItemType Directory -Path (Join-Path $caseDir 'storage\single-anchor') -Force | Out-Null
-    Write-Results 'dukascopy' (Join-Path $caseDir 'storage\single-anchor\results.json')
+    New-Results (Join-Path $caseDir 'storage\single-anchor\results.json') $Contract 'dukascopy' $FailureKind $FailureQuoteTime
+    $dataFolderForEvidence = if ($EvidenceDataFolder) { $EvidenceDataFolder } else { $DataFolder }
+    New-InvocationEvidence (Join-Path $caseDir 'marketlab-run-invocation.json') $Contract $dataFolderForEvidence (Get-ContractParametersString $Contract) $caseDir $AlgorithmLocation $AlgorithmHash
+    New-FailedRequests $caseDir $FailedLines
+    New-Monitor $caseDir $MonitorCount
     return $caseDir
 }
-function Invoke-Classifier([string]$CaseDirectory, [string]$ContractOverride) {
+
+function Invoke-Classifier([string]$CaseDirectory, [string]$ContractPath, [switch]$NoOverride, [string]$DataFolderOverride) {
     $recordPath = Join-Path $CaseDirectory 'classification.json'
-    & powershell -NoProfile -File $classifier -RunDirectory $CaseDirectory -Contract $ContractOverride -Evidence $syntheticEvidencePath -DataFolder $dataRoot -OutputPath $recordPath | Out-Null
+    $arguments = @('-NoProfile', '-File', $classifier, '-RunDirectory', $CaseDirectory, '-Contract', $ContractPath, '-Evidence', $syntheticEvidencePath, '-OutputPath', $recordPath)
+    if ($DataFolderOverride) { $arguments += @('-DataFolder', $DataFolderOverride) }
+    if (-not $NoOverride) { $arguments += '-AllowNonAuthoritativeOverride' }
+    & powershell @arguments | Out-Null
     $code = $LASTEXITCODE
     $record = $null
     if (Test-Path -LiteralPath $recordPath) {
@@ -177,55 +317,61 @@ function Invoke-Classifier([string]$CaseDirectory, [string]$ContractOverride) {
     return [pscustomobject]@{ Code = $code; Record = $record }
 }
 
+New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
+$tree = New-Tree $dataRoot $presentDays
+New-Manifest $tree $presentDays
+$syntheticContractPath = Join-Path $root 'baseline-contract.json'
+$contract = New-Contract $syntheticContractPath $tree $presentDays.Count
+$syntheticEvidencePath = Join-Path $root 'continuous-history-evidence.json'
+New-Evidence $syntheticEvidencePath 1
+$parametersString = Get-ContractParametersString $contract
+
 try {
     Write-Host 'Case A: expected-only failed list'
-    $caseA = New-Case 'case-a'
-    Write-FailedRequests $caseA @(
+    $caseA = New-RunCase 'case-a' $contract $dataRoot @(
         ('\cfd\dukascopy\tick\xauusd\' + $absentDay + '_quote.zip'),
         '\cfd\dukascopy\hour\xauusd.zip'
-    )
+    ) 2 $null $null $null $algorithmFilePath $algorithmFileHash
     $resultA = Invoke-Classifier $caseA $syntheticContractPath
     Check 'exit 0' ($resultA.Code -eq 0)
     Check 'qualification EXPECTED' ($resultA.Record.qualification -eq 'EXPECTED')
-    Check 'one expected absent day' ($resultA.Record.countsByCategory.'expected-source-absent-calendar-day' -eq 1)
-    Check 'one known auxiliary' ($resultA.Record.countsByCategory.'known-non-strategy-auxiliary-request' -eq 1)
+    Check 'authoritative:false for the test override' ($resultA.Record.authoritative -eq $false)
+    Check 'one expected absent day' ($resultA.Record.occurrencesByCategory.'expected-source-absent-calendar-day' -eq 1)
+    Check 'one known auxiliary' ($resultA.Record.occurrencesByCategory.'known-non-strategy-auxiliary-request' -eq 1)
+    Check 'accounting matches the monitor' ($resultA.Record.failedRequestAccountingMatches -eq $true)
+    Check 'tree partition hashes verified' ($resultA.Record.verifiedPartitionCount -eq 2)
 
     Write-Host 'Case B: failed request for an existing qualified partition'
-    $caseB = New-Case 'case-b'
-    Write-FailedRequests $caseB @('\cfd\dukascopy\tick\xauusd\20190101_quote.zip')
+    $caseB = New-RunCase 'case-b' $contract $dataRoot @('\cfd\dukascopy\tick\xauusd\20190101_quote.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
     $resultB = Invoke-Classifier $caseB $syntheticContractPath
     Check 'exit 1' ($resultB.Code -eq 1)
     Check 'qualification INVALID' ($resultB.Record.qualification -eq 'INVALID')
-    Check 'missing qualified partition classified' ($resultB.Record.countsByCategory.'unexpected-missing-qualified-partition' -eq 1)
+    Check 'missing qualified partition classified' ($resultB.Record.occurrencesByCategory.'unexpected-missing-qualified-partition' -eq 1)
 
     Write-Host 'Case C: unknown failed request path'
-    $caseC = New-Case 'case-c'
-    Write-FailedRequests $caseC @('\equity\usa\minute\spy\20131009_trade.zip')
+    $caseC = New-RunCase 'case-c' $contract $dataRoot @('\equity\usa\minute\spy\20131009_trade.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
     $resultC = Invoke-Classifier $caseC $syntheticContractPath
     Check 'exit 1' ($resultC.Code -eq 1)
-    Check 'unknown request classified' ($resultC.Record.countsByCategory.'unexpected-unknown-request' -eq 1)
+    Check 'unknown request classified' ($resultC.Record.occurrencesByCategory.'unexpected-unknown-request' -eq 1)
 
     Write-Host 'Case D: out-of-window partition failed request'
-    $caseD = New-Case 'case-d'
-    Write-FailedRequests $caseD @('\cfd\dukascopy\tick\xauusd\20190104_quote.zip')
+    $caseD = New-RunCase 'case-d' $contract $dataRoot @('\cfd\dukascopy\tick\xauusd\20190104_quote.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
     $resultD = Invoke-Classifier $caseD $syntheticContractPath
     Check 'exit 1' ($resultD.Code -eq 1)
-    Check 'out-of-window request classified' ($resultD.Record.countsByCategory.'unexpected-out-of-window-request' -eq 1)
+    Check 'out-of-window request classified' ($resultD.Record.occurrencesByCategory.'unexpected-out-of-window-request' -eq 1)
 
     Write-Host 'Case E: frozen-window absent day not requested at all'
-    $caseE = New-Case 'case-e'
-    Write-FailedRequests $caseE @('\cfd\dukascopy\hour\xauusd.zip')
+    $caseE = New-RunCase 'case-e' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
     $resultE = Invoke-Classifier $caseE $syntheticContractPath
     Check 'exit 1' ($resultE.Code -eq 1)
-    Check 'unrequested absence classified' ($resultE.Record.countsByCategory.'unexpected-unrequested-absence' -eq 1)
+    Check 'unrequested absence classified' ($resultE.Record.occurrencesByCategory.'unexpected-unrequested-absence' -eq 1)
 
-    Write-Host 'Case F: data tree partition count no longer matches the contract'
-    $caseF = New-Case 'case-f'
-    Write-FailedRequests $caseF @('\cfd\dukascopy\hour\xauusd.zip')
+    Write-Host 'Case F: contract partition count drifts from the manifest'
+    $caseF = New-RunCase 'case-f' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
     $driftedContract = [System.IO.File]::ReadAllText($syntheticContractPath) | ConvertFrom-Json
     $driftedContract.qualifiedDataIdentity.continuousHistoryPartitionCount = 7
     $driftedContractPath = Join-Path $root 'baseline-contract-drifted.json'
-    [System.IO.File]::WriteAllText($driftedContractPath, ($driftedContract | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
+    Write-JsonFile $driftedContractPath $driftedContract
     $resultF = Invoke-Classifier $caseF $driftedContractPath
     Check 'exit 2' ($resultF.Code -eq 2)
     Check 'controlled failure recorded' ($resultF.Record.qualification -eq 'CONTROLLED_FAILURE')
@@ -233,46 +379,95 @@ try {
     Write-Host 'Case G: run is not the frozen baseline identity'
     $caseG = Join-Path $runRoot 'case-g'
     New-Item -ItemType Directory -Path (Join-Path $caseG 'storage\single-anchor') -Force | Out-Null
-    Write-Results 'oanda' (Join-Path $caseG 'storage\single-anchor\results.json')
-    Write-FailedRequests $caseG @('\cfd\dukascopy\hour\xauusd.zip')
+    New-Results (Join-Path $caseG 'storage\single-anchor\results.json') $contract 'oanda' $null $null
+    New-InvocationEvidence (Join-Path $caseG 'marketlab-run-invocation.json') $contract $dataRoot $parametersString $caseG $algorithmFilePath $algorithmFileHash
+    New-FailedRequests $caseG @('\cfd\dukascopy\hour\xauusd.zip')
+    New-Monitor $caseG 1
     $resultG = Invoke-Classifier $caseG $syntheticContractPath
     Check 'exit 2' ($resultG.Code -eq 2)
     Check 'controlled failure recorded' ($resultG.Record.qualification -eq 'CONTROLLED_FAILURE')
 
-    Write-Host 'Case H: approved early termination bounds the expected-absence horizon'
-    $caseH = Join-Path $runRoot 'case-h'
-    New-Item -ItemType Directory -Path (Join-Path $caseH 'storage\single-anchor') -Force | Out-Null
-    Write-Results 'dukascopy' (Join-Path $caseH 'storage\single-anchor\results.json') 'AccountStopOut' '2019-01-01T12:00:00'
-    Write-FailedRequests $caseH @('\cfd\dukascopy\hour\xauusd.zip')
+    Write-Host 'Case H: AccountStopOut bounds the expected-absence horizon'
+    $caseH = New-RunCase 'case-h' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'AccountStopOut' '2019-01-01T12:00:00' $null $algorithmFilePath $algorithmFileHash
     $resultH = Invoke-Classifier $caseH $syntheticContractPath
     Check 'exit 0' ($resultH.Code -eq 0)
     Check 'qualification EXPECTED' ($resultH.Record.qualification -eq 'EXPECTED')
     Check 'run marked terminated' ($resultH.Record.runTerminated -eq $true)
     Check 'termination kind recorded' ($resultH.Record.terminationKind -eq 'AccountStopOut')
     Check 'coverage horizon is the failure day' ($resultH.Record.coverageEndDay -eq '2019-01-01')
-    Check 'absence after termination recorded, not invalid' ($resultH.Record.sourceAbsentDaysAfterTermination -eq 1)
-    Check 'no unrequested absence within the horizon' ($resultH.Record.countsByCategory.'unexpected-unrequested-absence' -eq 0)
+    Check 'absence after termination recorded' ($resultH.Record.sourceAbsentDaysAfterTermination -eq 1)
+    Check 'no unrequested absence within the horizon' ($resultH.Record.occurrencesByCategory.'unexpected-unrequested-absence' -eq 0)
 
-    Write-Host 'Case I: unrequested absence within a terminated run horizon is still invalid'
-    $caseI = Join-Path $runRoot 'case-i'
-    New-Item -ItemType Directory -Path (Join-Path $caseI 'storage\single-anchor') -Force | Out-Null
-    Write-Results 'dukascopy' (Join-Path $caseI 'storage\single-anchor\results.json') 'StrategyInvariant' '2019-01-03T12:00:00'
-    Write-FailedRequests $caseI @('\cfd\dukascopy\hour\xauusd.zip')
+    Write-Host 'Case I: unrequested absence within a stop-out horizon is still invalid'
+    $caseI = New-RunCase 'case-i' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'AccountStopOut' '2019-01-03T12:00:00' $null $algorithmFilePath $algorithmFileHash
     $resultI = Invoke-Classifier $caseI $syntheticContractPath
     Check 'exit 1' ($resultI.Code -eq 1)
-    Check 'unrequested absence within horizon classified' ($resultI.Record.countsByCategory.'unexpected-unrequested-absence' -eq 1)
+    Check 'unrequested absence within horizon classified' ($resultI.Record.occurrencesByCategory.'unexpected-unrequested-absence' -eq 1)
 
     Write-Host 'Case J: a contract missing top-level fields is a controlled failure'
-    $caseJ = New-Case 'case-j'
-    Write-FailedRequests $caseJ @('\cfd\dukascopy\hour\xauusd.zip')
+    $caseJ = New-RunCase 'case-j' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
     $malformedPath = Join-Path $root 'malformed-contract.json'
     [System.IO.File]::WriteAllText($malformedPath, '{}', (New-Object System.Text.UTF8Encoding($false)))
     $resultJ = Invoke-Classifier $caseJ $malformedPath
     Check 'exit 2' ($resultJ.Code -eq 2)
     Check 'controlled failure recorded' ($resultJ.Record.qualification -eq 'CONTROLLED_FAILURE')
 
-    Write-Host 'Invocation reporter: expected-only case record binds the synthetic contract identity'
-    Check 'record carries a contract sha' (-not [string]::IsNullOrWhiteSpace($resultA.Record.baselineContractSha256))
+    Write-Host 'Case K: modified partition with unchanged partition count'
+    $treeK = New-Tree (Join-Path $root 'data-k') $presentDays
+    New-Manifest $treeK $presentDays
+    [System.IO.File]::WriteAllText((Join-Path $treeK.Root 'cfd\dukascopy\tick\xauusd\20190102_quote.zip'), 'tampered-content')
+    $caseK = New-RunCase 'case-k' $contract $treeK.Root @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $resultK = Invoke-Classifier $caseK $syntheticContractPath -DataFolderOverride $treeK.Root
+    Check 'exit 2' ($resultK.Code -eq 2)
+    Check 'controlled failure recorded' ($resultK.Record.qualification -eq 'CONTROLLED_FAILURE')
+    Check 'failure names the partition hash' ($resultK.Record.failure -match '20190102_quote.zip')
+
+    Write-Host 'Case L: present/absent day swap, partition count unchanged'
+    $treeL = New-Tree (Join-Path $root 'data-l') @('20190102', '20190103')
+    New-Manifest $treeL $presentDays
+    $caseL = New-RunCase 'case-l' $contract $treeL.Root @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $resultL = Invoke-Classifier $caseL $syntheticContractPath -DataFolderOverride $treeL.Root
+    Check 'exit 2' ($resultL.Code -eq 2)
+    Check 'controlled failure recorded' ($resultL.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case M: invocation evidence data folder mismatch'
+    $caseM = New-RunCase 'case-m' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null (Join-Path $root 'other-data') $algorithmFilePath $algorithmFileHash
+    $resultM = Invoke-Classifier $caseM $syntheticContractPath
+    Check 'exit 2' ($resultM.Code -eq 2)
+    Check 'controlled failure recorded' ($resultM.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case N: data-monitor count disagrees with the failed-request lines'
+    $caseN = New-RunCase 'case-n' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 3 $null $null $null $algorithmFilePath $algorithmFileHash
+    $resultN = Invoke-Classifier $caseN $syntheticContractPath
+    Check 'exit 1' ($resultN.Code -eq 1)
+    Check 'accounting mismatch classified' ($resultN.Record.occurrencesByCategory.'failed-request-accounting-mismatch' -eq 1)
+
+    Write-Host 'Case O: a non-approved run termination is a controlled failure'
+    $caseO = New-RunCase 'case-o' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'StrategyInvariant' '2019-01-01T12:00:00' $null $algorithmFilePath $algorithmFileHash
+    $resultO = Invoke-Classifier $caseO $syntheticContractPath
+    Check 'exit 2' ($resultO.Code -eq 2)
+    Check 'controlled failure recorded' ($resultO.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case P: auxiliary request count disagrees with the tracked evidence'
+    $caseP = New-RunCase 'case-p' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip', '\cfd\dukascopy\hour\xauusd.zip') 2 $null $null $null $algorithmFilePath $algorithmFileHash
+    $resultP = Invoke-Classifier $caseP $syntheticContractPath
+    Check 'exit 1' ($resultP.Code -eq 1)
+    Check 'auxiliary/evidence mismatch classified' ($resultP.Record.occurrencesByCategory.'contract-evidence-mismatch' -eq 1)
+    Check 'repeated path recorded' ($resultP.Record.repeatedFailedPaths.'cfd/dukascopy/hour/xauusd.zip' -eq 2)
+
+    Write-Host 'Case Q: a contract not pinned by the register is refused without the test override'
+    $caseQ = New-RunCase 'case-q' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $resultQ = Invoke-Classifier $caseQ $syntheticContractPath -NoOverride
+    Check 'exit 2' ($resultQ.Code -eq 2)
+    Check 'controlled failure recorded' ($resultQ.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case R: a data-folder override is refused without the test override'
+    $caseR = New-RunCase 'case-r' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    # Use the real register-pinned contract so the pin check passes and the override gate itself is exercised.
+    $resultR = Invoke-Classifier $caseR $realContract -NoOverride -DataFolderOverride $dataRoot
+    Check 'exit 2' ($resultR.Code -eq 2)
+    Check 'controlled failure recorded' ($resultR.Record.qualification -eq 'CONTROLLED_FAILURE')
+    Check 'failure names the override gate' ($resultR.Record.failure -match 'must not be overridden')
 }
 finally {
     if (Test-Path -LiteralPath $root) {

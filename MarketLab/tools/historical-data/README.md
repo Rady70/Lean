@@ -660,7 +660,13 @@ configuration freeze is complete, with the canonical immutable configuration
 in [`config/baseline-contract.json`](../../config/baseline-contract.json) and
 its human-auditable rendering in
 [BASELINE_CONTRACT.md](../../BASELINE_CONTRACT.md) (contract identity
-`bcef6c6b22c7bf7dbd660b5aa4f2ba5274950332ad601b155a9474b691fb05f4`). The first
+`2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c`). The
+post-run baseline audit reuses this section's composition manifest
+(`marketlab-qualification\continuous-composition.json`) to verify the
+machine-local tree without replaying the source: the classifier hashes all
+2,332 partition zips against the manifest's recorded `zip_sha256`, checks the
+partition name set and the per-day semantic map, and hash-verifies the
+market-hours database, symbol-properties database and session map. The first
 untouched full-history baseline has **not** been run and parameter research has
 **not** started.
 

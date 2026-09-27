@@ -20,6 +20,12 @@ Exit codes:
 .PARAMETER Contract
 Path to the contract file. Default: <script root>\..\config\baseline-contract.json.
 
+.PARAMETER Register
+Path to the authoritative decision register that pins the frozen contract hash.
+Default: <contract directory>\baseline-decision-audit.json. The script refuses
+(exit 2) to render the frozen invocation when the contract file's computed hash
+does not equal the register's frozenBaselineContractSha256.
+
 .PARAMETER Json
 Emit the identity, the parameters string and the run command as one JSON object instead
 of the human-readable report.
@@ -35,6 +41,7 @@ Prints the same report as machine-readable JSON.
 [CmdletBinding()]
 param(
     [string]$Contract,
+    [string]$Register,
     [switch]$Json
 )
 
@@ -146,7 +153,7 @@ $renderedCommand = "pwsh -File MarketLab\scripts\run-backtest.ps1" `
     + " -AlgorithmLocation $($runHost.algorithmLocation)" `
     + " -DataFolder $($dataIdentity.dataFolder)" `
     + " -Parameters `"$parametersString`"" `
-    + " -AllowMissingData"
+    + " -AllowMissingData -RunEvidence"
 
 $recordedCommand = Get-JsonProperty $runProcedure 'exactRunCommand'
 if ($recordedCommand -ne $renderedCommand) {
@@ -163,6 +170,33 @@ if ($renderedCommand -match '-AllowEngineErrors') {
 }
 
 $contractSha256 = Get-ContractSha256 $contractPath
+
+# The contract file alone proves nothing: the authoritative decision register
+# pins the frozen contract hash. Refuse to render (or advertise) the frozen
+# invocation when the file's computed hash does not equal that pin, so an
+# accidentally edited local contract cannot masquerade as the baseline.
+if ([string]::IsNullOrWhiteSpace($Register)) {
+    $Register = Join-Path (Split-Path -Parent $contractPath) 'baseline-decision-audit.json'
+}
+$registerPath = [System.IO.Path]::GetFullPath($Register)
+if (-not (Test-Path -LiteralPath $registerPath -PathType Leaf)) {
+    Write-ErrorLine "the authoritative decision register '$registerPath' does not exist; the contract hash cannot be checked against its pin."
+    exit $script:ExitPreflight
+}
+try {
+    $registerData = [System.IO.File]::ReadAllText($registerPath) | ConvertFrom-Json
+    $registerPin = Get-JsonProperty $registerData 'frozenBaselineContractSha256'
+    $registerContract = Get-JsonProperty $registerData 'frozenBaselineContract'
+}
+catch {
+    Write-ErrorLine "the authoritative decision register '$registerPath' is unreadable: $($_.Exception.Message)"
+    exit $script:ExitPreflight
+}
+if ($registerPin -ne $contractSha256) {
+    Write-ErrorLine "the contract hash $contractSha256 does not match the authoritative register pin $registerPin in '$registerPath'; refusing to render the frozen invocation."
+    exit $script:ExitPreflight
+}
+
 $postRunAudit = Get-JsonProperty $runProcedure 'postRunAuditCommand'
 
 if ($Json) {
@@ -170,6 +204,9 @@ if ($Json) {
         contract = $contractId
         status = $status
         contractSha256 = $contractSha256
+        register = $registerContract
+        registerPin = $registerPin
+        registerMatches = $true
         parameterCount = $parameters.Count
         parameters = $parametersString
         runCommand = $renderedCommand
@@ -183,6 +220,7 @@ Write-Host 'MarketLab SingleAnchor frozen baseline contract'
 Write-Host "contract:                  $contractId"
 Write-Host "status:                    $status"
 Write-Host "contract SHA-256:          $contractSha256  (LF-normalized tracked file content)"
+Write-Host "register pin:              $registerPin  (verified: $registerContract)"
 Write-Host "explicit parameters:       $($parameters.Count) single-anchor-* values"
 Write-Host ''
 Write-Host 'Parameters string:'

@@ -144,6 +144,15 @@ Downgrade failed data requests from exit code 3 to a warning.
 .PARAMETER AllowEngineErrors
 Downgrade engine ERROR:: lines in an exit-0 run from exit code 4 to a warning.
 
+.PARAMETER RunEvidence
+Write a machine-readable invocation-evidence file into the run directory before
+LEAN is launched: the resolved absolute inputs (build configuration, config file
+with its LF-normalized SHA-256, algorithm location and SHA-256, data folder,
+the exact `--parameters` pairs, the allow flags, the launcher and its SHA-256,
+and the exact launcher argv array). The file is evidence of what the run
+actually resolved to, not a reconstruction; failing to write it stops the run
+before LEAN is launched (exit 2). Default: off (dry runs never create it).
+
 .PARAMETER DryRun
 Validate everything, print the resolved paths and the exact command line, create
 nothing and exit 0. (For Python, validation includes the pandas probe, which
@@ -192,6 +201,7 @@ param(
     [string]$OutputRoot,
     [switch]$AllowMissingData,
     [switch]$AllowEngineErrors,
+    [switch]$RunEvidence,
     [switch]$DryRun
 )
 
@@ -263,6 +273,32 @@ function ConvertTo-AbsolutePath([string]$Path) {
         return $full
     }
     return $trimmed
+}
+
+# SHA-256 of a file as lower-case hex. -LfNormalized reads the file as UTF-8
+# text and normalizes CRLF to LF first (the content-identity convention used by
+# the MarketLab baseline contract); the default hashes the raw bytes.
+function Get-Sha256Hex([string]$Path, [switch]$LfNormalized) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        if ($LfNormalized) {
+            $text = [System.IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
+            $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($text))
+        }
+        else {
+            $stream = [System.IO.File]::OpenRead($Path)
+            try {
+                $hash = $sha.ComputeHash($stream)
+            }
+            finally {
+                $stream.Dispose()
+            }
+        }
+    }
+    finally {
+        $sha.Dispose()
+    }
+    return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
 }
 
 function Resolve-DotnetExecutable {
@@ -860,6 +896,46 @@ try {
 catch {
     Write-ErrorLine "Could not create run directory `"$runDir`": $($_.Exception.Message)"
     exit $script:ExitPreflight
+}
+
+if ($RunEvidence) {
+    # Persistent pre-run invocation evidence: what this run actually resolved
+    # to, written before LEAN is launched so a later audit never has to
+    # reconstruct the invocation from the machine state.
+    $invocationEvidencePath = Join-Path $runDir 'marketlab-run-invocation.json'
+    try {
+        $evidenceParameters = @($parameterPairs)
+        $invocationEvidence = [ordered]@{
+            contract = 'marketlab-run-invocation-evidence-v1'
+            generatedUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+            leanRoot = $leanRootPath
+            configuration = $Configuration
+            dotnet = $dotnet
+            launcher = $launcherDll
+            launcherSha256 = Get-Sha256Hex $launcherDll
+            configPath = $configPath
+            configSha256LfNormalized = Get-Sha256Hex $configPath -LfNormalized
+            algorithmTypeName = $AlgorithmTypeName
+            algorithmLanguage = $AlgorithmLanguage
+            algorithmLocation = $algorithmLocationPath
+            algorithmSha256 = Get-Sha256Hex $algorithmLocationPath
+            dataFolder = $dataFolderPath
+            parameters = $evidenceParameters
+            parametersString = ($evidenceParameters -join ',')
+            closeAutomatically = $true
+            allowMissingData = [bool]$AllowMissingData
+            allowEngineErrors = [bool]$AllowEngineErrors
+            commandLine = @($launcherArgs)
+            workingDirectory = $runDir
+            runDirectory = $runDir
+        }
+        [System.IO.File]::WriteAllText($invocationEvidencePath, ($invocationEvidence | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
+        Write-Info "  run evidence:     $invocationEvidencePath"
+    }
+    catch {
+        Write-ErrorLine "Could not write the run invocation evidence to `"$invocationEvidencePath`": $($_.Exception.Message)"
+        exit $script:ExitPreflight
+    }
 }
 
 $leanExitCode = $null

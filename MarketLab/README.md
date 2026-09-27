@@ -40,7 +40,8 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
 | `tests\SingleAnchor\BaselineDecisionAuditTests.cs` | the Windows-local drift check for the audit register, the implementation defaults and the PR #13 evidence |
 | `tests\SingleAnchor\BaselineContractTests.cs` | the Windows-local checks for the frozen contract: completeness, values, identity, invocation, data/margin identity and run policy |
-| `tests\Test-SingleAnchorBaselineFailedData.ps1` | synthetic-fixture tests for the failed-data classifier |
+| `tests\Test-SingleAnchorBaselineFailedData.ps1` | synthetic-fixture tests for the failed-data classifier (invocation evidence, composition-manifest tree verification, data-monitor reconciliation, termination whitelist and mutation cases) |
+| `tests\Test-SingleAnchorBaselineInvocation.ps1` | tests that the invocation reporter refuses a contract whose hash is not the register's frozen pin |
 | `tools\historical-data\` | offline source qualification, exact-decimal native LEAN tick conversion and the actual LEAN replay probe (PR 1); see its [README](tools/historical-data/README.md) and [provenance](tools/historical-data/PROVENANCE.md) |
 | `tools\research-account-probe\` | paired per-quote throughput and allocation probe for the PR 2 research account |
 | `.gitignore` | ignores `output\` (generated runs) |
@@ -569,7 +570,7 @@ configuration is
 [`config/baseline-contract.json`](config/baseline-contract.json) (human-auditable
 rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)), baseline contract
 identity (LF-normalized SHA-256)
-`bcef6c6b22c7bf7dbd660b5aa4f2ba5274950332ad601b155a9474b691fb05f4`. The
+`2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c`. The
 contract freezes `StepPercent = 0.25`, `BaseLot = 0.10`,
 `InitialBalance = 20,000 USD`, `ProjectedSpread = 0.50` (an approved baseline
 projection assumption, not an empirical optimum), `Slippage = 0` and
@@ -578,6 +579,14 @@ the implementation defaults), margin enabled with the approved PR #3
 margin/survival model, and the `-AllowMissingData` policy with a mandatory
 post-run classification of every failed data request
 ([`scripts\Test-SingleAnchorBaselineFailedData.ps1`](scripts/Test-SingleAnchorBaselineFailedData.ps1)).
+The authoritative run also passes `-RunEvidence`, so the helper persists the
+actual resolved invocation (`marketlab-run-invocation.json`) into the run
+directory before LEAN launches; the classifier refuses a contract whose hash
+is not the decision register's frozen pin, a run whose persisted invocation
+differs from the contract, and a continuous tree that no longer matches its
+composition manifest (all 2,332 partition hashes and the auxiliary database
+hashes are verified without replaying the 413,750,130 rows), and it reconciles
+the failed-request lines with the engine's data-monitor count.
 The decision register is resolved (`unresolvedDecisionCount: 0`) and bound to
 the contract. The first untouched full-history strategy baseline has **not**
 been run and parameter optimization has **not** started. The continuous

@@ -7,7 +7,7 @@
   "baselineConfigurationFrozen": true,
   "unresolvedDecisionCount": 0,
   "frozenBaselineContract": "config/baseline-contract.json",
-  "frozenBaselineContractSha256": "bcef6c6b22c7bf7dbd660b5aa4f2ba5274950332ad601b155a9474b691fb05f4",
+  "frozenBaselineContractSha256": "2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c",
   "classification": {
     "A": "explicitly approved/frozen by the authoritative project contract",
     "B": "explicitly defined strategy default that is valid for the authoritative baseline",
@@ -555,8 +555,8 @@
       "value": true,
       "runParameter": "-AllowMissingData (run-backtest.ps1; present or absent)",
       "source": "approved baseline decision (2026-09-27), frozen in config/baseline-contract.json and recorded in BASELINE_CONFIGURATION_FREEZE_AUDIT.md section 10",
-      "authority": "the approved baseline decision: -AllowMissingData is enabled, but every failed request must be classified against the frozen contract and the qualified continuous tree by scripts/Test-SingleAnchorBaselineFailedData.ps1, and any unexpected missing qualified partition invalidates the baseline. -AllowEngineErrors remains prohibited.",
-      "policy": "enabled with mandatory classification: expected source-absent calendar days inside the frozen window, the enumerated known auxiliary benchmark path, and source-absent days after the actually processed horizon of a run ended by an approved run-ending condition (for example terminal stop-out) may be accepted; a failed request for a partition carrying qualified rows, an out-of-window or unknown request, or a source-absent day within the processed horizon that was not requested at all invalidates the baseline",
+      "authority": "the approved baseline decision: -AllowMissingData is enabled, but every failed request must be classified against the frozen contract, the run's persisted -RunEvidence invocation and the qualified continuous tree by scripts/Test-SingleAnchorBaselineFailedData.ps1; the classifier refuses a contract not pinned by the register, a run whose resolved invocation differs from the contract, a tree that no longer matches its composition manifest, and any run ending other than normal completion or AccountStopOut. -AllowEngineErrors remains prohibited.",
+      "policy": "enabled with mandatory classification: expected source-absent calendar days inside the frozen window, the enumerated known auxiliary benchmark path, and source-absent days after the actually processed horizon of an AccountStopOut run (the intended modeled terminal survival outcome) may be accepted; a failed request for a partition carrying qualified rows, an out-of-window or unknown request, a source-absent day within the processed horizon that was not requested at all, or a failed-request accounting mismatch between the engine data-monitor count and the failed-request lines invalidates the baseline",
       "whyRequired": "Under the always-open XAUUSD/dukascopy/Cfd identity LEAN requests a partition for every calendar day. The qualified continuous record counts 406 source-absent calendar days plus 1 unrelated missing benchmark file (cfd/dukascopy/hour/xauusd.zip) as failed data requests. Without -AllowMissingData the helper turns those into exit code 3, so the authoritative procedure must define how those already-classified, expected failures are handled. It must not hide a failed request for a partition that carries rows, and it must not weaken the missing-data guard.",
       "currentCodeDefault": "run-backtest.ps1 fails with exit code 3 when any local data request fails; -AllowMissingData downgrades that to a warning. The PR 1 qualification driver ran the probe with -AllowMissingData and classified every failed request in the qualification record.",
       "fixtureExampleValues": [
