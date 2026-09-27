@@ -112,7 +112,11 @@ freeze and the first full-history baseline remain unimplemented.
 Implementation note (baseline configuration freeze audit record): the complete
 baseline freeze required by section 6 was audited on 2026-09-27 against the
 current implementation, the approved contracts and the tracked PR #13
-continuous-history evidence. The audit inventories every baseline-relevant
+continuous-history evidence. The audit is complete and merged through GitHub
+PR #14 (reviewed head `8811d20e3d6c701842c5086beee0f141b7886dfe`, merge commit
+`261912d6cbda495c90ea68f578d3952fe3bba699`), and its register carries 65 fields
+(49 class A, 8 class B, 8 class D) plus the fixture/example values. The audit
+inventories every baseline-relevant
 value and classifies it as approved (A), an explicitly defined strategy default
 valid for the baseline (B), a fixture/example value (C) or unresolved (D), in
 `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` and the machine-readable

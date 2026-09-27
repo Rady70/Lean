@@ -649,11 +649,14 @@ against the original sweep and relocation fixtures by
 `python\tests\test_continuous_evidence.py`. The composition and the continuous
 run outputs stay outside Git.
 
-The baseline configuration freeze has since been audited but is **blocked** on
-unresolved baseline values and one run-procedure decision
-([BASELINE_CONFIGURATION_FREEZE_AUDIT.md](../../BASELINE_CONFIGURATION_FREEZE_AUDIT.md);
-baseline configuration frozen: no); the first untouched full-history baseline
-has not been run and parameter research has not started.
+The baseline configuration decision audit is complete and merged through
+GitHub PR #14 (reviewed head
+`8811d20e3d6c701842c5086beee0f141b7886dfe`, merge commit
+`261912d6cbda495c90ea68f578d3952fe3bba699`;
+[BASELINE_CONFIGURATION_FREEZE_AUDIT.md](../../BASELINE_CONFIGURATION_FREEZE_AUDIT.md)),
+while the baseline configuration itself is **blocked** on the audit's eight
+unresolved decisions (baseline configuration frozen: no); the first untouched
+full-history baseline has not been run and parameter research has not started.
 
 ## 11. Provenance of adapted retired code
 
@@ -758,7 +761,9 @@ material only; nothing here is a runtime dependency on them.
   PR #11 (section 10 of the same note). The composition of the already-qualified
   partitions into one continuous research data folder and its continuous replay
   qualification are recorded in section 10 of this README; the baseline
-  configuration freeze and the first full-history baseline remain later steps. PR 3 uses
+  configuration decision audit is complete and merged through GitHub PR #14,
+  while the baseline configuration freeze and the first full-history baseline
+  remain later steps. PR 3 uses
   the approved USD-denominated XM-style research account, so it does **not**
   require an EURUSD conversion dataset or any additional FX-conversion
   qualification; the qualified XAUUSD history remains the market-data input for

@@ -550,15 +550,21 @@ the complete history reproduced the qualified 413,750,130 quotes, the qualified
 boundaries and every per-partition count and semantic digest; after that
 verification the redundant complete 90-folder native representations were
 retired, so exactly one complete derived native representation remains. The
-canonical raw source is unchanged. The baseline configuration freeze has since
-been audited ([BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md),
-with the machine-readable [`config/baseline-decision-audit.json`](config/baseline-decision-audit.json)):
-the approved data identity and the already-approved strategy, execution,
-research-account and margin values are inventoried, and the freeze is
-**blocked** on explicit decisions for `StepPercent`, `BaseLot`,
-`ProjectedSpread`, `Slippage`, `CommissionBuffer`, `InitialBalance`, margin
-enablement and the helper failed-data-request policy; no full-history strategy
-baseline has been run. The continuous
+canonical raw source is unchanged. The baseline configuration decision audit is
+complete and merged through GitHub PR #14 (reviewed head
+`8811d20e3d6c701842c5086beee0f141b7886dfe`, merge commit
+`261912d6cbda495c90ea68f578d3952fe3bba699`): see
+[BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md)
+with the machine-readable
+[`config/baseline-decision-audit.json`](config/baseline-decision-audit.json).
+The audit inventories the approved data identity and the already-approved
+strategy, execution, research-account and margin values as 65 fields
+(49 class A, 8 class B, 8 class D) plus the inventoried fixture/example values,
+and it remains explicitly non-runnable and is not the frozen baseline
+configuration. The freeze itself is **blocked** on explicit decisions for
+`StepPercent`, `BaseLot`, `ProjectedSpread`, `Slippage`, `CommissionBuffer`,
+`InitialBalance`, margin enablement and the helper failed-data-request policy;
+no full-history strategy baseline has been run. The continuous
 composition and its replay re-verification are implemented and merged through
 GitHub PR #13. **PR 2** (C# research account and bounded analytics) is implemented
 and merged (GitHub PR #9):
@@ -600,8 +606,9 @@ added results fields are additive. The user's live account is EUR-denominated; h
 conversion is deliberately out of scope, so the USD research result must not be
 presented as an exact reconstruction of the live EUR monetary path. The
 full-history composition is complete (section 10 of the tools README); the
-baseline configuration freeze is audited but **blocked** on the decisions
-listed in
+baseline configuration decision audit is complete and merged through GitHub
+PR #14, while the baseline configuration itself remains **blocked** on the
+decisions listed in
 [BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md)
 (baseline configuration frozen: no), and the first full-history baseline has
 not been run.

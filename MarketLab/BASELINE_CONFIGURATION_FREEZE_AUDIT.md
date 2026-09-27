@@ -2,24 +2,30 @@
 
 Audit date: 2026-09-27 (Windows, .NET SDK 10.0.401 environment as in the
 previous records). Audit base revision:
-`bdf3c29a4e1b20be4110a6c9e75ecff9e00856f3` (current `master`, the PR #13
-finalization commit).
+`bdf3c29a4e1b20be4110a6c9e75ecff9e00856f3` (the PR #13 finalization commit).
+
+Finalization record: the audit is complete and merged through GitHub PR #14
+(reviewed head `8811d20e3d6c701842c5086beee0f141b7886dfe`, merge commit
+`261912d6cbda495c90ea68f578d3952fe3bba699`).
 
 Project state after this audit:
 
 ```text
-continuous history qualification:      complete (PR #13; 90 months, 2,332 partitions,
-                                        413,750,130 qualified quotes)
-baseline configuration freeze:          BLOCKED - not complete
-first untouched full-history baseline:  not run
-parameter optimization:                 not started
+continuous historical-data qualification: complete
+continuous native-history composition/replay qualification: complete (PR #13)
+baseline configuration decision audit: complete and merged through PR #14
+baseline configuration frozen: no (blocked on the eight decisions below)
+first untouched full-history strategy baseline: not run
+parameter optimization: not started
 ```
 
 This document records the baseline-decision audit required before the first
 authoritative continuous full-history SingleAnchor run. It classifies every
 baseline-relevant value into the project's four audit classes, binds the
 approved portion to the already-qualified data identity, and exposes every
-value that still needs an explicit decision.
+value that still needs an explicit decision. The machine-readable register
+inventories 65 baseline fields (49 class A, 8 class B, 8 class D) plus 21
+fixture/example values (class C).
 
 It is **not** the frozen baseline contract. No complete, runnable baseline
 configuration exists yet: seven baseline-critical values and one run-procedure

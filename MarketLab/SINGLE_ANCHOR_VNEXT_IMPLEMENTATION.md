@@ -1325,11 +1325,17 @@ CFD-leverage/hedging margin documentation, reviewed on 2026-09-26:
 - https://www.xm.com/assets/pdf/new/terms/XMGlobal-Client-Agreement-Terms-and-Conditions-of-Business.pdf
 - https://www.metatrader5.com/en/terminal/help/trading_advanced/margin_forex
 
-## 11. Baseline configuration freeze audit (2026-09-27): blocked
+## 11. Baseline configuration freeze audit (2026-09-27): merged; freeze blocked
 
 The baseline freeze required before the first full-history baseline was audited
 against the current implementation, the approved contracts and the tracked
-PR #13 continuous-history evidence. The human-auditable record is
+PR #13 continuous-history evidence. The audit is complete and merged through
+GitHub PR #14 (reviewed head
+`8811d20e3d6c701842c5086beee0f141b7886dfe`, merge commit
+`261912d6cbda495c90ea68f578d3952fe3bba699`); its register carries 65 fields
+(49 class A, 8 class B, 8 class D) plus the fixture/example values, and it
+remains explicitly non-runnable and is not the frozen baseline configuration.
+The human-auditable record is
 [BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md),
 the machine-readable register is
 [config/baseline-decision-audit.json](config/baseline-decision-audit.json) and
