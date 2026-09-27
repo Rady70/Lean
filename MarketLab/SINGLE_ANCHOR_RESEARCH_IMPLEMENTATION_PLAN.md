@@ -58,9 +58,9 @@ reproduce the pre-PR-3 path (verified by the strategy-only projection hash,
 including a rejection-bearing scenario, and the full unit/helper suites; see the
 validation record in SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10). The USD
 denomination is a research simplification, not a reproduction of the user's EUR
-live account. PR 3 is merged through GitHub PR #11; the composed full-history
+live account. PR 3 is merged through GitHub PR #11; at that point the composed full-history
 data folder, the complete baseline freeze and the first full-history baseline
-remain unimplemented.
+remained unimplemented (later records below).
 
 Implementation note (historical-data ownership record): the qualified
 Dukascopy/JForex XAUUSD source history now has exactly one canonical copy at
@@ -80,9 +80,9 @@ strategy, conversion or qualification-rule change. Evidence:
 `tools/historical-data/README.md` section 9 and
 `tools/historical-data/fixtures/xauusd-history-relocation-evidence.json`. The
 milestone is implemented and merged through GitHub PR #12 (merge commit
-`81dcd26b504f5daa2da1b4392765bd747295562c`). The composed full-history data
+`81dcd26b504f5daa2da1b4392765bd747295562c`). At that point the composed full-history data
 folder, the complete baseline freeze and the first full-history baseline
-remain unimplemented.
+remained unimplemented (later records below).
 
 Implementation note (continuous native-history record): the already-qualified
 daily native partitions of the 90 months are composed into one continuous LEAN
@@ -106,40 +106,66 @@ source is unchanged. Evidence: `tools/historical-data/README.md` section 10
 and `tools/historical-data/fixtures/continuous-history-evidence.json`. The
 milestone is implemented and merged through GitHub PR #13 (merge commit
 `b60e2b344cac1b82a7c7c1297c458b59e48ba6c7`). No
-strategy, conversion or qualification-rule change. The complete baseline
-freeze and the first full-history baseline remain unimplemented.
+strategy, conversion or qualification-rule change. At that point the complete
+baseline freeze and the first full-history baseline remained unimplemented (the
+freeze record below).
 
-Implementation note (baseline configuration freeze audit record): the complete
+Implementation note (baseline configuration freeze record): the complete
 baseline freeze required by section 6 was audited on 2026-09-27 against the
 current implementation, the approved contracts and the tracked PR #13
 continuous-history evidence. The audit is complete and merged through GitHub
 PR #14 (reviewed head `8811d20e3d6c701842c5086beee0f141b7886dfe`, merge commit
-`261912d6cbda495c90ea68f578d3952fe3bba699`), and its register carries 65 fields
-(49 class A, 8 class B, 8 class D) plus the fixture/example values. The audit
-inventories every baseline-relevant
-value and classifies it as approved (A), an explicitly defined strategy default
-valid for the baseline (B), a fixture/example value (C) or unresolved (D), in
+`261912d6cbda495c90ea68f578d3952fe3bba699`); its register carries 65 fields
+(49 class A, 8 class B, 8 class D at audit time) plus the fixture/example
+values, inventories every baseline-relevant value, classifies it as approved
+(A), an explicitly defined strategy default valid for the baseline (B), a
+fixture/example value (C) or unresolved (D), and binds the approved data
+identity to the continuous folder, in
 `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` and the machine-readable
-`config/baseline-decision-audit.json`, with a Windows-local NUnit drift check
-(`tests/SingleAnchor/BaselineDecisionAuditTests.cs`). The approved portion
-includes the qualified data identity (XAUUSD/dukascopy/Cfd; the continuous
-folder at `E:\MarketLab\data\lean\xauusd-dukascopy` with its 90 months, 2,332
-partitions, 413,750,130 quotes and recorded digests; the required
-source-derived session map
-`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`; the UTC/UTC
-always-open identity; 2019-01-01..2026-06-30), NormalTradeCount = 4,
-HardBreakevenCeilingPercent = 4.478, the volume profile 0.01/0.01/50,
-PointValuePerLot = 100, CommissionPerLot = 0, zero swaps, the USD research
-account and the PR #3 margin contract (100 oz/lot, fixed 1:500, 50%/20%,
-matched-hedge zero margin, uncovered-volume formula, terminal negative
-equity). The freeze is **blocked**: no authoritative baseline values exist yet
-for StepPercent, BaseLot, ProjectedSpread, Slippage, CommissionBuffer,
-InitialBalance and margin enablement, and the helper failed-data-request policy
-for the always-open tree's expected source-absent days is also undecided;
-fixture/example values (0.2, 0.01, 0.5, 100000/1000000/7/12, hard-BE 0.1,
-MaximumVolume 100, ...) were not promoted into the baseline. Section 6's
-checklist is not met, the baseline is not frozen, the first untouched
-full-history baseline was not run and parameter optimization has not started.
+`config/baseline-decision-audit.json`. The eight class-D decisions PR #14
+exposed were then explicitly approved and the freeze is **complete** against
+section 6:
+
+- the canonical, complete, machine-readable configuration is
+  `config/baseline-contract.json`, with the human-auditable rendering
+  `BASELINE_CONTRACT.md`; baseline contract identity (LF-normalized SHA-256)
+  `bcef6c6b22c7bf7dbd660b5aa4f2ba5274950332ad601b155a9474b691fb05f4`;
+- the approved values include the qualified data identity
+  (XAUUSD/dukascopy/Cfd; the continuous folder at
+  `E:\MarketLab\data\lean\xauusd-dukascopy` with its 90 months, 2,332
+  partitions, 413,750,130 quotes and recorded digests; the required
+  source-derived session map
+  `33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`; the
+  UTC/UTC always-open identity; 2019-01-01..2026-06-30), StepPercent = 0.25,
+  BaseLot = 0.10, NormalTradeCount = 4, HardBreakevenCeilingPercent = 4.478,
+  InitialBalance = 20,000 USD, ProjectedSpread = 0.50 (a fixed hard-BE
+  projection assumption, not an empirical optimum), Slippage = 0,
+  CommissionBuffer = 0, margin enablement = true, the volume profile
+  0.01/0.01/50, PointValuePerLot = 100, CommissionPerLot = 0, zero swaps, the
+  USD research account and the PR #3 margin contract (100 oz/lot, fixed 1:500,
+  50%/20%, matched-hedge zero margin, uncovered-volume formula, terminal
+  negative equity);
+- the former fixture/example values (0.2, 0.01, the example 0.5, 100000 and
+  the stress amounts, hard-BE 0.1, MaximumVolume 100, ...) were not promoted;
+  where an approved value happens to equal a former fixture/default value
+  (ProjectedSpread 0.50, Slippage 0, CommissionBuffer 0, marginEnabled true),
+  the authority is the approved baseline decision and the register records
+  that explicitly;
+- the helper failed-data policy is `-AllowMissingData` enabled **with** a
+  mandatory post-run classification of every failed request
+  (`scripts/Test-SingleAnchorBaselineFailedData.ps1`); an unexpected missing
+  qualified partition invalidates the baseline, and `-AllowEngineErrors`
+  remains prohibited;
+- the Windows-local checks are
+  `tests/SingleAnchor/BaselineDecisionAuditTests.cs`,
+  `tests/SingleAnchor/BaselineContractTests.cs` and
+  `tests/Test-SingleAnchorBaselineFailedData.ps1`; the exact future invocation
+  is rendered by `scripts/Get-SingleAnchorBaselineInvocation.ps1` and recorded
+  in `BASELINE_CONTRACT.md`.
+
+The first untouched full-history baseline was **not** run by the freeze and
+parameter optimization has **not** started; the next roadmap step is the single
+authoritative baseline run under the reviewed and merged contract.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy

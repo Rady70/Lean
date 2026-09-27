@@ -98,7 +98,9 @@ above exercises the whole path (section 7). With any other data folder set
 `single-anchor-start-date` / `single-anchor-end-date` to its coverage; a
 missing day is reported by the helper as exit code 3. Missing required
 parameters end the run with LEAN exit code 1 and the validation message in
-`log.txt`.
+`log.txt`. That example is a fixture run, not the authoritative baseline: the
+frozen baseline values and the exact authoritative invocation are in
+[BASELINE_CONTRACT.md](BASELINE_CONTRACT.md).
 
 ## 3. Parameters
 
@@ -126,6 +128,11 @@ culture; `true`/`false` for booleans.
 | `single-anchor-start-date`, `-end-date`, `-cash` | host run settings (`cash` only satisfies LEAN's setup; the strategy sizes in lots). `-cash` is also the research account's `InitialBalance` | `2014-05-02`, `2014-05-14` (the shipped sample), 100000 |
 | `single-anchor-research-account` | PR 2 research account and bounded analytics (section 9); `false` runs the pre-PR-2 strategy path with no derived account state | true |
 | `single-anchor-margin-enabled` | PR 3 target-account margin survival (section 10) on the same research account; `false` runs the pre-PR-3 strategy path exactly. Requires `single-anchor-research-account=true`, `single-anchor-symbol=XAUUSD`, `single-anchor-security-type=Cfd` and the 100-per-lot point value; the frozen account contract (100 oz/lot, fixed 1:500, Margin Call 50%, Stop-out 20%) is instantiated by the host and is not a configurable generic broker model | false |
+
+The defaults in this table are host/fixture defaults. The authoritative baseline
+does not rely on any of them: the frozen contract passes all 30 parameters
+explicitly, including the values whose host default happens to match, and the
+exact invocation is recorded in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md).
 
 ## 4. Implementation choices and constraints
 
@@ -344,8 +351,8 @@ culture; `true`/`false` for booleans.
   PR 2 is implemented and merged (section 9); PR 3 is implemented and merged
   through GitHub PR #11 (section 10); the composed continuous full-history data
   folder and its delivery re-proof are implemented (section 10.5 and tools
-  README section 10). The complete baseline freeze and the first full-history
-  baseline remain later steps.
+  README section 10). At that point the complete baseline freeze and the first
+  full-history baseline remained later steps (the freeze record is section 11).
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants
   (a partial tail fill must not be able to break the hard-BE requirement; a
@@ -1292,8 +1299,9 @@ difference.
 
 The USD denomination is an approved modeling simplification and must remain
 explicit in result interpretation; do not relabel a USD run as the user's EUR
-account. `InitialBalance` stays configurable until the complete baseline is
-frozen. Out of scope and intentionally absent: EURUSD history and USD/EUR
+account. `InitialBalance` is frozen at 20,000 USD by the completed baseline
+configuration freeze (section 11) and stays configurable only for separately
+identified research configurations. Out of scope and intentionally absent: EURUSD history and USD/EUR
 conversion, dynamic/equity-based leverage tiers, multi-currency/multi-broker or
 multi-asset margin, LEAN native orders/portfolio margin, partial or pending
 fills, latency or order-book simulation, post-stop-out liquidation sequencing,
@@ -1312,9 +1320,9 @@ uninterrupted LEAN replay reproduced the qualified 413,750,130 quotes,
 boundaries and per-partition digests, and the redundant complete 90-folder
 native representations were retired
 (`tools/historical-data/README.md` section 10). The milestone is implemented
-and merged through GitHub PR #13. The next roadmap step is
-freezing the complete baseline configuration (including the margin values
-above) and running the first untouched full-history baseline.
+and merged through GitHub PR #13. The baseline configuration freeze is complete
+(section 11); the next roadmap step is the single first untouched full-history
+baseline run under the frozen contract.
 
 Evidence used for the frozen research contract: the user-supplied MT5 XAUUSD
 symbol specification (XMGlobal-MT5 8, Ultra Low Standard), XM's published Gold
@@ -1325,37 +1333,51 @@ CFD-leverage/hedging margin documentation, reviewed on 2026-09-26:
 - https://www.xm.com/assets/pdf/new/terms/XMGlobal-Client-Agreement-Terms-and-Conditions-of-Business.pdf
 - https://www.metatrader5.com/en/terminal/help/trading_advanced/margin_forex
 
-## 11. Baseline configuration freeze audit (2026-09-27): merged; freeze blocked
+## 11. Baseline configuration freeze (2026-09-27): complete
 
 The baseline freeze required before the first full-history baseline was audited
 against the current implementation, the approved contracts and the tracked
 PR #13 continuous-history evidence. The audit is complete and merged through
 GitHub PR #14 (reviewed head
 `8811d20e3d6c701842c5086beee0f141b7886dfe`, merge commit
-`261912d6cbda495c90ea68f578d3952fe3bba699`); its register carries 65 fields
-(49 class A, 8 class B, 8 class D) plus the fixture/example values, and it
-remains explicitly non-runnable and is not the frozen baseline configuration.
-The human-auditable record is
-[BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md),
-the machine-readable register is
-[config/baseline-decision-audit.json](config/baseline-decision-audit.json) and
-the Windows-local drift check is
-[tests/SingleAnchor/BaselineDecisionAuditTests.cs](tests/SingleAnchor/BaselineDecisionAuditTests.cs).
-The audit inventories every baseline-relevant value, binds the approved data
-identity to the continuous folder and classifies the approved values (the
-qualified `XAUUSD/dukascopy/Cfd` identity and period, the required session map,
-NormalTradeCount 4, HardBreakevenCeilingPercent 4.478, the 0.01/0.01/50 volume
-profile, PointValuePerLot 100, CommissionPerLot 0, zero swaps, the USD research
-account and the PR #3 margin contract) separately from the fixture/example
-values.
+`261912d6cbda495c90ea68f578d3952fe3bba699`); its register carried 65 fields
+(49 class A, 8 class B, 8 class D at audit time) plus the fixture/example
+values. The human-auditable decision record is
+[BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md)
+and the machine-readable register is
+[config/baseline-decision-audit.json](config/baseline-decision-audit.json).
 
-The freeze is **blocked** and the project state is
-`baseline configuration frozen: no`: StepPercent, BaseLot, ProjectedSpread,
-Slippage, CommissionBuffer, InitialBalance, margin enablement and the helper
-failed-data-request policy have no approved baseline values, and the
-fixture/stress values (0.2, 0.01, 0.5, 100000/1000000/7/12, hard-BE 0.1,
-MaximumVolume 100, ...) were not promoted. The forward-looking sentence at the
-end of section 10.5 is superseded: the next roadmap action is obtaining those
-explicit decisions, not running the baseline. No strategy behavior,
-account/margin contract, data or qualification semantics changed and no
-full-history strategy baseline was run.
+The eight class-D decisions the audit exposed (StepPercent, BaseLot,
+ProjectedSpread, Slippage, CommissionBuffer, InitialBalance, margin enablement
+and the helper failed-data-request policy) were then explicitly approved and
+the freeze is **complete**: the canonical, complete, immutable configuration is
+[config/baseline-contract.json](config/baseline-contract.json) with its
+human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), and
+baseline contract identity (LF-normalized SHA-256)
+`bcef6c6b22c7bf7dbd660b5aa4f2ba5274950332ad601b155a9474b691fb05f4`. The
+approved values are StepPercent 0.25, BaseLot 0.10, InitialBalance 20,000 USD,
+ProjectedSpread 0.50 (a fixed hard-BE projection assumption, not an empirical
+optimum), Slippage 0 and CommissionBuffer 0 (explicit baseline decisions even
+though they equal the implementation defaults), margin enabled with the
+unchanged PR #3 margin/survival contract, and `-AllowMissingData` enabled with
+a mandatory post-run classification of every failed request
+([scripts/Test-SingleAnchorBaselineFailedData.ps1](scripts/Test-SingleAnchorBaselineFailedData.ps1));
+`-AllowEngineErrors` remains prohibited. The former fixture/stress values
+(0.2, 0.01, 0.5, 100000/1000000/7/12, hard-BE 0.1, MaximumVolume 100, ...)
+were not promoted as the authority; where an approved value happens to equal a
+former fixture/default value, the register records that the authority is the
+approved baseline decision.
+
+The Windows-local checks are
+[tests/SingleAnchor/BaselineDecisionAuditTests.cs](tests/SingleAnchor/BaselineDecisionAuditTests.cs)
+(resolved register, implementation defaults, margin contract, PR #13 evidence),
+[tests/SingleAnchor/BaselineContractTests.cs](tests/SingleAnchor/BaselineContractTests.cs)
+(contract completeness, frozen values, identity, exact invocation, data/margin
+identity, failed-data policy) and
+[tests/Test-SingleAnchorBaselineFailedData.ps1](tests/Test-SingleAnchorBaselineFailedData.ps1)
+(classifier edge cases); the exact future invocation is rendered by
+[scripts/Get-SingleAnchorBaselineInvocation.ps1](scripts/Get-SingleAnchorBaselineInvocation.ps1)
+and recorded in the human-auditable contract. No strategy behavior,
+account/margin contract, data or qualification semantics changed, the first
+untouched full-history strategy baseline was not run and parameter
+optimization has not started.

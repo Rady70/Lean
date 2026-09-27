@@ -545,8 +545,9 @@ converted native partitions and the run outputs stay outside Git under
 historical value, identity, timestamp or conversion rule changed. The
 composition of the partitioned folders into one continuous research data
 folder and its continuous replay qualification are recorded in section 10;
-the baseline configuration freeze and the first full-history baseline remain
-later steps.
+at that point the baseline configuration freeze and the first full-history
+baseline remained later steps (the freeze is now complete; see the end of
+section 10).
 
 ## 10. Continuous full-history native history (2019-01..2026-06; implemented and merged through GitHub PR #13)
 
@@ -654,9 +655,14 @@ GitHub PR #14 (reviewed head
 `8811d20e3d6c701842c5086beee0f141b7886dfe`, merge commit
 `261912d6cbda495c90ea68f578d3952fe3bba699`;
 [BASELINE_CONFIGURATION_FREEZE_AUDIT.md](../../BASELINE_CONFIGURATION_FREEZE_AUDIT.md)),
-while the baseline configuration itself is **blocked** on the audit's eight
-unresolved decisions (baseline configuration frozen: no); the first untouched
-full-history baseline has not been run and parameter research has not started.
+and the eight decisions it exposed were explicitly approved: the baseline
+configuration freeze is complete, with the canonical immutable configuration
+in [`config/baseline-contract.json`](../../config/baseline-contract.json) and
+its human-auditable rendering in
+[BASELINE_CONTRACT.md](../../BASELINE_CONTRACT.md) (contract identity
+`bcef6c6b22c7bf7dbd660b5aa4f2ba5274950332ad601b155a9474b691fb05f4`). The first
+untouched full-history baseline has **not** been run and parameter research has
+**not** started.
 
 ## 11. Provenance of adapted retired code
 
@@ -761,9 +767,10 @@ material only; nothing here is a runtime dependency on them.
   PR #11 (section 10 of the same note). The composition of the already-qualified
   partitions into one continuous research data folder and its continuous replay
   qualification are recorded in section 10 of this README; the baseline
-  configuration decision audit is complete and merged through GitHub PR #14,
-  while the baseline configuration freeze and the first full-history baseline
-  remain later steps. PR 3 uses
+  configuration decision audit is complete and merged through GitHub PR #14;
+  at that point the baseline configuration freeze and the first full-history
+  baseline remained later steps (the freeze is now complete; see the end of
+  section 10). PR 3 uses
   the approved USD-denominated XM-style research account, so it does **not**
   require an EURUSD conversion dataset or any additional FX-conversion
   qualification; the qualified XAUUSD history remains the market-data input for
