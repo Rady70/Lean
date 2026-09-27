@@ -570,7 +570,7 @@ configuration is
 [`config/baseline-contract.json`](config/baseline-contract.json) (human-auditable
 rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)), baseline contract
 identity (LF-normalized SHA-256)
-`59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4`. The
+`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`. The
 contract freezes `StepPercent = 0.25`, `BaseLot = 0.10`,
 `InitialBalance = 20,000 USD`, `ProjectedSpread = 0.50` (an approved baseline
 projection assumption, not an empirical optimum), `Slippage = 0` and
@@ -579,21 +579,26 @@ the implementation defaults), margin enabled with the approved PR #3
 margin/survival model, and the `-AllowMissingData` policy with a mandatory
 post-run classification of every failed data request
 ([`scripts\Test-SingleAnchorBaselineFailedData.ps1`](scripts/Test-SingleAnchorBaselineFailedData.ps1)).
-The authoritative run also passes `-RunEvidence` with
-`-BaselineContract`/`-BaselineRegister`: the helper persists the actual
+The authoritative procedure runs the classifier's `-Preflight` stage first: it
+verifies the contract/register pin, the clean Git checkout and the complete
+qualified-tree identity before LEAN launches, so pre-run-knowable drift cannot
+consume the one-off run. The run then passes `-RunEvidence` with
+`-BaselineContract`/`-BaselineRegister`/`-ExpectedTerminalException`: the
+helper refuses a dirty tree or an unpinned contract and persists the actual
 resolved invocation, the verified contract hash and register pin, the Git
 HEAD/clean state and the qualified runtime binary hashes before LEAN launches,
-and a post-run outcome record (LEAN/helper exit codes, engine-error check and
-count, data-monitor result, runtime re-hash) after it. The classifier refuses a
-contract whose hash is not the decision register's frozen pin, a run whose
-pre-run identity or resolved invocation differs from the contract, a dirty
-working tree, a changed runtime binary, a non-clean completed run or an
-`AccountStopOut` that is not exactly the modeled terminal shape, and a
-continuous tree that no longer matches its composition manifest (all 2,332
-partition hashes, the auxiliary database hashes and the manifest's anchor to
-the replay qualification record are verified without replaying the
-413,750,130 rows); it reconciles the failed-request lines with the engine's
-data-monitor count.
+plus a post-run outcome record (LEAN/helper exit codes, the always-run
+engine-error audit with only the declared terminal exception separated,
+data-monitor result, runtime re-hash). The classifier refuses a contract whose
+hash is not the decision register's frozen pin, a run whose pre-run identity
+or resolved invocation differs from the contract, a dirty working tree, a
+changed runtime binary, a non-clean completed run, an `AccountStopOut` that is
+not exactly the modeled terminal shape or that carries any unrelated engine
+`ERROR::` line, and a continuous tree that no longer matches its composition
+manifest (all 2,332 partition hashes, the auxiliary database hashes and the
+manifest's anchor to the replay qualification record are verified without
+replaying the 413,750,130 rows); it reconciles the failed-request lines with
+the engine's data-monitor count.
 The decision register is resolved (`unresolvedDecisionCount: 0`) and bound to
 the contract. The first untouched full-history strategy baseline has **not**
 been run and parameter optimization has **not** started. The continuous

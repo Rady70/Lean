@@ -1354,7 +1354,7 @@ the freeze is **complete**: the canonical, complete, immutable configuration is
 [config/baseline-contract.json](config/baseline-contract.json) with its
 human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), and
 baseline contract identity (LF-normalized SHA-256)
-`59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4`. The
+`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`. The
 approved values are StepPercent 0.25, BaseLot 0.10, InitialBalance 20,000 USD,
 ProjectedSpread 0.50 (a fixed hard-BE projection assumption, not an empirical
 optimum), Slippage 0 and CommissionBuffer 0 (explicit baseline decisions even
@@ -1368,17 +1368,21 @@ were not promoted as the authority; where an approved value happens to equal a
 former fixture/default value, the register records that the authority is the
 approved baseline decision.
 
-The authoritative run is procedurally bound to the contract: the helper is
-launched with `-RunEvidence -BaselineContract ... -BaselineRegister ...`,
-which verifies the contract hash equals the register pin and persists the
-contract identity, the actual resolved invocation, the Git HEAD/clean state
-and the qualified runtime binary hashes
-(`marketlab-run-invocation.json`) into the run directory before LEAN
-launches, and the helper's own post-run verdict
-(`marketlab-run-outcome.json`: LEAN/helper exit codes, engine-error check and
-count, data-monitor result, runtime re-hash) after it; the classifier refuses
-to qualify a run without the evidence or with a different resolved invocation,
-identity, repository state or runtime. The classifier additionally verifies
+The authoritative run is procedurally bound to the contract: before LEAN is
+launched the classifier's `-Preflight` stage verifies the contract/register
+pin, the clean Git checkout and the complete qualified-tree identity; then the
+helper is launched with
+`-RunEvidence -BaselineContract ... -BaselineRegister ... -ExpectedTerminalException ...`,
+which refuses a dirty tree or an unpinned contract and persists the contract
+identity, the actual resolved invocation, the Git HEAD/clean state and the
+qualified runtime binary hashes (`marketlab-run-invocation.json`) before LEAN
+launches, and its own post-run verdict (`marketlab-run-outcome.json`:
+LEAN/helper exit codes, the always-run engine-error audit with only the
+declared terminal exception separated, data-monitor result, runtime re-hash)
+after it; the classifier refuses to qualify a run without the evidence or
+with a different resolved invocation, identity, repository state or runtime,
+or with an unrelated engine `ERROR::` line even on the `AccountStopOut`
+terminal path. The classifier additionally verifies
 that the continuous tree still matches its composition manifest (all 2,332
 partition hashes, the partition name set, the per-day semantic map and the
 market-hours/symbol-properties/session-map hashes  -  without replaying the

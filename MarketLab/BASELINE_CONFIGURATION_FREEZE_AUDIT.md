@@ -38,7 +38,7 @@ fixture/example values (class C).
 The freeze is complete. The canonical, complete, runnable configuration is
 [`config/baseline-contract.json`](config/baseline-contract.json) with contract
 identity (LF-normalized SHA-256)
-`59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4`; the
+`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`; the
 human-auditable contract is [`BASELINE_CONTRACT.md`](BASELINE_CONTRACT.md).
 The machine-readable decision register at
 [`config/baseline-decision-audit.json`](config/baseline-decision-audit.json)
@@ -399,10 +399,14 @@ that the authority is the approved decision, not the look-alike value.
   qualification record, verifies the pre-run evidence's contract hash/register
   pin/Git HEAD/clean tree/runtime binary hashes, and requires the post-run
   outcome record to show a clean completed run (or the exact `AccountStopOut`
-  terminal shape), so a run without matching evidence or with engine errors
-  can never receive qualification EXPECTED. `-AllowEngineErrors` remains
-  prohibited. The flag is also used by the qualification driver, but its
-  authority is the approved baseline decision, not that driver.
+  terminal shape with only the declared terminal exception separated and zero
+  unrelated engine `ERROR::` lines), so a run without matching evidence or
+  with engine errors can never receive qualification EXPECTED. The classifier's
+  `-Preflight` mode runs the same pre-run-knowable checks before LEAN starts,
+  so an accidental data/checkout drift cannot consume the one-off run.
+  `-AllowEngineErrors` remains prohibited. The flag is also used by the
+  qualification driver, but its authority is the approved baseline decision,
+  not that driver.
 
 ## 11. Additional effective inputs and host settings discovered
 
@@ -434,15 +438,18 @@ accounted for:
   `-DryRun`) cannot change the strategy configuration, and the engine/binary
   identity is covered by the run-evidence requirements above.
 - Run-evidence requirements for the eventual authoritative run: the run must be
-  launched from the reviewed and merged freeze commit and must persist, inside
-  its run directory, the pre-run invocation evidence written by
-  `run-backtest.ps1 -RunEvidence -BaselineContract ... -BaselineRegister ...`
+  launched from the reviewed and merged freeze commit only after the
+  classifier's `-Preflight` stage has passed, and must persist that preflight
+  record alongside the run directory evidence: the pre-run invocation evidence
+  written by
+  `run-backtest.ps1 -RunEvidence -BaselineContract ... -BaselineRegister ... -ExpectedTerminalException ...`
   (resolved absolute inputs, exact parameter pairs, allow flags, launcher argv,
   the config/algorithm hashes, the contract SHA-256 and register pin verified
   equal, the Git HEAD and dirty state, and the qualified runtime binary
   hashes), the post-run outcome evidence (LEAN and helper exit codes, the
-  engine-error check and count, the data-monitor result and the runtime
-  re-hash) and the post-run classification record that binds the run directory
+  always-run engine-error audit with the expected-terminal-exception lines
+  separated, the data-monitor result and the runtime re-hash) and the
+  post-run classification record that binds the run directory
   to the contract identity, the verified tree and its replay qualification
   record. The run audit additionally records the full parameter block (already
   written into `storage\single-anchor\results.json`) and the session-map/data
@@ -581,8 +588,11 @@ data-folder mismatch, a data-monitor vs failed-request count mismatch, an
 auxiliary-count mismatch, a non-approved termination, an unpinned contract, an
 unapproved data-folder override, a non-clean helper outcome (engine errors), a
 missing post-run outcome, a pre-run contract-hash mismatch, a runtime binary
-changed after the run, a manifest not anchored to the qualification record and
-an `AccountStopOut` with a non-terminal outcome shape all fail as intended. The
+changed after the run, a manifest not anchored to the qualification record,
+an `AccountStopOut` with a non-terminal outcome shape, an `AccountStopOut`
+with an unrelated engine `ERROR::` line, and preflight tree drift or an
+unpinned contract all fail as intended, while the preflight pass path is
+proven without running anything. The
 reporter suite
 ([`tests/Test-SingleAnchorBaselineInvocation.ps1`](tests/Test-SingleAnchorBaselineInvocation.ps1))
 proves the register-pin refusal.
@@ -603,7 +613,7 @@ contract exists:
 ```text
 baseline configuration frozen: yes
 baseline contract:             MarketLab/config/baseline-contract.json
-baseline contract SHA-256:     59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4
+baseline contract SHA-256:     d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e
 first untouched full-history strategy baseline: NOT RUN
 parameter optimization:        NOT STARTED
 ```

@@ -241,6 +241,7 @@ namespace MarketLab.SingleAnchor.Tests
             "RunEvidence",
             "BaselineContract",
             "BaselineRegister",
+            "ExpectedTerminalException",
             "DryRun"
         };
 

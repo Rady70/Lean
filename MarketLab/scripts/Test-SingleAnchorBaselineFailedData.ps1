@@ -21,9 +21,10 @@ audit step and proves the chain around it:
    recorded and unchanged on disk.
 3. The run must carry the post-run outcome evidence
    (marketlab-run-outcome.json) written by the helper, bound to the pre-run file by its
-   SHA-256: a completed run must show LEAN exit 0, helper exit 0 and a performed
-   engine-error check with zero engine ERROR:: lines; an AccountStopOut run must show
-   exactly LEAN exit 1, helper exit 1 and no engine-error check. The recorded
+   SHA-256: the engine log audit must have run in every case. A completed run must show
+   LEAN exit 0, helper exit 0 and zero engine ERROR:: lines; an AccountStopOut run must
+   show exactly LEAN exit 1, helper exit 1, the expected AccountStopOutException lines
+   recorded separately and zero unrelated engine ERROR:: lines. The recorded
    failed-data count must equal the data-monitor count and the runtime binaries must be
    unchanged during the run.
 4. The machine-local continuous tree must still be the qualified PR 13 tree: the
@@ -66,6 +67,13 @@ The classification record is written as JSON next to the run
 identity (LF-normalized SHA-256), the invocation-evidence verification and the tree
 verification, so the run directory is bound to the reviewed contract.
 
+The -Preflight mode runs the same non-result-dependent stage before the authoritative
+run: the contract/register pin, the clean Git checkout and the complete qualified-tree
+identity (manifest, qualification-record anchor, all partition hashes and the auxiliary
+database/session-map hashes) are verified before LEAN is launched, so an accidental
+drift cannot consume the one-off full-history run. Only result-dependent checks remain
+for the post-run classification.
+
 This script launches nothing: no LEAN, no build, no network. It reads the run directory,
 the contract, the register, the tracked evidence and the data tree.
 
@@ -75,7 +83,10 @@ Exit codes:
   2  controlled configuration failure: missing/invalid inputs, a contract that is not the register-pinned frozen contract, a run without matching invocation evidence, a run that is not the frozen baseline, a run ended by a non-approved condition, or a data tree that no longer matches its composition manifest
 
 .PARAMETER RunDirectory
-The run directory produced by run-backtest.ps1 (contains failed-data-requests-*.txt, data-monitor-report-*.json, marketlab-run-invocation.json and storage\single-anchor\results.json).
+The run directory produced by run-backtest.ps1 (contains failed-data-requests-*.txt, data-monitor-report-*.json, marketlab-run-invocation.json, marketlab-run-outcome.json and storage\single-anchor\results.json). Required unless -Preflight is used.
+
+.PARAMETER Preflight
+Run only the pre-run verification stage (contract/register pin, clean Git checkout, qualified-tree identity) against the planned run configuration and write the preflight record; no run directory is read. The authoritative baseline procedure runs this before run-backtest.ps1 so no pre-run-knowable drift can consume the one-off run.
 
 .PARAMETER Contract
 Path to the frozen baseline contract. Default: <script root>\..\config\baseline-contract.json.
@@ -101,12 +112,12 @@ Classifies the run's failed data requests and writes baseline-failed-data-classi
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string]$RunDirectory,
     [string]$Contract,
     [string]$Register,
     [string]$Evidence,
     [string]$DataFolder,
+    [switch]$Preflight,
     [switch]$AllowNonAuthoritativeOverride,
     [string]$OutputPath
 )
@@ -207,9 +218,21 @@ if ([string]::IsNullOrWhiteSpace($Evidence)) {
     $Evidence = Join-Path (Split-Path -Parent $contractPath) '..\tools\historical-data\fixtures\continuous-history-evidence.json'
 }
 $evidencePath = [System.IO.Path]::GetFullPath($Evidence)
-$runPath = [System.IO.Path]::GetFullPath($RunDirectory)
+if (-not $Preflight -and [string]::IsNullOrWhiteSpace($RunDirectory)) {
+    Write-ErrorLine 'the post-run classification requires -RunDirectory (or pass -Preflight for the pre-run verification stage).'
+    exit $script:ExitPreflight
+}
+$runPath = $null
+if (-not [string]::IsNullOrWhiteSpace($RunDirectory)) {
+    $runPath = [System.IO.Path]::GetFullPath($RunDirectory)
+}
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $runPath 'baseline-failed-data-classification.json'
+    if ($Preflight) {
+        $OutputPath = Join-Path (Join-Path $PSScriptRoot '..\output') 'baseline-preflight.json'
+    }
+    else {
+        $OutputPath = Join-Path $runPath 'baseline-failed-data-classification.json'
+    }
 }
 $outputFullPath = [System.IO.Path]::GetFullPath($OutputPath)
 $authoritative = -not $AllowNonAuthoritativeOverride
@@ -510,6 +533,71 @@ while ($day -le $endDate) {
     $day = $day.AddDays(1)
 }
 
+# --- Pre-run verification stage (-Preflight): everything knowable before launch --
+# The authoritative baseline runs exactly once, so the contract identity, the
+# clean checkout and the complete qualified-tree identity are verified here,
+# before LEAN starts. Only result-dependent checks remain for the post-run
+# classification.
+if ($Preflight) {
+    $preflightRepositoryHead = $null
+    $preflightRepositoryDirty = $null
+    if ($authoritative) {
+        $preflightRepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+        try {
+            $previousGitPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $gitHead = @(& git -C $preflightRepoRoot rev-parse HEAD 2>$null)
+                if ($LASTEXITCODE -eq 0 -and $gitHead.Count -gt 0) { $preflightRepositoryHead = ([string]$gitHead[0]).Trim() }
+                $gitStatus = @(& git -C $preflightRepoRoot status --porcelain 2>$null)
+                if ($LASTEXITCODE -eq 0) { $preflightRepositoryDirty = ($gitStatus.Count -gt 0) }
+            }
+            finally {
+                $ErrorActionPreference = $previousGitPreference
+            }
+        }
+        catch {
+            $preflightRepositoryHead = $null
+            $preflightRepositoryDirty = $null
+        }
+        if ([string]::IsNullOrWhiteSpace($preflightRepositoryHead)) {
+            Fail-Preflight "could not read the Git HEAD of '$preflightRepoRoot'; the reviewed freeze commit cannot be established." $outputFullPath $authoritative
+        }
+        if ($preflightRepositoryDirty -ne $false) {
+            Fail-Preflight "the working tree at '$preflightRepoRoot' is dirty; the authoritative baseline must run from the reviewed and merged freeze commit." $outputFullPath $authoritative
+        }
+    }
+    $preflightRecord = [ordered]@{}
+    $preflightRecord['contract'] = 'marketlab-single-anchor-baseline-preflight-v1'
+    $preflightRecord['generatedUtc'] = [System.DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $preflightRecord['authoritative'] = $authoritative
+    $preflightRecord['baselineContractSha256'] = $contractSha256
+    $preflightRecord['registerPin'] = $registerPin
+    $preflightRecord['repositoryHead'] = $preflightRepositoryHead
+    $preflightRecord['repositoryDirty'] = $preflightRepositoryDirty
+    $preflightRecord['resolvedDataFolder'] = $resolvedDataFolder
+    $preflightRecord['dataFolderSource'] = $dataFolderSource
+    $preflightRecord['compositionManifest'] = $manifestPath
+    $preflightRecord['compositionManifestSha256'] = $manifestFileSha256
+    $preflightRecord['qualificationRecord'] = $qualificationRecordPath
+    $preflightRecord['verifiedPartitionCount'] = $verifiedPartitionCount
+    $preflightRecord['sessionMapSha256'] = $sessionMapSha256
+    $preflightRecord['marketHoursDatabaseSha256'] = $marketHoursSha256
+    $preflightRecord['symbolPropertiesDatabaseSha256'] = $symbolPropertiesSha256
+    $preflightRecord['sourceFileSetSha256'] = $sourceFileSetSha256
+    $preflightRecord['orderedMonthDigestChainSha256'] = $orderedMonthDigestChainSha256
+    $preflightRecord['expectedSourceAbsentDayCount'] = $expectedAbsentDays.Count
+    $preflightRecord['qualification'] = 'PREFLIGHT-PASS'
+    [System.IO.File]::WriteAllText($outputFullPath, ($preflightRecord | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
+    Write-InfoLine "baseline contract SHA-256:        $contractSha256"
+    Write-InfoLine "authoritative:                    $authoritative"
+    Write-InfoLine "qualified tree:                   $verifiedPartitionCount/$partitionCount partitions hash-verified against the composition manifest"
+    Write-InfoLine "manifest anchored to record:      $manifestFileSha256"
+    Write-InfoLine "preflight record:                 $outputFullPath"
+    Write-InfoLine 'baseline preflight: PASS (contract identity, clean checkout and qualified tree verified before launch)'
+    exit $script:ExitExpected
+}
+
 # --- Run identity: the frozen baseline run and its persisted invocation evidence -
 $resultsPath = Join-Path (Join-Path (Join-Path $runPath 'storage') 'single-anchor') 'results.json'
 if (-not (Test-Path -LiteralPath $resultsPath -PathType Leaf)) {
@@ -736,6 +824,10 @@ foreach ($name in $expectedRuntimeBinaries) {
         Fail-Preflight "the runtime binary '$name' now hashes to $runtimeHash but the pre-run evidence recorded $($runtimeBinaries.$name); the qualified runtime changed after the run." $outputFullPath $authoritative
     }
 }
+$invocationTerminalException = [string](Get-PropertyOrNull $invocation 'expectedTerminalException')
+if ($invocationTerminalException -ne 'MarketLab.SingleAnchor.AccountStopOutException') {
+    Fail-Preflight "the run's pre-run evidence declares expected terminal exception '$invocationTerminalException', not the frozen 'MarketLab.SingleAnchor.AccountStopOutException'." $outputFullPath $authoritative
+}
 
 # --- Data-monitor reconciliation and approved termination -----------------------
 $monitorFiles = @(Get-ChildItem -LiteralPath $runPath -Filter 'data-monitor-report-*.json' -File -ErrorAction SilentlyContinue)
@@ -812,6 +904,8 @@ try {
     $outcomeHelperExit = [int](Get-RequiredProperty $outcome 'helperExitCode')
     $outcomeEnginePerformed = [bool](Get-RequiredProperty $outcome 'engineErrorCheckPerformed')
     $outcomeEngineCount = Get-PropertyOrNull $outcome 'engineErrorCount'
+    $outcomeTerminalException = [string](Get-PropertyOrNull $outcome 'expectedTerminalException')
+    $outcomeTerminalLines = Get-PropertyOrNull $outcome 'terminalExceptionLineCount'
     $outcomeFailedCount = Get-PropertyOrNull $outcome 'failedDataRequestCount'
     $outcomeMonitor = [string](Get-PropertyOrNull $outcome 'dataMonitorReport')
     $outcomeBinariesUnchanged = [bool](Get-RequiredProperty $outcome 'runtimeBinariesUnchanged')
@@ -845,8 +939,17 @@ foreach ($name in $expectedRuntimeBinaries) {
     }
 }
 if ($runTerminated) {
-    if ($outcomeLeanExit -ne 1 -or $outcomeHelperExit -ne 1 -or $outcomeEnginePerformed) {
+    if ($outcomeLeanExit -ne 1 -or $outcomeHelperExit -ne 1 -or -not $outcomeEnginePerformed) {
         Fail-Preflight "the AccountStopOut run outcome is not the approved terminal shape (LEAN exit $outcomeLeanExit, helper exit $outcomeHelperExit, engine check performed $outcomeEnginePerformed)." $outputFullPath $authoritative
+    }
+    if ($outcomeTerminalException -ne 'MarketLab.SingleAnchor.AccountStopOutException') {
+        Fail-Preflight "the run outcome's expected terminal exception '$outcomeTerminalException' is not the frozen 'MarketLab.SingleAnchor.AccountStopOutException'." $outputFullPath $authoritative
+    }
+    if ($null -eq $outcomeTerminalLines -or [int]$outcomeTerminalLines -lt 1) {
+        Fail-Preflight 'the AccountStopOut run outcome records no expected terminal exception line; the engine log audit did not observe the modeled terminal outcome.' $outputFullPath $authoritative
+    }
+    if ($null -eq $outcomeEngineCount -or [int]$outcomeEngineCount -ne 0) {
+        Fail-Preflight "the AccountStopOut run outcome records $outcomeEngineCount unrelated engine ERROR:: line(s) beyond the expected terminal exception; the baseline is invalid." $outputFullPath $authoritative
     }
 }
 else {
@@ -855,6 +958,9 @@ else {
     }
     if ($null -eq $outcomeEngineCount -or [int]$outcomeEngineCount -ne 0) {
         Fail-Preflight "the run outcome records $outcomeEngineCount engine ERROR:: line(s); an engine/runtime error makes the baseline invalid." $outputFullPath $authoritative
+    }
+    if ($null -ne $outcomeTerminalLines -and [int]$outcomeTerminalLines -ne 0) {
+        Fail-Preflight 'a completed run records expected terminal exception lines; the baseline is invalid.' $outputFullPath $authoritative
     }
 }
 
@@ -1029,6 +1135,8 @@ $record['leanExitCode'] = $outcomeLeanExit
 $record['helperExitCode'] = $outcomeHelperExit
 $record['engineErrorCheckPerformed'] = $outcomeEnginePerformed
 $record['engineErrorCount'] = $outcomeEngineCount
+$record['expectedTerminalException'] = $outcomeTerminalException
+$record['terminalExceptionLineCount'] = $outcomeTerminalLines
 $record['symbol'] = $symbol
 $record['market'] = $market
 $record['startDate'] = $startText

@@ -660,7 +660,7 @@ configuration freeze is complete, with the canonical immutable configuration
 in [`config/baseline-contract.json`](../../config/baseline-contract.json) and
 its human-auditable rendering in
 [BASELINE_CONTRACT.md](../../BASELINE_CONTRACT.md) (contract identity
-`59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4`). The
+`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`). The
 post-run baseline audit reuses this section's composition manifest
 (`marketlab-qualification\continuous-composition.json`) to verify the
 machine-local tree without replaying the source: the classifier hashes all

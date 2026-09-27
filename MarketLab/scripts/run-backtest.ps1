@@ -168,6 +168,15 @@ run refuses to launch (exit 2).
 With -RunEvidence: path to the authoritative decision register that pins the
 frozen contract hash. See -BaselineContract.
 
+.PARAMETER ExpectedTerminalException
+With -RunEvidence: the fully-qualified name of the one modeled terminal
+strategy exception the run is allowed to end with (the AccountStopOut
+exception for the frozen baseline). The post-run engine-log audit always runs
+when the engine log exists; engine ERROR:: lines whose message contains this
+name are counted separately as the expected terminal exception, so every other
+engine ERROR:: line still counts as an unrelated engine error. The value is
+recorded in the evidence so the classifier can check it.
+
 .PARAMETER DryRun
 Validate everything, print the resolved paths and the exact command line, create
 nothing and exit 0. (For Python, validation includes the pandas probe, which
@@ -219,6 +228,7 @@ param(
     [switch]$RunEvidence,
     [string]$BaselineContract,
     [string]$BaselineRegister,
+    [string]$ExpectedTerminalException,
     [switch]$DryRun
 )
 
@@ -855,7 +865,34 @@ $baselineRegisterPathResolved = $null
 $baselineContractSha256 = $null
 $baselineRegisterPin = $null
 $runtimeBinaryHashes = [ordered]@{}
+$repositoryHead = $null
+$repositoryDirty = $null
 if ($RunEvidence) {
+    # Repository state: captured in pre-flight so a dirty working tree or a
+    # missing Git HEAD stops the run before LEAN launches.
+    try {
+        $previousGitPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $gitHead = @(& git -C $leanRootPath rev-parse HEAD 2>$null)
+            if ($LASTEXITCODE -eq 0 -and $gitHead.Count -gt 0) { $repositoryHead = ([string]$gitHead[0]).Trim() }
+            $gitStatus = @(& git -C $leanRootPath status --porcelain 2>$null)
+            if ($LASTEXITCODE -eq 0) { $repositoryDirty = ($gitStatus.Count -gt 0) }
+        }
+        finally {
+            $ErrorActionPreference = $previousGitPreference
+        }
+    }
+    catch {
+        $repositoryHead = $null
+        $repositoryDirty = $null
+    }
+    if ([string]::IsNullOrWhiteSpace($repositoryHead)) {
+        $problems.Add("Could not read the Git HEAD of `"$leanRootPath`" with git; -RunEvidence needs the reviewed commit identity. Install Git or launch from the checkout.")
+    }
+    elseif ($repositoryDirty -ne $false) {
+        $problems.Add("The working tree at `"$leanRootPath`" is dirty; the authoritative baseline must run from the reviewed and merged freeze commit (commit or stash local changes, then rerun).")
+    }
     foreach ($name in $script:RuntimeBinaryFileNames) {
         $runtimePath = Join-Path $launcherDir $name
         if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
@@ -995,25 +1032,6 @@ if ($RunEvidence) {
     $invocationEvidencePath = Join-Path $runDir 'marketlab-run-invocation.json'
     try {
         $evidenceParameters = @($parameterPairs)
-        $repositoryHead = $null
-        $repositoryDirty = $null
-        try {
-            $previousGitPreference = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            try {
-                $gitHead = @(& git -C $leanRootPath rev-parse HEAD 2>$null)
-                if ($LASTEXITCODE -eq 0 -and $gitHead.Count -gt 0) { $repositoryHead = ([string]$gitHead[0]).Trim() }
-                $gitStatus = @(& git -C $leanRootPath status --porcelain 2>$null)
-                if ($LASTEXITCODE -eq 0) { $repositoryDirty = ($gitStatus.Count -gt 0) }
-            }
-            finally {
-                $ErrorActionPreference = $previousGitPreference
-            }
-        }
-        catch {
-            $repositoryHead = $null
-            $repositoryDirty = $null
-        }
         $invocationEvidence = [ordered]@{
             contract = 'marketlab-run-invocation-evidence-v1'
             generatedUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -1045,6 +1063,7 @@ if ($RunEvidence) {
             repositoryDirty = $repositoryDirty
             runtimeBinariesRoot = $launcherDir
             runtimeBinaries = $runtimeBinaryHashes
+            expectedTerminalException = $ExpectedTerminalException
         }
         [System.IO.File]::WriteAllText($invocationEvidencePath, ($invocationEvidence | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
         Write-Info "  run evidence:     $invocationEvidencePath"
@@ -1184,7 +1203,9 @@ else {
 #    data (empty entry, unreadable content) and is counted.
 $engineErrorCheckPerformed = $false
 $engineErrorCountForEvidence = $null
-if ($leanExitCode -eq 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+$terminalExceptionLineCount = 0
+$engineErrorMessages = @()
+if (Test-Path -LiteralPath $logPath -PathType Leaf) {
     $missingFiles = @()
     $missingList = Get-ChildItem -LiteralPath $runDir -Filter 'failed-data-requests-*.txt' -File -ErrorAction SilentlyContinue |
         Sort-Object -Property Name -Descending | Select-Object -First 1
@@ -1193,30 +1214,43 @@ if ($leanExitCode -eq 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
         catch { $missingFiles = @() }
     }
     $missingMarker = 'SubscriptionDataSourceReader.InvalidSource(): File not found: '
-    $engineErrors = @()
+    $engineErrors = New-Object 'System.Collections.Generic.List[string]'
+    $terminalExceptionLines = New-Object 'System.Collections.Generic.List[string]'
     $engineErrorCheckPerformed = $true
     try {
-        $engineErrors = @([System.IO.File]::ReadAllLines($logPath) | Where-Object {
-            $index = $_.IndexOf(' ERROR:: ', [System.StringComparison]::Ordinal)
-            if ($index -lt 0) { return $false }
-            $message = $_.Substring($index + 9)
-            if ($message -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ') { return $false }
+        # The audit always runs when the log exists, including for non-zero
+        # exits, so a modeled AccountStopOut run still proves there were no
+        # unrelated engine errors. The only additionally excluded lines are
+        # those containing the declared expected terminal exception.
+        foreach ($line in [System.IO.File]::ReadLines($logPath)) {
+            $index = $line.IndexOf(' ERROR:: ', [System.StringComparison]::Ordinal)
+            if ($index -lt 0) { continue }
+            $message = $line.Substring($index + 9)
+            if ($message -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ') { continue }
+            $isKnownMissing = $false
             $markerIndex = $message.IndexOf($missingMarker, [System.StringComparison]::Ordinal)
             if ($markerIndex -ge 0) {
                 $path = $message.Substring($markerIndex + $missingMarker.Length).Trim().Replace('/', '\')
                 foreach ($missing in $missingFiles) {
-                    if ($path.EndsWith($missing, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+                    if ($path.EndsWith($missing, [System.StringComparison]::OrdinalIgnoreCase)) { $isKnownMissing = $true; break }
                 }
             }
-            return $true
-        })
+            if ($isKnownMissing) { continue }
+            if (-not [string]::IsNullOrWhiteSpace($ExpectedTerminalException) -and $message.Contains($ExpectedTerminalException)) {
+                $terminalExceptionLines.Add($line)
+                continue
+            }
+            $engineErrors.Add($line)
+        }
     }
     catch {
         $engineErrorCheckPerformed = $false
         Write-WarningLine "Could not read `"$logPath`" for the engine-error check: $($_.Exception.Message)."
     }
     $engineErrorCountForEvidence = if ($engineErrorCheckPerformed) { $engineErrors.Count } else { $null }
-    if ($engineErrors.Count -gt 0) {
+    $terminalExceptionLineCount = $terminalExceptionLines.Count
+    $engineErrorMessages = @($engineErrors | Select-Object -First 5)
+    if ($leanExitCode -eq 0 -and $engineErrors.Count -gt 0) {
         $lines = @(
             "$($engineErrors.Count) engine ERROR:: line(s) in `"$logPath`" although LEAN exited 0: the algorithm completed, but the engine reported errors on the way (for example a corrupt or empty data file it skipped, or a failure while generating the statistics), so the results are not a clean backtest.",
             "Fix: read the ERROR:: lines in the log and correct the cause; rerun with -AllowEngineErrors only if the errors are understood and acceptable."
@@ -1272,6 +1306,9 @@ if ($RunEvidence) {
             leanElapsedSeconds = [math]::Round($elapsed.TotalSeconds, 1)
             engineErrorCheckPerformed = $engineErrorCheckPerformed
             engineErrorCount = $engineErrorCountForEvidence
+            expectedTerminalException = $ExpectedTerminalException
+            terminalExceptionLineCount = $terminalExceptionLineCount
+            engineErrorMessages = $engineErrorMessages
             dataMonitorReport = if ($null -ne $report) { $report.Name } else { $null }
             failedDataRequestCount = $failed
             totalDataRequestCount = $total

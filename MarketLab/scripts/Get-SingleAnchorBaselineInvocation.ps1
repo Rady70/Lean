@@ -155,7 +155,8 @@ $renderedCommand = "pwsh -File MarketLab\scripts\run-backtest.ps1" `
     + " -Parameters `"$parametersString`"" `
     + " -AllowMissingData -RunEvidence" `
     + " -BaselineContract MarketLab\config\baseline-contract.json" `
-    + " -BaselineRegister MarketLab\config\baseline-decision-audit.json"
+    + " -BaselineRegister MarketLab\config\baseline-decision-audit.json" `
+    + " -ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException"
 
 $recordedCommand = Get-JsonProperty $runProcedure 'exactRunCommand'
 if ($recordedCommand -ne $renderedCommand) {

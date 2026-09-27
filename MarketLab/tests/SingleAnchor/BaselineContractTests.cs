@@ -209,7 +209,8 @@ namespace MarketLab.SingleAnchor.Tests
                 + " -DataFolder " + RequiredText(root.GetProperty("qualifiedDataIdentity"), "dataFolder")
                 + " -Parameters \"" + rendered + "\""
                 + " -AllowMissingData -RunEvidence"
-                + " -BaselineContract MarketLab\\config\\baseline-contract.json -BaselineRegister MarketLab\\config\\baseline-decision-audit.json";
+                + " -BaselineContract MarketLab\\config\\baseline-contract.json -BaselineRegister MarketLab\\config\\baseline-decision-audit.json"
+                + " -ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException";
 
             var runProcedure = root.GetProperty("runProcedure");
             Assert.That(RequiredText(root.GetProperty("runHost"), "buildConfiguration"), Is.EqualTo("Release"));
@@ -225,6 +226,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(recordedCommand, Does.Not.Contain("-AllowEngineErrors"));
             Assert.That(recordedCommand, Does.Contain("-AllowMissingData").And.Contain("-RunEvidence"));
             Assert.That(recordedCommand, Does.Contain("-BaselineContract").And.Contain("-BaselineRegister"));
+            Assert.That(recordedCommand, Does.Contain("-ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException"));
             Assert.That(recordedCommand, Does.Contain("2019-01-01").And.Contain("2026-06-30"));
             Assert.That(recordedCommand, Does.Contain("E:\\MarketLab\\data\\lean\\xauusd-dukascopy"));
 
@@ -236,13 +238,16 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(RequiredText(root.GetProperty("runHost"), "runEvidence"), Does.Contain("outcome").IgnoreCase);
             Assert.That(RequiredText(root.GetProperty("runHost"), "baselineContractParameter"), Does.Contain("-BaselineContract"));
             Assert.That(RequiredText(root.GetProperty("runHost"), "baselineRegisterParameter"), Does.Contain("-BaselineRegister"));
+            Assert.That(RequiredText(root.GetProperty("runHost"), "expectedTerminalExceptionParameter"), Does.Contain("AccountStopOutException"));
 
             var outcomeContract = root.GetProperty("runOutcomeContract");
             Assert.That(RequiredText(outcomeContract, "preRunEvidence"), Does.Contain("SHA-256").IgnoreCase);
             Assert.That(RequiredText(outcomeContract, "postRunEvidence"), Does.Contain("helper exit code").IgnoreCase);
+            Assert.That(RequiredText(outcomeContract, "preRunPreflight"), Does.Contain("before LEAN").IgnoreCase);
             Assert.That(RequiredText(outcomeContract, "normalCompletion"), Does.Contain("zero engine").IgnoreCase);
             Assert.That(RequiredText(outcomeContract, "accountStopOut"), Does.Contain("LEAN exit 1").IgnoreCase);
-            Assert.That(RequiredText(outcomeContract, "invalid"), Does.Contain("engine ERROR::").IgnoreCase);
+            Assert.That(RequiredText(outcomeContract, "accountStopOut"), Does.Contain("unrelated").IgnoreCase);
+            Assert.That(RequiredText(outcomeContract, "invalid"), Does.Contain("unrelated engine ERROR::").IgnoreCase);
 
             var humanContract = File.ReadAllText(Path.Combine(FindMarketLabRoot(), "BASELINE_CONTRACT.md"));
             Assert.That(humanContract, Does.Contain(rendered), "the human-auditable contract must record the exact frozen parameters string");

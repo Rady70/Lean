@@ -12,7 +12,7 @@ parameter optimization:                   NOT STARTED
 - Canonical machine-readable configuration:
   [`config/baseline-contract.json`](config/baseline-contract.json)
 - Baseline contract identity (SHA-256):
-  `59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4`
+  `d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`
 - Canonicalization: the identity is the SHA-256 of the contract file's UTF-8
   text content with CRLF normalized to LF, lower-case hex. It is deliberately
   not stored in the contract file itself; it is recorded in
@@ -76,9 +76,11 @@ minutes of every complete session are quote-only under the approved PR 7 rule.
 | helper | `MarketLab\scripts\run-backtest.ps1` |
 | failed-data handling | `-AllowMissingData` present, with mandatory classification (section 5) |
 | engine-error handling | `-AllowEngineErrors` absent (`AllowEngineErrors = false`) |
+| pre-run verification | the classifier's `-Preflight` stage must pass before the run: contract/register pin, clean Git checkout and the complete qualified-tree identity |
 | run evidence | `-RunEvidence` present: the helper writes `marketlab-run-invocation.json` before LEAN launches and `marketlab-run-outcome.json` after it |
 | contract binding | `-BaselineContract` + `-BaselineRegister` present: the helper verifies the contract hash equals the register pin before launch and records both in the pre-run evidence |
-| repository identity | Git HEAD and clean/dirty state recorded in the pre-run evidence; a dirty tree is refused by the classifier |
+| terminal exception | `-ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException`: the always-run engine-log audit counts only these lines separately as the modeled terminal outcome |
+| repository identity | Git HEAD and clean/dirty state captured before launch; a dirty tree stops the helper before LEAN starts and is refused by the classifier |
 | runtime identity | the qualified Release runtime binary set is hashed before the run and re-hashed after it; a changed binary is refused |
 | register pin | the decision register's `frozenBaselineContractSha256` must equal this file's computed hash; the reporter and the classifier both refuse a mismatch |
 
@@ -163,7 +165,7 @@ reviewed and merged, from the merged freeze commit:
 pwsh -File MarketLab\scripts\build.ps1
 dotnet build MarketLab\src\SingleAnchor\MarketLab.SingleAnchor.csproj --configuration Release
 
-pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release -Config MarketLab/config/backtesting.json -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy -Parameters "single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,single-anchor-security-type:Cfd,single-anchor-start-date:2019-01-01,single-anchor-end-date:2026-06-30,single-anchor-cash:20000,single-anchor-session-map:marketlab-sessions/xauusd-sessions.json,single-anchor-step-percent:0.25,single-anchor-base-lot:0.10,single-anchor-normal-trade-count:4,single-anchor-hard-be-ceiling-percent:4.478,single-anchor-escape-enabled:true,single-anchor-escape-profit-units:0.05,single-anchor-escape-minimum-open-positions:2,single-anchor-fixed-tp-units:0,single-anchor-trailing-enabled:true,single-anchor-trailing-activation-units:0.50,single-anchor-trailing-drop-units:0.25,single-anchor-commission-buffer:0,single-anchor-point-value-per-lot:100,single-anchor-volume-step:0.01,single-anchor-minimum-volume:0.01,single-anchor-maximum-volume:50,single-anchor-commission-per-lot:0,single-anchor-slippage:0,single-anchor-projected-spread:0.50,single-anchor-buy-swap-per-lot-per-day:0,single-anchor-sell-swap-per-lot-per-day:0,single-anchor-research-account:true,single-anchor-margin-enabled:true" -AllowMissingData -RunEvidence -BaselineContract MarketLab\config\baseline-contract.json -BaselineRegister MarketLab\config\baseline-decision-audit.json
+pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release -Config MarketLab/config/backtesting.json -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy -Parameters "single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,single-anchor-security-type:Cfd,single-anchor-start-date:2019-01-01,single-anchor-end-date:2026-06-30,single-anchor-cash:20000,single-anchor-session-map:marketlab-sessions/xauusd-sessions.json,single-anchor-step-percent:0.25,single-anchor-base-lot:0.10,single-anchor-normal-trade-count:4,single-anchor-hard-be-ceiling-percent:4.478,single-anchor-escape-enabled:true,single-anchor-escape-profit-units:0.05,single-anchor-escape-minimum-open-positions:2,single-anchor-fixed-tp-units:0,single-anchor-trailing-enabled:true,single-anchor-trailing-activation-units:0.50,single-anchor-trailing-drop-units:0.25,single-anchor-commission-buffer:0,single-anchor-point-value-per-lot:100,single-anchor-volume-step:0.01,single-anchor-minimum-volume:0.01,single-anchor-maximum-volume:50,single-anchor-commission-per-lot:0,single-anchor-slippage:0,single-anchor-projected-spread:0.50,single-anchor-buy-swap-per-lot-per-day:0,single-anchor-sell-swap-per-lot-per-day:0,single-anchor-research-account:true,single-anchor-margin-enabled:true" -AllowMissingData -RunEvidence -BaselineContract MarketLab\config\baseline-contract.json -BaselineRegister MarketLab\config\baseline-decision-audit.json -ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException
 ```
 
 `-AllowEngineErrors` is deliberately absent. `-RunEvidence` plus
@@ -191,6 +193,19 @@ file's computed SHA-256 does not equal the decision register's
 `frozenBaselineContractSha256`, so an accidentally edited local contract
 cannot be advertised as the frozen baseline.
 
+Then run the authoritative preflight; it must print PASS (exit 0) before the
+baseline is launched:
+
+```powershell
+pwsh -File MarketLab\scripts\Test-SingleAnchorBaselineFailedData.ps1 -Preflight -Contract MarketLab\config\baseline-contract.json -Register MarketLab\config\baseline-decision-audit.json -OutputPath MarketLab\output\baseline-preflight.json
+```
+
+The preflight verifies, before LEAN starts, the contract/register pin, the
+clean Git checkout and the complete qualified-tree identity (composition
+manifest, qualification-record anchor, all 2,332 partition hashes and the
+auxiliary database/session-map hashes). Pre-run-knowable drift therefore
+cannot consume the one-off full-history run.
+
 ## 5. Failed-data-request classification
 
 `-AllowMissingData` is the approved procedure flag but is **not** blanket
@@ -200,6 +215,10 @@ classified against the frozen contract and the qualified continuous tree:
 ```powershell
 pwsh -File MarketLab\scripts\Test-SingleAnchorBaselineFailedData.ps1 -RunDirectory <the run directory printed by run-backtest.ps1>
 ```
+
+The same script's `-Preflight` mode proves the pre-run half of this chain
+(contract/register pin, clean checkout, qualified tree) before the baseline is
+launched; only result-dependent checks remain here after the run.
 
 Before classifying, the classifier proves the chain around the run:
 
@@ -214,12 +233,14 @@ Before classifying, the classifier proves the chain around the run:
    `repositoryDirty: false`) and the exact qualified Release runtime binary
    set, whose files still hash to the recorded values;
 4. the post-run `marketlab-run-outcome.json` is bound to the pre-run file by
-   its SHA-256 and must show the approved outcome: a normally completed run
-   has LEAN exit 0, helper exit 0 and a performed engine-error check with zero
-   engine `ERROR::` lines; an `AccountStopOut` run has exactly LEAN exit 1,
-   helper exit 1 and no engine-error check (the run-ending line is the
-   algorithm's own failure message); the recorded failed-request count equals
-   the data monitor and the runtime binaries did not change during the run;
+   its SHA-256 and must show the approved outcome; the engine-error audit runs
+   for every run and separates only the declared terminal exception:
+   a normally completed run has LEAN exit 0, helper exit 0, zero engine
+   `ERROR::` lines and zero terminal-exception lines; an `AccountStopOut` run
+   has exactly LEAN exit 1, helper exit 1, at least one expected
+   `AccountStopOutException` line and zero unrelated engine `ERROR::` lines;
+   the recorded failed-request count equals the data monitor and the runtime
+   binaries did not change during the run;
 5. the machine-local continuous tree still matches its composition manifest:
    every one of the 2,332 partition zips is SHA-256 verified against the
    manifest's recorded `zip_sha256`, the partition name set must match exactly,
@@ -270,13 +291,17 @@ qualified data tree and checks the actual run.
 
 The run directory persists three evidence files that bind it to this contract:
 the pre-run `marketlab-run-invocation.json` written by
-`run-backtest.ps1 -RunEvidence -BaselineContract ... -BaselineRegister ...`
+`run-backtest.ps1 -RunEvidence -BaselineContract ... -BaselineRegister ... -ExpectedTerminalException ...`
 (the actual resolved invocation, the contract identity verified against the
 register pin before launch, the Git HEAD/dirty state and the qualified runtime
 binary hashes), the post-run `marketlab-run-outcome.json` (the helper's own
-verdict and the runtime re-hash), and the classifier's
+verdict, the always-run engine-error audit and the runtime re-hash), and the
+classifier's
 `baseline-failed-data-classification.json` (the verified contract identity,
 invocation, runtime, tree and manifest-to-qualification-record anchor). The
+classifier's `-Preflight` record (`MarketLab\output\baseline-preflight.json`
+by default) additionally proves the same identity and tree checks passed
+before the run. The
 classifier only issues qualification EXPECTED when all of these agree and the
 run ended in the approved shape. The run audit additionally records the full
 effective parameter block from `storage\single-anchor\results.json` and the

@@ -32,6 +32,10 @@ chain and its classification paths:
   V runtime binary changed after the run           -> exit 2, controlled failure
   W manifest not anchored to the qualification rec -> exit 2, controlled failure
   X AccountStopOut with a non-terminal outcome     -> exit 2, controlled failure
+  Y AccountStopOut with an unrelated engine error  -> exit 2, controlled failure
+  P1 preflight pass (identity + tree, no run)      -> exit 0, PREFLIGHT-PASS
+  P2 preflight catches tree drift before any run   -> exit 2, controlled failure
+  P3 preflight refuses an unpinned contract        -> exit 2, controlled failure
 
 No real market data is used and nothing outside the temporary directory is touched.
 
@@ -331,6 +335,7 @@ function New-InvocationEvidence([string]$Path, $Contract, [string]$DataFolder, [
         repositoryDirty = $false
         runtimeBinariesRoot = $RuntimeRoot
         runtimeBinaries = $RuntimeHashes
+        expectedTerminalException = 'MarketLab.SingleAnchor.AccountStopOutException'
     }
     Write-JsonFile $Path $invocation
 }
@@ -340,8 +345,7 @@ function Get-MonitorFailedCount([string]$RunDirectory) {
     return [int]$monitor.'failed-data-requests-count'
 }
 
-function New-Outcome([string]$RunDirectory, [int]$LeanExit, [int]$HelperExit, [bool]$EnginePerformed, $EngineCount, $RuntimeRoot, $RuntimeAfter, [switch]$Missing) {
-    if ($Missing) { return }
+function New-Outcome([string]$RunDirectory, [int]$LeanExit, [int]$HelperExit, [bool]$EnginePerformed, $EngineCount, $RuntimeRoot, $RuntimeAfter, [int]$TerminalLines = 0, [string]$TerminalException = 'MarketLab.SingleAnchor.AccountStopOutException') {
     $invocationPath = Join-Path $RunDirectory 'marketlab-run-invocation.json'
     $outcome = [ordered]@{
         contract = 'marketlab-run-outcome-evidence-v1'
@@ -352,6 +356,8 @@ function New-Outcome([string]$RunDirectory, [int]$LeanExit, [int]$HelperExit, [b
         helperExitCode = $HelperExit
         engineErrorCheckPerformed = $EnginePerformed
         engineErrorCount = $EngineCount
+        expectedTerminalException = $TerminalException
+        terminalExceptionLineCount = $TerminalLines
         dataMonitorReport = 'data-monitor-report-20190101000000000.json'
         failedDataRequestCount = Get-MonitorFailedCount $RunDirectory
         runtimeBinariesAfter = $RuntimeAfter
@@ -379,7 +385,7 @@ function New-RunCase([string]$Name, $Contract, [string]$DataFolder, [string[]]$F
     New-FailedRequests $caseDir $FailedLines
     New-Monitor $caseDir $MonitorCount
     if ($FailureKind -eq 'AccountStopOut') {
-        New-Outcome $caseDir 1 1 $false $null $RuntimeRoot $RuntimeHashes
+        New-Outcome $caseDir 1 1 $true 0 $RuntimeRoot $RuntimeHashes -TerminalLines 1
     }
     else {
         New-Outcome $caseDir 0 0 $true 0 $RuntimeRoot $RuntimeHashes
@@ -387,9 +393,15 @@ function New-RunCase([string]$Name, $Contract, [string]$DataFolder, [string[]]$F
     return $caseDir
 }
 
-function Invoke-Classifier([string]$CaseDirectory, [string]$ContractPath, [switch]$NoOverride, [string]$DataFolderOverride) {
-    $recordPath = Join-Path $CaseDirectory 'classification.json'
-    $arguments = @('-NoProfile', '-File', $classifier, '-RunDirectory', $CaseDirectory, '-Contract', $ContractPath, '-Evidence', $syntheticEvidencePath, '-OutputPath', $recordPath)
+function Invoke-Classifier([string]$CaseDirectory, [string]$ContractPath, [switch]$NoOverride, [string]$DataFolderOverride, [switch]$Preflight) {
+    if ($Preflight) {
+        $recordPath = Join-Path $runRoot ('preflight-' + [guid]::NewGuid().ToString('N') + '.json')
+    }
+    else {
+        $recordPath = Join-Path $CaseDirectory 'classification.json'
+    }
+    $arguments = @('-NoProfile', '-File', $classifier, '-Contract', $ContractPath, '-Evidence', $syntheticEvidencePath, '-OutputPath', $recordPath)
+    if ($Preflight) { $arguments += '-Preflight' } else { $arguments += @('-RunDirectory', $CaseDirectory) }
     if ($DataFolderOverride) { $arguments += @('-DataFolder', $DataFolderOverride) }
     if (-not $NoOverride) { $arguments += '-AllowNonAuthoritativeOverride' }
     & powershell @arguments | Out-Null
@@ -620,6 +632,30 @@ try {
     $resultX = Invoke-Classifier $caseX $syntheticContractPath
     Check 'exit 2' ($resultX.Code -eq 2)
     Check 'controlled failure recorded' ($resultX.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case Y: AccountStopOut with an unrelated engine error is refused'
+    $caseY = New-RunCase 'case-y' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'AccountStopOut' '2019-01-01T12:00:00' $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
+    New-Outcome $caseY 1 1 $true 1 $runtimeRoot $runtimeHashes -TerminalLines 1
+    $resultY = Invoke-Classifier $caseY $syntheticContractPath
+    Check 'exit 2' ($resultY.Code -eq 2)
+    Check 'controlled failure recorded' ($resultY.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case P1: preflight pass (contract identity + qualified tree), no run needed'
+    $resultP1 = Invoke-Classifier $runRoot $syntheticContractPath -Preflight
+    Check 'exit 0' ($resultP1.Code -eq 0)
+    Check 'qualification PREFLIGHT-PASS' ($resultP1.Record.qualification -eq 'PREFLIGHT-PASS')
+    Check 'tree partition hashes verified' ($resultP1.Record.verifiedPartitionCount -eq 2)
+    Check 'contract identity recorded' ($resultP1.Record.baselineContractSha256 -eq $script:syntheticContractSha)
+
+    Write-Host 'Case P2: preflight catches tree drift before any run'
+    $resultP2 = Invoke-Classifier $runRoot $syntheticContractPath -Preflight -DataFolderOverride $treeK.Root
+    Check 'exit 2' ($resultP2.Code -eq 2)
+    Check 'controlled failure recorded' ($resultP2.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case P3: preflight refuses an unpinned contract'
+    $resultP3 = Invoke-Classifier $runRoot $unpinnedContractPath -Preflight -NoOverride
+    Check 'exit 2' ($resultP3.Code -eq 2)
+    Check 'controlled failure recorded' ($resultP3.Record.qualification -eq 'CONTROLLED_FAILURE')
 }
 finally {
     if (Test-Path -LiteralPath $root) {
