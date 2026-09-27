@@ -123,7 +123,7 @@ fixture/example value (C) or unresolved (D), and binds the approved data
 identity to the continuous folder, in
 `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` and the machine-readable
 `config/baseline-decision-audit.json`. The eight class-D decisions PR #14
-exposed were then explicitly approved and the freeze is **complete** against
+exposed were then explicitly approved and the freeze is **complete and merged through GitHub PR #15** (reviewed head `3c8a431d089d3ae7027c39e0a3e6fc373e74114c`, merge commit `78b455372ccf6d83c9805d6b99551b357dbd17ae`) against
 section 6:
 
 - the canonical, complete, machine-readable configuration is

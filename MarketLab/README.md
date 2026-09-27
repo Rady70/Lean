@@ -565,7 +565,7 @@ complete and merged through GitHub PR #14 (reviewed head
 with the machine-readable
 [`config/baseline-decision-audit.json`](config/baseline-decision-audit.json).
 The eight class-D decisions it exposed were then explicitly approved and the
-baseline configuration freeze is **complete**: the canonical immutable
+baseline configuration freeze is **complete and merged through GitHub PR #15** (reviewed head `3c8a431d089d3ae7027c39e0a3e6fc373e74114c`, merge commit `78b455372ccf6d83c9805d6b99551b357dbd17ae`): the canonical immutable
 configuration is
 [`config/baseline-contract.json`](config/baseline-contract.json) (human-auditable
 rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)), baseline contract
@@ -644,7 +644,7 @@ conversion is deliberately out of scope, so the USD research result must not be
 presented as an exact reconstruction of the live EUR monetary path. The
 full-history composition is complete (section 10 of the tools README); the
 baseline configuration decision audit is complete and merged through GitHub
-PR #14, and the baseline configuration freeze is complete: the immutable
+PR #14, and the baseline configuration freeze is complete and merged through GitHub PR #15: the immutable
 contract is
 [`config/baseline-contract.json`](config/baseline-contract.json) with its
 human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), the

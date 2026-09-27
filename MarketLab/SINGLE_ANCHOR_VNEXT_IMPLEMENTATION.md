@@ -1320,7 +1320,7 @@ uninterrupted LEAN replay reproduced the qualified 413,750,130 quotes,
 boundaries and per-partition digests, and the redundant complete 90-folder
 native representations were retired
 (`tools/historical-data/README.md` section 10). The milestone is implemented
-and merged through GitHub PR #13. The baseline configuration freeze is complete
+and merged through GitHub PR #13. The baseline configuration freeze is complete and merged through GitHub PR #15
 (section 11); the next roadmap step is the single first untouched full-history
 baseline run under the frozen contract.
 
@@ -1350,7 +1350,7 @@ and the machine-readable register is
 The eight class-D decisions the audit exposed (StepPercent, BaseLot,
 ProjectedSpread, Slippage, CommissionBuffer, InitialBalance, margin enablement
 and the helper failed-data-request policy) were then explicitly approved and
-the freeze is **complete**: the canonical, complete, immutable configuration is
+the freeze is **complete and merged through GitHub PR #15** (reviewed head `3c8a431d089d3ae7027c39e0a3e6fc373e74114c`, merge commit `78b455372ccf6d83c9805d6b99551b357dbd17ae`): the canonical, complete, immutable configuration is
 [config/baseline-contract.json](config/baseline-contract.json) with its
 human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), and
 baseline contract identity (LF-normalized SHA-256)

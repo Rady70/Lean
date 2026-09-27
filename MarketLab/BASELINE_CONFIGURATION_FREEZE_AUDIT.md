@@ -14,7 +14,10 @@ Finalization records:
   freeze decision, 2026-09-27) and the complete immutable baseline contract
   was frozen in
   [`config/baseline-contract.json`](config/baseline-contract.json), with its
-  human-auditable rendering in [`BASELINE_CONTRACT.md`](BASELINE_CONTRACT.md).
+  human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md);
+- PR #15 completed the freeze: reviewed head
+  `3c8a431d089d3ae7027c39e0a3e6fc373e74114c`, merged into `master` as
+  `78b455372ccf6d83c9805d6b99551b357dbd17ae` (merge commit).
 
 Project state after the freeze:
 
@@ -22,7 +25,7 @@ Project state after the freeze:
 continuous historical-data qualification: complete
 continuous native-history composition/replay qualification: complete (PR #13)
 baseline configuration decision audit: complete and merged through PR #14
-baseline configuration freeze: complete (all eight decisions resolved)
+baseline configuration freeze: complete and merged through PR #15 (reviewed head 3c8a431d089d3ae7027c39e0a3e6fc373e74114c, merge commit 78b455372ccf6d83c9805d6b99551b357dbd17ae)
 first untouched full-history strategy baseline: NOT RUN
 parameter optimization: NOT STARTED
 ```
@@ -35,7 +38,10 @@ decision was approved. The machine-readable register inventories 65 baseline
 fields (57 class A, 8 class B, 0 class D after the freeze) plus the
 fixture/example values (class C).
 
-The freeze is complete. The canonical, complete, runnable configuration is
+The freeze is complete and was merged through GitHub PR #15 (reviewed head
+`3c8a431d089d3ae7027c39e0a3e6fc373e74114c`, merge commit
+`78b455372ccf6d83c9805d6b99551b357dbd17ae`). The canonical, complete, runnable
+configuration is
 [`config/baseline-contract.json`](config/baseline-contract.json) with contract
 identity (LF-normalized SHA-256)
 `d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`; the

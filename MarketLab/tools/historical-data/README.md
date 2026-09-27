@@ -656,7 +656,7 @@ GitHub PR #14 (reviewed head
 `261912d6cbda495c90ea68f578d3952fe3bba699`;
 [BASELINE_CONFIGURATION_FREEZE_AUDIT.md](../../BASELINE_CONFIGURATION_FREEZE_AUDIT.md)),
 and the eight decisions it exposed were explicitly approved: the baseline
-configuration freeze is complete, with the canonical immutable configuration
+configuration freeze is complete and merged through GitHub PR #15, with the canonical immutable configuration
 in [`config/baseline-contract.json`](../../config/baseline-contract.json) and
 its human-auditable rendering in
 [BASELINE_CONTRACT.md](../../BASELINE_CONTRACT.md) (contract identity

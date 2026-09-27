@@ -4,7 +4,7 @@ Status: **frozen**  -  the immutable reference configuration for the first
 untouched continuous full-history SingleAnchor strategy baseline.
 
 ```text
-baseline configuration freeze:            complete
+baseline configuration freeze:            complete and merged through PR #15
 first untouched full-history baseline:    NOT RUN
 parameter optimization:                   NOT STARTED
 ```
