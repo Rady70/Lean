@@ -84,6 +84,29 @@ milestone is implemented and merged through GitHub PR #12 (merge commit
 folder, the complete baseline freeze and the first full-history baseline
 remain unimplemented.
 
+Implementation note (continuous native-history record): the already-qualified
+daily native partitions of the 90 months are composed into one continuous LEAN
+data folder at `E:\MarketLab\data\lean\xauusd-dukascopy` (outside Git). The
+composition copies the 2,332 partition zips byte for byte only when each hash
+matches its month manifest, rebuilds the continuous expectation (ordered
+semantic digest
+`sha256:231cf63850cd033ea8167ab7d0017bdfbd7744f40412c1a899c2b9d98942886a`,
+first delivered `2019-01-01T23:00:07.151Z`, last
+`2026-06-30T23:59:59.678Z`), derives the same always-open runtime identity and
+places the qualified source-derived session map in the tree. One uninterrupted
+LEAN replay over the complete history reproduced accepted = converted =
+LEAN-delivered = probe-processed = 413,750,130 quotes with 0 rejected rows,
+0 missing partitions, 0 coverage gaps and every per-partition count and
+semantic digest equal; the continuous record is PASS. After that verification
+the two complete 90-folder native representations (the re-qualification work
+root and the retired-workspace original sweep) were verified against their
+records and their partition zips were removed, so exactly one complete derived
+native representation remains: the continuous tree. The canonical raw CSV
+source is unchanged. Evidence: `tools/historical-data/README.md` section 10
+and `tools/historical-data/fixtures/continuous-history-evidence.json`. No
+strategy, conversion or qualification-rule change. The complete baseline
+freeze and the first full-history baseline remain unimplemented.
+
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
 behaviour. The behavioural authority remains
@@ -907,7 +930,10 @@ per-month evidence, exactly one complete native representation of the
 qualified history is retained (temporary transition copies are allowed only
 until that proof succeeds). The raw canonical source at
 `E:\MarketLab\data\XAUUSD_raw_history` is not part of that native duplication
-count: it is the single qualified source, not a derived native tree.
+count: it is the single qualified source, not a derived native tree. The step
+is implemented: the composition, the continuous replay qualification and the
+retirement of the redundant 90-folder native representations are recorded in
+the continuous native-history implementation note at the top of this plan.
 
 The historical files themselves remain outside Git.
 

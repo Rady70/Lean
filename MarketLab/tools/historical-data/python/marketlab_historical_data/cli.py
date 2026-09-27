@@ -9,6 +9,12 @@ import sys
 from pathlib import Path
 
 from .csv_source import CsvSourceConfig
+from .continuous import (
+    build_continuous_record,
+    compose_history,
+    composition_path,
+    continuous_record_path,
+)
 from .identity import (
     RuntimeIdentityError,
     prepare_runtime_identity,
@@ -160,6 +166,87 @@ def _verify_parser(subparsers) -> None:
     parser.add_argument("--json", action="store_true", help="print the record JSON to stdout")
 
 
+def _compose_history_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "compose-history",
+        help="compose the qualified monthly native partitions into one continuous LEAN data folder",
+    )
+    parser.add_argument(
+        "--months-root",
+        required=True,
+        help="the per-file sweep layout: one subdirectory per month, each holding "
+        "data\\marketlab-qualification\\qualification-record.json and the native partitions",
+    )
+    parser.add_argument(
+        "--data-folder",
+        required=True,
+        help="continuous runtime LEAN data folder the composed native history, expectation and "
+        "composition record are written into",
+    )
+    parser.add_argument("--expected-first-month", required=True, help="first month (YYYY_MM)")
+    parser.add_argument("--expected-last-month", required=True, help="last month (YYYY_MM)")
+    parser.add_argument(
+        "--source-data-folder",
+        required=True,
+        help="data folder holding the unchanged auxiliary databases the derived runtime identity "
+        "is built from (the engine fixtures, typically <LeanRoot>\\Data)",
+    )
+    parser.add_argument(
+        "--session-map",
+        help="qualified source-derived session map to place under "
+        "<data-folder>\\marketlab-sessions\\xauusd-sessions.json",
+    )
+    parser.add_argument("--symbol", default="XAUUSD")
+    parser.add_argument("--market", default="dukascopy")
+    parser.add_argument("--security-type", default="Cfd")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing composition generation the previous composition record owns",
+    )
+    parser.add_argument("--json", action="store_true", help="print the composition JSON to stdout")
+
+
+def _verify_continuous_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "verify-continuous",
+        help="combine the continuous composition with the LEAN replay probe result into one record",
+    )
+    parser.add_argument(
+        "--composition",
+        help="continuous composition path (default: <data-folder>\\marketlab-qualification\\"
+        "continuous-composition.json)",
+    )
+    parser.add_argument(
+        "--data-folder",
+        help="continuous data folder (default: from the composition path)",
+    )
+    parser.add_argument("--probe-result", help="replay-result.json written by the LEAN probe run")
+    parser.add_argument(
+        "--failed-data-requests",
+        help="LEAN helper failed-data-requests-*.txt for the probe run",
+    )
+    parser.add_argument(
+        "--runtime-binaries",
+        help="JSON of the runtime binary hashes recorded by the driver "
+        "({\"files\": {\"name.dll\": \"<sha256>\"}})",
+    )
+    parser.add_argument(
+        "--helper-exit-code",
+        type=int,
+        help="exit code of the LEAN helper run; a PASS record requires 0",
+    )
+    parser.add_argument(
+        "--report",
+        help="output record path (default: <data-folder>\\marketlab-qualification\\"
+        "continuous-qualification-record.json)",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="replace an existing continuous qualification record"
+    )
+    parser.add_argument("--json", action="store_true", help="print the record JSON to stdout")
+
+
 def _read_failed_requests(path: Path) -> list[str]:
     lines = Path(path).read_text(encoding="utf-8-sig", errors="replace").splitlines()
     return [line.strip() for line in lines if line.strip()]
@@ -299,6 +386,184 @@ def _run_summarize_history(args) -> int:
         return 2
     print("summarize-history: PASS")
     return 0
+
+
+def _run_compose_history(args) -> int:
+    outcome = compose_history(
+        Path(args.months_root),
+        Path(args.data_folder),
+        expected_first_month=args.expected_first_month,
+        expected_last_month=args.expected_last_month,
+        source_data_folder=Path(args.source_data_folder),
+        session_map=Path(args.session_map) if args.session_map else None,
+        symbol=args.symbol,
+        market=args.market,
+        security_type=args.security_type,
+        force=args.force,
+    )
+    for failure in outcome.failures:
+        print(f"FAIL: {failure}", file=sys.stderr)
+    if outcome.composition is not None and outcome.composition_path is not None:
+        section = outcome.composition["composition"]
+        counts = outcome.composition["counts"]
+        print(
+            f"months: {section['month_count']}; partitions: {section['partition_count']}; "
+            f"rows: {counts['accepted_row_count']}"
+        )
+        print(
+            "ordered continuous semantic digest: "
+            f"{outcome.composition['semantic']['ordered_source_semantic_digest']}"
+        )
+        print(
+            f"first/last: {counts['first_canonical_utc']} .. {counts['last_canonical_utc']}"
+        )
+        session = section.get("session_map")
+        if isinstance(session, dict):
+            print(
+                f"session map: {session.get('relative_path')} "
+                f"({str(session.get('sha256'))[:12]})"
+            )
+        print(f"composition: {outcome.composition_path}")
+        expectation = outcome.composition_path.parent / "replay-expectation.json"
+        if expectation.is_file():
+            print(f"expectation: {expectation}")
+        if args.json:
+            print(dump_json(outcome.composition))
+    if outcome.exit_code == 2:
+        print("compose-history: configuration error; nothing was published", file=sys.stderr)
+    elif outcome.exit_code == 0:
+        print("compose-history: PASS (awaiting the continuous LEAN replay probe)")
+    else:
+        print("compose-history: FAIL", file=sys.stderr)
+    return outcome.exit_code
+
+
+def _run_verify_continuous(args) -> int:
+    composition_file = Path(args.composition) if args.composition else None
+    data_folder = Path(args.data_folder) if args.data_folder else None
+    if composition_file is None:
+        if data_folder is None:
+            print("ERROR: verify-continuous needs --composition or --data-folder", file=sys.stderr)
+            return 2
+        composition_file = composition_path(data_folder)
+    if not composition_file.is_file():
+        print(f"ERROR: composition not found: {composition_file}", file=sys.stderr)
+        return 2
+    try:
+        composition = load_json(composition_file)
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"ERROR: composition is not readable JSON: {composition_file}: {error}", file=sys.stderr)
+        return 2
+    if not isinstance(composition, dict):
+        print(f"ERROR: composition is not a JSON object: {composition_file}", file=sys.stderr)
+        return 2
+    if data_folder is None:
+        data_folder = composition_file.parent.parent
+
+    probe_result = None
+    probe_file = None
+    if args.probe_result:
+        probe_file = Path(args.probe_result)
+        if not probe_file.is_file():
+            print(f"ERROR: probe result not found: {probe_file}", file=sys.stderr)
+            return 2
+        try:
+            probe_result = load_json(probe_file)
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"ERROR: probe result is not readable JSON: {probe_file}: {error}", file=sys.stderr)
+            return 2
+        try:
+            require_probe_structure(probe_result)
+        except ValueError as error:
+            print(f"ERROR: not a usable replay probe result: {probe_file}: {error}", file=sys.stderr)
+            return 2
+
+    failed_requests: list[str] = []
+    evidence_paths = [composition_file]
+    if args.failed_data_requests:
+        failed_path = Path(args.failed_data_requests)
+        if not failed_path.is_file():
+            print(f"ERROR: failed-data-requests file not found: {failed_path}", file=sys.stderr)
+            return 2
+        try:
+            failed_requests = _read_failed_requests(failed_path)
+        except OSError as error:
+            print(f"ERROR: failed-data-requests file is not readable: {failed_path}: {error}", file=sys.stderr)
+            return 2
+        evidence_paths.append(failed_path)
+    if probe_file is not None:
+        evidence_paths.append(probe_file)
+
+    runtime_binaries = None
+    if args.runtime_binaries:
+        runtime_file = Path(args.runtime_binaries)
+        if not runtime_file.is_file():
+            print(f"ERROR: runtime-binaries file not found: {runtime_file}", file=sys.stderr)
+            return 2
+        try:
+            runtime_binaries = load_json(runtime_file)
+        except (OSError, json.JSONDecodeError) as error:
+            print(f"ERROR: runtime-binaries file is not readable JSON: {runtime_file}: {error}", file=sys.stderr)
+            return 2
+        try:
+            require_runtime_binaries_structure(runtime_binaries)
+        except ValueError as error:
+            print(f"ERROR: malformed runtime-binaries evidence: {runtime_file}: {error}", file=sys.stderr)
+            return 2
+        evidence_paths.append(runtime_file)
+
+    try:
+        record = build_continuous_record(
+            composition=composition,
+            composition_path=composition_file,
+            probe_result=probe_result,
+            probe_path=probe_file,
+            failed_request_paths=failed_requests,
+            data_folder=data_folder,
+            runtime_binaries=runtime_binaries,
+            helper_exit_code=args.helper_exit_code,
+        )
+    except ValueError as error:
+        print(
+            f"ERROR: not a usable continuous composition: {composition_file}: {error}",
+            file=sys.stderr,
+        )
+        return 2
+
+    report_file = Path(args.report) if args.report else continuous_record_path(data_folder)
+    for evidence in evidence_paths:
+        if os.path.normcase(str(report_file.resolve())) == os.path.normcase(str(Path(evidence).resolve())):
+            print(
+                f"ERROR: the report path must not replace an evidence input: {report_file}",
+                file=sys.stderr,
+            )
+            return 2
+    try:
+        with OutputTransaction(allow_overwrite=args.force) as transaction:
+            transaction.stage_text(report_file, dump_json(record))
+            transaction.commit()
+    except OutputTransactionError as error:
+        print(f"ERROR: record not written: {error}", file=sys.stderr)
+        return 2
+
+    _print_record_summary(record)
+    continuous = record.get("continuous") or {}
+    checks = continuous.get("checks") or {}
+    print(
+        f"continuous: {continuous.get('month_count')} months, "
+        f"{continuous.get('partition_count')} partitions; checks passed: "
+        f"{sum(1 for value in checks.values() if value)}/{len(checks)}"
+    )
+    if continuous.get("session_map"):
+        print(f"session map: {continuous['session_map'].get('relative_path')}")
+    print(f"record: {report_file}")
+    if args.json:
+        print(dump_json(record))
+    if record["overall_qualification"] == "PASS":
+        print("verify-continuous: PASS")
+        return 0
+    print("verify-continuous: FAIL", file=sys.stderr)
+    return 1
 
 
 def _run_qualify(args) -> int:
@@ -471,6 +736,8 @@ def main(argv=None) -> int:
     _qualify_parser(subparsers)
     _verify_parser(subparsers)
     _summarize_history_parser(subparsers)
+    _compose_history_parser(subparsers)
+    _verify_continuous_parser(subparsers)
     args = parser.parse_args(argv)
     if args.command == "prepare-identity":
         return _run_prepare_identity(args)
@@ -480,6 +747,10 @@ def main(argv=None) -> int:
         return _run_verify(args)
     if args.command == "summarize-history":
         return _run_summarize_history(args)
+    if args.command == "compose-history":
+        return _run_compose_history(args)
+    if args.command == "verify-continuous":
+        return _run_verify_continuous(args)
     parser.error(f"unknown command {args.command!r}")
     return 2
 

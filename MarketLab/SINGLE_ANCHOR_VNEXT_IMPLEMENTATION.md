@@ -342,9 +342,10 @@ culture; `true`/`false` for booleans.
   digests equal; zero session drops). The full 90-month sweep also completed
   with 90/90 PASS and 413,750,130 rows equal at every stage (section 8.7).
   PR 2 is implemented and merged (section 9); PR 3 is implemented and merged
-  through GitHub PR #11 (section 10). The composed full-history data folder,
-  the complete baseline freeze and the first full-history baseline remain later
-  steps.
+  through GitHub PR #11 (section 10); the composed continuous full-history data
+  folder and its delivery re-proof are implemented (section 10.5 and tools
+  README section 10). The complete baseline freeze and the first full-history
+  baseline remain later steps.
 - **Broker-style execution** (LEAN orders, partial fills, pending fills, a
   netted host portfolio): a separate qualification with its own invariants
   (a partial tail fill must not be able to break the hard-BE requirement; a
@@ -792,10 +793,11 @@ a baseline run that leaves them in place bypasses the qualified identity and is
 not a valid baseline. The replay-identity blocker recorded here is resolved;
 PR 2 (C# research account and bounded analytics) is implemented and merged
 (section 9), and PR 3 (target-account margin survival) is implemented and
-merged through GitHub PR #11 (section 10). The next project steps are composing
-the already-qualified daily partitions into one continuous research data folder and
-re-proving its delivery, the baseline configuration freeze, and only then the
-first full-history strategy baseline.
+merged through GitHub PR #11 (section 10). The already-qualified daily
+partitions are composed into one continuous research data folder and its
+delivery is re-proved (section 10.5 below; tools README section 10); the
+remaining project steps are the baseline configuration freeze and only then
+the first full-history strategy baseline.
 
 ## 9. Research account and bounded analytics (PR 2)
 
@@ -1303,11 +1305,15 @@ physical copy at the Lean-owned `E:\MarketLab\data\XAUUSD_raw_history`,
 and the unchanged 90-month qualification/LEAN replay route reproduced
 90/90 PASS with the identical 413,750,130-row population and aggregate
 digests (`tools/historical-data/README.md` section 9); the milestone is
-implemented and merged through GitHub PR #12. The next roadmap
-step is composing the already-qualified XAUUSD partitions into one
-continuous research data folder, re-proving its LEAN delivery, freezing
-the complete baseline configuration (including the margin values above)
-and running the first untouched full-history baseline.
+implemented and merged through GitHub PR #12. The composition was then
+implemented: the already-qualified partitions are composed into the continuous
+LEAN data folder at `E:\MarketLab\data\lean\xauusd-dukascopy`, whose single
+uninterrupted LEAN replay reproduced the qualified 413,750,130 quotes,
+boundaries and per-partition digests, and the redundant complete 90-folder
+native representations were retired
+(`tools/historical-data/README.md` section 10). The next roadmap step is
+freezing the complete baseline configuration (including the margin values
+above) and running the first untouched full-history baseline.
 
 Evidence used for the frozen research contract: the user-supplied MT5 XAUUSD
 symbol specification (XMGlobal-MT5 8, Ultra Low Standard), XM's published Gold
