@@ -208,7 +208,8 @@ namespace MarketLab.SingleAnchor.Tests
                 + " -AlgorithmLocation " + RequiredText(root.GetProperty("runHost"), "algorithmLocation")
                 + " -DataFolder " + RequiredText(root.GetProperty("qualifiedDataIdentity"), "dataFolder")
                 + " -Parameters \"" + rendered + "\""
-                + " -AllowMissingData -RunEvidence";
+                + " -AllowMissingData -RunEvidence"
+                + " -BaselineContract MarketLab\\config\\baseline-contract.json -BaselineRegister MarketLab\\config\\baseline-decision-audit.json";
 
             var runProcedure = root.GetProperty("runProcedure");
             Assert.That(RequiredText(root.GetProperty("runHost"), "buildConfiguration"), Is.EqualTo("Release"));
@@ -223,13 +224,25 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(recordedCommand, Is.EqualTo(expectedCommand), "the recorded exactRunCommand must be exactly the invocation rendered from the contract");
             Assert.That(recordedCommand, Does.Not.Contain("-AllowEngineErrors"));
             Assert.That(recordedCommand, Does.Contain("-AllowMissingData").And.Contain("-RunEvidence"));
+            Assert.That(recordedCommand, Does.Contain("-BaselineContract").And.Contain("-BaselineRegister"));
             Assert.That(recordedCommand, Does.Contain("2019-01-01").And.Contain("2026-06-30"));
             Assert.That(recordedCommand, Does.Contain("E:\\MarketLab\\data\\lean\\xauusd-dukascopy"));
 
             Assert.That(RequiredText(runProcedure, "postRunAuditCommand"), Does.Contain("Test-SingleAnchorBaselineFailedData.ps1"));
             Assert.That(RequiredText(runProcedure, "runEvidenceRequirements"), Does.Contain("invocation evidence").IgnoreCase);
             Assert.That(RequiredText(runProcedure, "runEvidenceRequirements"), Does.Contain("composition manifest").IgnoreCase);
+            Assert.That(RequiredText(runProcedure, "runEvidenceRequirements"), Does.Contain("outcome evidence").IgnoreCase);
             Assert.That(RequiredText(root.GetProperty("runHost"), "runEvidence"), Does.Contain("-RunEvidence"));
+            Assert.That(RequiredText(root.GetProperty("runHost"), "runEvidence"), Does.Contain("outcome").IgnoreCase);
+            Assert.That(RequiredText(root.GetProperty("runHost"), "baselineContractParameter"), Does.Contain("-BaselineContract"));
+            Assert.That(RequiredText(root.GetProperty("runHost"), "baselineRegisterParameter"), Does.Contain("-BaselineRegister"));
+
+            var outcomeContract = root.GetProperty("runOutcomeContract");
+            Assert.That(RequiredText(outcomeContract, "preRunEvidence"), Does.Contain("SHA-256").IgnoreCase);
+            Assert.That(RequiredText(outcomeContract, "postRunEvidence"), Does.Contain("helper exit code").IgnoreCase);
+            Assert.That(RequiredText(outcomeContract, "normalCompletion"), Does.Contain("zero engine").IgnoreCase);
+            Assert.That(RequiredText(outcomeContract, "accountStopOut"), Does.Contain("LEAN exit 1").IgnoreCase);
+            Assert.That(RequiredText(outcomeContract, "invalid"), Does.Contain("engine ERROR::").IgnoreCase);
 
             var humanContract = File.ReadAllText(Path.Combine(FindMarketLabRoot(), "BASELINE_CONTRACT.md"));
             Assert.That(humanContract, Does.Contain(rendered), "the human-auditable contract must record the exact frozen parameters string");
@@ -412,12 +425,17 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(auxiliary, Is.EqualTo(ExpectedAuxiliaryPaths), "the known auxiliary request list must be exact");
 
             var invalidating = policy.GetProperty("invalidatingCategories").EnumerateArray().Select(item => item.GetString()!).ToArray();
-            Assert.That(invalidating.Length, Is.EqualTo(4));
+            Assert.That(invalidating.Length, Is.EqualTo(6));
             Assert.That(invalidating.Any(value => value.StartsWith("unexpected-missing-qualified-partition", StringComparison.Ordinal)), Is.True);
             Assert.That(invalidating.Any(value => value.StartsWith("unexpected-out-of-window-request", StringComparison.Ordinal)), Is.True);
             Assert.That(invalidating.Any(value => value.StartsWith("unexpected-unknown-request", StringComparison.Ordinal)), Is.True);
             Assert.That(invalidating.Any(value => value.StartsWith("unexpected-unrequested-absence", StringComparison.Ordinal)), Is.True);
-            Assert.That(policy.GetProperty("expectedCategories").GetArrayLength(), Is.GreaterThanOrEqualTo(2));
+            Assert.That(invalidating.Any(value => value.StartsWith("failed-request-accounting-mismatch", StringComparison.Ordinal)), Is.True);
+            Assert.That(invalidating.Any(value => value.StartsWith("contract-evidence-mismatch", StringComparison.Ordinal)), Is.True);
+            var expected = policy.GetProperty("expectedCategories").EnumerateArray().Select(item => item.GetString()!).ToArray();
+            Assert.That(expected.Length, Is.GreaterThanOrEqualTo(3));
+            Assert.That(expected.Any(value => value.Contains("AccountStopOut", StringComparison.Ordinal)), Is.True);
+            Assert.That(expected.Any(value => value.Contains("known-non-strategy-auxiliary-request", StringComparison.Ordinal)), Is.True);
 
             var reference = policy.GetProperty("qualifiedReplayReference");
             Assert.That(reference.GetProperty("sourceAbsentCalendarDayRequests").GetInt32(), Is.EqualTo(406));

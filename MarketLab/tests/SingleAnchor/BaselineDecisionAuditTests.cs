@@ -239,6 +239,8 @@ namespace MarketLab.SingleAnchor.Tests
             "PythonDll",
             "OutputRoot",
             "RunEvidence",
+            "BaselineContract",
+            "BaselineRegister",
             "DryRun"
         };
 

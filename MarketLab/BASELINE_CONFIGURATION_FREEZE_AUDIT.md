@@ -38,7 +38,7 @@ fixture/example values (class C).
 The freeze is complete. The canonical, complete, runnable configuration is
 [`config/baseline-contract.json`](config/baseline-contract.json) with contract
 identity (LF-normalized SHA-256)
-`2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c`; the
+`59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4`; the
 human-auditable contract is [`BASELINE_CONTRACT.md`](BASELINE_CONTRACT.md).
 The machine-readable decision register at
 [`config/baseline-decision-audit.json`](config/baseline-decision-audit.json)
@@ -379,26 +379,30 @@ that the authority is the approved decision, not the look-alike value.
   qualification driver and tools README route; it belonged to the qualification
   run.
 - **Approved decision:** run with `-AllowMissingData` and `-RunEvidence`
-  enabled and classify every failed request after the run with
+  (plus `-BaselineContract`/`-BaselineRegister`) enabled and classify every
+  failed request after the run with
   [`scripts/Test-SingleAnchorBaselineFailedData.ps1`](scripts/Test-SingleAnchorBaselineFailedData.ps1)
-  against the register-pinned frozen contract, the run's persisted invocation
-  evidence and the qualified continuous tree: expected source-absent calendar
-  days of the frozen window, the enumerated known auxiliary path, and
-  source-absent days after the actually processed horizon of an
-  `AccountStopOut` run (the intended modeled terminal survival outcome) may be
-  accepted and recorded; an unexpected missing qualified partition, an
+  against the register-pinned frozen contract, the run's persisted
+  pre-run/outcome evidence and the qualified continuous tree: expected
+  source-absent calendar days of the frozen window, the enumerated known
+  auxiliary path, and source-absent days after the actually processed horizon
+  of an `AccountStopOut` run (the intended modeled terminal survival outcome)
+  may be accepted and recorded; an unexpected missing qualified partition, an
   out-of-window or unknown request, a source-absent day within the processed
-  horizon that was not requested at all, or a mismatch between the engine's
-  data-monitor failed-request count and the failed-request lines invalidates
-  the baseline. Any other run-ending condition is not an approved baseline
-  outcome and is refused as a controlled failure. The classifier also verifies
-  the tree against its composition manifest (all 2,332 partition hashes, the
-  partition name set and the auxiliary database hashes) and the run against
-  the contract's resolved invocation, so a run without matching
-  `marketlab-run-invocation.json` can never receive qualification EXPECTED.
-  `-AllowEngineErrors` remains prohibited. The flag is also used by the
-  qualification driver, but its authority is the approved baseline decision,
-  not that driver.
+  horizon that was not requested at all, a mismatch between the engine's
+  data-monitor failed-request count and the failed-request lines, or a
+  contract/evidence mismatch invalidates the baseline. Any other run-ending
+  condition is not an approved baseline outcome and is refused as a controlled
+  failure. The classifier also verifies the tree against its composition
+  manifest (all 2,332 partition hashes, the partition name set and the
+  auxiliary database hashes), anchors the manifest file to the replay
+  qualification record, verifies the pre-run evidence's contract hash/register
+  pin/Git HEAD/clean tree/runtime binary hashes, and requires the post-run
+  outcome record to show a clean completed run (or the exact `AccountStopOut`
+  terminal shape), so a run without matching evidence or with engine errors
+  can never receive qualification EXPECTED. `-AllowEngineErrors` remains
+  prohibited. The flag is also used by the qualification driver, but its
+  authority is the approved baseline decision, not that driver.
 
 ## 11. Additional effective inputs and host settings discovered
 
@@ -432,14 +436,17 @@ accounted for:
 - Run-evidence requirements for the eventual authoritative run: the run must be
   launched from the reviewed and merged freeze commit and must persist, inside
   its run directory, the pre-run invocation evidence written by
-  `run-backtest.ps1 -RunEvidence` (resolved absolute inputs, exact parameter
-  pairs, allow flags, launcher argv and the config/algorithm hashes) and the
-  post-run classification record that binds the run directory to the contract
-  identity and the verified tree. The run audit additionally records the
-  repository commit, the runtime binary hashes (the PR 1 route already records
-  these for the probe), the full parameter block (already written into
-  `storage\single-anchor\results.json`) and the session-map/data provenance
-  block. These are evidence requirements, not values to freeze.
+  `run-backtest.ps1 -RunEvidence -BaselineContract ... -BaselineRegister ...`
+  (resolved absolute inputs, exact parameter pairs, allow flags, launcher argv,
+  the config/algorithm hashes, the contract SHA-256 and register pin verified
+  equal, the Git HEAD and dirty state, and the qualified runtime binary
+  hashes), the post-run outcome evidence (LEAN and helper exit codes, the
+  engine-error check and count, the data-monitor result and the runtime
+  re-hash) and the post-run classification record that binds the run directory
+  to the contract identity, the verified tree and its replay qualification
+  record. The run audit additionally records the full parameter block (already
+  written into `storage\single-anchor\results.json`) and the session-map/data
+  provenance block. These are evidence requirements, not values to freeze.
 - Helper post-run policy: engine `ERROR::` lines fail the run (exit 4) and
   `-AllowEngineErrors` must not be used for the authoritative baseline
   (class A field `allowEngineErrors = false`). The failed-data-request policy
@@ -559,18 +566,24 @@ The contract check verifies that the freeze is actually runnable:
   traded-symbol benchmark are asserted against the live implementation and the
   host source;
 - the failed-data policy is not weakened: the classifier script exists, the
-  contract records the expected/invalidating categories, the
-  `AccountStopOut`-only termination rule and the qualified replay reference;
-  neither the contract invocation nor the classifier enables
-  `-AllowEngineErrors`.
+  contract records all six invalidating categories (the four unexpected
+  request classes plus `failed-request-accounting-mismatch` and
+  `contract-evidence-mismatch`), the `AccountStopOut`-only termination rule,
+  the run-outcome contract (clean completed run or the exact terminal shape)
+  and the qualified replay reference; neither the contract invocation nor the
+  classifier enables `-AllowEngineErrors`.
 
 The classifier's own edge-case suite
 ([`tests/Test-SingleAnchorBaselineFailedData.ps1`](tests/Test-SingleAnchorBaselineFailedData.ps1))
 additionally proves the failure modes on synthetic fixtures: a modified
 partition with an unchanged count, a present/absent-day swap, an invocation/
 data-folder mismatch, a data-monitor vs failed-request count mismatch, an
-auxiliary-count mismatch, a non-approved termination, an unpinned contract and
-an unapproved data-folder override all fail as intended. The reporter suite
+auxiliary-count mismatch, a non-approved termination, an unpinned contract, an
+unapproved data-folder override, a non-clean helper outcome (engine errors), a
+missing post-run outcome, a pre-run contract-hash mismatch, a runtime binary
+changed after the run, a manifest not anchored to the qualification record and
+an `AccountStopOut` with a non-terminal outcome shape all fail as intended. The
+reporter suite
 ([`tests/Test-SingleAnchorBaselineInvocation.ps1`](tests/Test-SingleAnchorBaselineInvocation.ps1))
 proves the register-pin refusal.
 
@@ -590,7 +603,7 @@ contract exists:
 ```text
 baseline configuration frozen: yes
 baseline contract:             MarketLab/config/baseline-contract.json
-baseline contract SHA-256:     2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c
+baseline contract SHA-256:     59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4
 first untouched full-history strategy baseline: NOT RUN
 parameter optimization:        NOT STARTED
 ```

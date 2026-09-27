@@ -7,7 +7,7 @@
   "baselineConfigurationFrozen": true,
   "unresolvedDecisionCount": 0,
   "frozenBaselineContract": "config/baseline-contract.json",
-  "frozenBaselineContractSha256": "2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c",
+  "frozenBaselineContractSha256": "59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4",
   "classification": {
     "A": "explicitly approved/frozen by the authoritative project contract",
     "B": "explicitly defined strategy default that is valid for the authoritative baseline",

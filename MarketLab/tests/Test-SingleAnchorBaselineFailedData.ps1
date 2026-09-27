@@ -3,29 +3,35 @@
 Windows-local tests for scripts\Test-SingleAnchorBaselineFailedData.ps1 on synthetic fixtures.
 
 .DESCRIPTION
-Creates a temporary synthetic qualified tree (partitions, auxiliary databases, session map
-and composition manifest), a synthetic contract/evidence and synthetic run directories
-outside the repository, then checks the classifier's provenance chain and its classification
-paths:
+Creates a temporary synthetic qualified tree (partitions, auxiliary databases, session map,
+composition manifest and replay qualification record), a synthetic contract/register/evidence
+and synthetic run directories outside the repository, then checks the classifier's provenance
+chain and its classification paths:
 
   A expected-only failed list                      -> exit 0, EXPECTED
   B failed request for an existing partition       -> exit 1, unexpected-missing-qualified-partition
   C unknown failed request path                    -> exit 1, unexpected-unknown-request
   D out-of-window partition failed request         -> exit 1, unexpected-out-of-window-request
   E frozen-window absent day not requested at all  -> exit 1, unexpected-unrequested-absence
-  F contract/manifest partition-count drift        -> exit 2, controlled failure
+  F contract partition count drifts from evidence  -> exit 2, controlled failure
   G run is not the frozen baseline identity        -> exit 2, controlled failure
   H AccountStopOut bounds the horizon              -> exit 0, absence after termination recorded
   I unrequested absence within a stop-out horizon  -> exit 1, unexpected-unrequested-absence
   J contract missing top-level fields              -> exit 2, controlled failure
   K modified partition, unchanged partition count  -> exit 2, controlled failure (manifest hash)
-  L present/absent day swap, count still 2,332     -> exit 2, controlled failure (manifest set)
+  L present/absent day swap, count unchanged       -> exit 2, controlled failure (manifest set)
   M invocation evidence data folder mismatch       -> exit 2, controlled failure
   N data-monitor count vs failed-request lines     -> exit 1, failed-request-accounting-mismatch
   O non-approved run termination                   -> exit 2, controlled failure
   P auxiliary request count vs tracked evidence    -> exit 1, contract-evidence-mismatch
-  Q unpinned contract without the test override    -> exit 2, controlled failure
+  Q contract not pinned by the register            -> exit 2, controlled failure
   R data-folder override without the test override -> exit 2, controlled failure
+  S non-clean helper outcome (engine errors)       -> exit 2, controlled failure
+  T missing post-run outcome evidence              -> exit 2, controlled failure
+  U pre-run contract hash mismatch                 -> exit 2, controlled failure
+  V runtime binary changed after the run           -> exit 2, controlled failure
+  W manifest not anchored to the qualification rec -> exit 2, controlled failure
+  X AccountStopOut with a non-terminal outcome     -> exit 2, controlled failure
 
 No real market data is used and nothing outside the temporary directory is touched.
 
@@ -80,7 +86,6 @@ if (-not (Test-Path -LiteralPath $classifier -PathType Leaf)) {
 $marketLabRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $repoRoot = (Resolve-Path (Join-Path $marketLabRoot '..')).Path
 $realContract = Join-Path $marketLabRoot 'config\baseline-contract.json'
-$realRegister = Join-Path $marketLabRoot 'config\baseline-decision-audit.json'
 $realConfig = Join-Path $marketLabRoot 'config\backtesting.json'
 $realConfigHash = Get-LfSha256 $realConfig
 # A stable existing file stands in for the built algorithm assembly in the synthetic contract.
@@ -96,6 +101,26 @@ $startText = '2019-01-01'
 $endDateText = '2019-01-03'
 $presentDays = @('20190101', '20190102')
 $absentDay = '20190103'
+$runtimeNames = @(
+    'QuantConnect.Lean.Launcher.dll',
+    'QuantConnect.Lean.Engine.dll',
+    'QuantConnect.Common.dll',
+    'QuantConnect.Algorithm.dll',
+    'QuantConnect.AlgorithmFactory.dll',
+    'QuantConnect.Configuration.dll',
+    'QuantConnect.Logging.dll'
+)
+
+function New-RuntimeSet([string]$RuntimeRoot) {
+    New-Item -ItemType Directory -Path $RuntimeRoot -Force | Out-Null
+    $hashes = [ordered]@{}
+    foreach ($name in $runtimeNames) {
+        $path = Join-Path $RuntimeRoot $name
+        [System.IO.File]::WriteAllText($path, ("synthetic runtime binary " + $name))
+        $hashes[$name] = Get-RawSha256 $path
+    }
+    return $hashes
+}
 
 function New-Tree([string]$TreeRoot, [string[]]$Days) {
     $tick = Join-Path $TreeRoot 'cfd\dukascopy\tick\xauusd'
@@ -125,7 +150,7 @@ function New-Tree([string]$TreeRoot, [string[]]$Days) {
     }
 }
 
-function New-Manifest($Tree, [string[]]$Days) {
+function New-Manifest($Tree, [string[]]$Days, $Contract) {
     $partitions = @()
     $perPartition = [ordered]@{}
     foreach ($day in $Days) {
@@ -136,16 +161,25 @@ function New-Manifest($Tree, [string[]]$Days) {
         }
         $perPartition[$dayText] = [ordered]@{ accepted_row_count = 1; semantic_digest = 'sha256:synthetic' }
     }
+    $identity = $Contract.qualifiedDataIdentity
     $manifest = [ordered]@{
         contract = 'marketlab-historical-data-qualification-v1'
         composition = [ordered]@{
             contract = 'marketlab-continuous-history-composition-v1'
             partition_count = $Days.Count
-            ordered_source_semantic_digest = 'sha256:synthetic'
+            month_count = [int]$identity.continuousHistoryMonthCount
+            ordered_source_semantic_digest = $identity.continuousHistorySemanticDigest
+            source_file_set_sha256 = $identity.sourceFileSetSha256
+            ordered_month_digest_chain_sha256 = $identity.orderedMonthDigestChainSha256
             session_map = [ordered]@{ relative_path = 'marketlab-sessions/xauusd-sessions.json'; sha256 = $Tree.SessionMapHash }
             lean_run_window = [ordered]@{ start_date = $startText; end_date = $endDateText }
-            first_canonical_utc = '2019-01-01T00:00:00.000Z'
-            last_canonical_utc = '2019-01-02T23:59:59.000Z'
+            first_canonical_utc = $identity.continuousHistoryFirstQuoteUtc
+            last_canonical_utc = $identity.continuousHistoryLastQuoteUtc
+        }
+        counts = [ordered]@{
+            accepted_row_count = [long]$identity.continuousHistoryQuoteCount
+            converted_row_count = [long]$identity.continuousHistoryQuoteCount
+            rejected_row_count = 0
         }
         lean = [ordered]@{
             market_hours_database = [ordered]@{ database_sha256 = $Tree.MarketHoursHash }
@@ -160,7 +194,21 @@ function New-Manifest($Tree, [string[]]$Days) {
             native_price_decimal_parity = 'PASS'
         }
     }
-    Write-JsonFile (Join-Path $Tree.Root 'marketlab-qualification\continuous-composition.json') $manifest
+    $manifestPath = Join-Path $Tree.Root 'marketlab-qualification\continuous-composition.json'
+    Write-JsonFile $manifestPath $manifest
+    # The replay qualification record anchors the manifest file hash.
+    $record = [ordered]@{
+        contract = 'marketlab-historical-data-qualification-record-v1'
+        overall_qualification = 'PASS'
+        helper_exit_code = 0
+        continuous = [ordered]@{
+            composition_sha256 = Get-RawSha256 $manifestPath
+            partition_count = $Days.Count
+            month_count = [int]$identity.continuousHistoryMonthCount
+            session_map = [ordered]@{ relative_path = 'marketlab-sessions/xauusd-sessions.json'; sha256 = $Tree.SessionMapHash }
+        }
+    }
+    Write-JsonFile (Join-Path $Tree.Root 'marketlab-qualification\continuous-qualification-record.json') $record
 }
 
 function New-Contract([string]$Path, $Tree, [int]$PartitionCount) {
@@ -173,9 +221,6 @@ function New-Contract([string]$Path, $Tree, [int]$PartitionCount) {
     $identity.sessionMapSha256 = $Tree.SessionMapHash
     $identity.marketHoursDatabaseSha256 = $Tree.MarketHoursHash
     $identity.symbolPropertiesDatabaseSha256 = $Tree.SymbolPropertiesHash
-    $identity.continuousHistorySemanticDigest = 'sha256:synthetic'
-    $identity.continuousHistoryFirstQuoteUtc = '2019-01-01T00:00:00.000Z'
-    $identity.continuousHistoryLastQuoteUtc = '2019-01-02T23:59:59.000Z'
     $contract.runHost.algorithmLocation = $algorithmFileRelative
     Write-JsonFile $Path $contract
     return $contract
@@ -239,7 +284,7 @@ function New-Results([string]$Path, $Contract, [string]$Market, [string]$Failure
         parameters = $resultParameters
         researchAccount = [ordered]@{ InitialBalance = $cash }
         researchMargin = [ordered]@{ MarginCallActive = $false }
-        sessionMap = [ordered]@{ Sha256 = $Tree.SessionMapHash }
+        sessionMap = [ordered]@{ Sha256 = $script:tree.SessionMapHash }
         failure = $null
         lastProcessedQuote = $null
     }
@@ -255,7 +300,7 @@ function New-Results([string]$Path, $Contract, [string]$Market, [string]$Failure
     Write-JsonFile $Path $results
 }
 
-function New-InvocationEvidence([string]$Path, $Contract, [string]$DataFolder, [string]$ParametersString, [string]$RunDirectory, [string]$AlgorithmLocation, [string]$AlgorithmHash) {
+function New-InvocationEvidence([string]$Path, $Contract, [string]$DataFolder, [string]$ParametersString, [string]$RunDirectory, [string]$AlgorithmLocation, [string]$AlgorithmHash, $ContractSha, $RegisterPath, $RegisterPin, $RuntimeRoot, $RuntimeHashes) {
     $invocation = [ordered]@{
         contract = 'marketlab-run-invocation-evidence-v1'
         generatedUtc = '2019-01-01T00:00:00Z'
@@ -278,8 +323,41 @@ function New-InvocationEvidence([string]$Path, $Contract, [string]$DataFolder, [
         commandLine = @('synthetic')
         workingDirectory = $RunDirectory
         runDirectory = $RunDirectory
+        baselineContractPath = $script:syntheticContractPath
+        baselineContractSha256 = $ContractSha
+        baselineRegisterPath = $RegisterPath
+        baselineRegisterPin = $RegisterPin
+        repositoryHead = 'synthetic-head'
+        repositoryDirty = $false
+        runtimeBinariesRoot = $RuntimeRoot
+        runtimeBinaries = $RuntimeHashes
     }
     Write-JsonFile $Path $invocation
+}
+
+function Get-MonitorFailedCount([string]$RunDirectory) {
+    $monitor = [System.IO.File]::ReadAllText((Join-Path $RunDirectory 'data-monitor-report-20190101000000000.json')) | ConvertFrom-Json
+    return [int]$monitor.'failed-data-requests-count'
+}
+
+function New-Outcome([string]$RunDirectory, [int]$LeanExit, [int]$HelperExit, [bool]$EnginePerformed, $EngineCount, $RuntimeRoot, $RuntimeAfter, [switch]$Missing) {
+    if ($Missing) { return }
+    $invocationPath = Join-Path $RunDirectory 'marketlab-run-invocation.json'
+    $outcome = [ordered]@{
+        contract = 'marketlab-run-outcome-evidence-v1'
+        generatedUtc = '2019-01-01T00:00:00Z'
+        invocationEvidence = 'marketlab-run-invocation.json'
+        invocationEvidenceSha256 = Get-RawSha256 $invocationPath
+        leanExitCode = $LeanExit
+        helperExitCode = $HelperExit
+        engineErrorCheckPerformed = $EnginePerformed
+        engineErrorCount = $EngineCount
+        dataMonitorReport = 'data-monitor-report-20190101000000000.json'
+        failedDataRequestCount = Get-MonitorFailedCount $RunDirectory
+        runtimeBinariesAfter = $RuntimeAfter
+        runtimeBinariesUnchanged = $true
+    }
+    Write-JsonFile (Join-Path $RunDirectory 'marketlab-run-outcome.json') $outcome
 }
 
 function New-FailedRequests([string]$RunDirectory, [string[]]$Lines) {
@@ -292,14 +370,20 @@ function New-Monitor([string]$RunDirectory, [int]$FailedCount) {
     Write-JsonFile (Join-Path $RunDirectory 'data-monitor-report-20190101000000000.json') $monitor
 }
 
-function New-RunCase([string]$Name, $Contract, [string]$DataFolder, [string[]]$FailedLines, [int]$MonitorCount, [string]$FailureKind, [string]$FailureQuoteTime, [string]$EvidenceDataFolder, [string]$AlgorithmLocation, [string]$AlgorithmHash) {
+function New-RunCase([string]$Name, $Contract, [string]$DataFolder, [string[]]$FailedLines, [int]$MonitorCount, [string]$FailureKind, [string]$FailureQuoteTime, [string]$EvidenceDataFolder, [string]$AlgorithmLocation, [string]$AlgorithmHash, $RuntimeRoot, $RuntimeHashes) {
     $caseDir = Join-Path $runRoot $Name
     New-Item -ItemType Directory -Path (Join-Path $caseDir 'storage\single-anchor') -Force | Out-Null
     New-Results (Join-Path $caseDir 'storage\single-anchor\results.json') $Contract 'dukascopy' $FailureKind $FailureQuoteTime
     $dataFolderForEvidence = if ($EvidenceDataFolder) { $EvidenceDataFolder } else { $DataFolder }
-    New-InvocationEvidence (Join-Path $caseDir 'marketlab-run-invocation.json') $Contract $dataFolderForEvidence (Get-ContractParametersString $Contract) $caseDir $AlgorithmLocation $AlgorithmHash
+    New-InvocationEvidence (Join-Path $caseDir 'marketlab-run-invocation.json') $Contract $dataFolderForEvidence (Get-ContractParametersString $Contract) $caseDir $AlgorithmLocation $AlgorithmHash $script:syntheticContractSha $script:syntheticRegisterPath $script:syntheticContractSha $RuntimeRoot $RuntimeHashes
     New-FailedRequests $caseDir $FailedLines
     New-Monitor $caseDir $MonitorCount
+    if ($FailureKind -eq 'AccountStopOut') {
+        New-Outcome $caseDir 1 1 $false $null $RuntimeRoot $RuntimeHashes
+    }
+    else {
+        New-Outcome $caseDir 0 0 $true 0 $RuntimeRoot $RuntimeHashes
+    }
     return $caseDir
 }
 
@@ -319,19 +403,27 @@ function Invoke-Classifier([string]$CaseDirectory, [string]$ContractPath, [switc
 
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 $tree = New-Tree $dataRoot $presentDays
-New-Manifest $tree $presentDays
+$script:tree = $tree
 $syntheticContractPath = Join-Path $root 'baseline-contract.json'
+$script:syntheticContractPath = $syntheticContractPath
 $contract = New-Contract $syntheticContractPath $tree $presentDays.Count
+$script:syntheticContractSha = Get-LfSha256 $syntheticContractPath
+$syntheticRegisterPath = Join-Path $root 'baseline-decision-audit.json'
+$script:syntheticRegisterPath = $syntheticRegisterPath
+Write-JsonFile $syntheticRegisterPath ([ordered]@{ contract = 'marketlab-baseline-decision-audit-v1'; frozenBaselineContractSha256 = $script:syntheticContractSha })
+New-Manifest $tree $presentDays $contract
 $syntheticEvidencePath = Join-Path $root 'continuous-history-evidence.json'
 New-Evidence $syntheticEvidencePath 1
 $parametersString = Get-ContractParametersString $contract
+$runtimeRoot = Join-Path $root 'runtime'
+$runtimeHashes = New-RuntimeSet $runtimeRoot
 
 try {
     Write-Host 'Case A: expected-only failed list'
     $caseA = New-RunCase 'case-a' $contract $dataRoot @(
         ('\cfd\dukascopy\tick\xauusd\' + $absentDay + '_quote.zip'),
         '\cfd\dukascopy\hour\xauusd.zip'
-    ) 2 $null $null $null $algorithmFilePath $algorithmFileHash
+    ) 2 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultA = Invoke-Classifier $caseA $syntheticContractPath
     Check 'exit 0' ($resultA.Code -eq 0)
     Check 'qualification EXPECTED' ($resultA.Record.qualification -eq 'EXPECTED')
@@ -340,34 +432,37 @@ try {
     Check 'one known auxiliary' ($resultA.Record.occurrencesByCategory.'known-non-strategy-auxiliary-request' -eq 1)
     Check 'accounting matches the monitor' ($resultA.Record.failedRequestAccountingMatches -eq $true)
     Check 'tree partition hashes verified' ($resultA.Record.verifiedPartitionCount -eq 2)
+    Check 'manifest anchored to the qualification record' ($resultA.Record.qualificationRecord -like '*continuous-qualification-record.json')
+    Check 'pre-run contract identity verified' ($resultA.Record.preRunContractSha256 -eq $script:syntheticContractSha)
+    Check 'run outcome verified' ($resultA.Record.runOutcomeVerified -eq $true)
 
     Write-Host 'Case B: failed request for an existing qualified partition'
-    $caseB = New-RunCase 'case-b' $contract $dataRoot @('\cfd\dukascopy\tick\xauusd\20190101_quote.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $caseB = New-RunCase 'case-b' $contract $dataRoot @('\cfd\dukascopy\tick\xauusd\20190101_quote.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultB = Invoke-Classifier $caseB $syntheticContractPath
     Check 'exit 1' ($resultB.Code -eq 1)
     Check 'qualification INVALID' ($resultB.Record.qualification -eq 'INVALID')
     Check 'missing qualified partition classified' ($resultB.Record.occurrencesByCategory.'unexpected-missing-qualified-partition' -eq 1)
 
     Write-Host 'Case C: unknown failed request path'
-    $caseC = New-RunCase 'case-c' $contract $dataRoot @('\equity\usa\minute\spy\20131009_trade.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $caseC = New-RunCase 'case-c' $contract $dataRoot @('\equity\usa\minute\spy\20131009_trade.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultC = Invoke-Classifier $caseC $syntheticContractPath
     Check 'exit 1' ($resultC.Code -eq 1)
     Check 'unknown request classified' ($resultC.Record.occurrencesByCategory.'unexpected-unknown-request' -eq 1)
 
     Write-Host 'Case D: out-of-window partition failed request'
-    $caseD = New-RunCase 'case-d' $contract $dataRoot @('\cfd\dukascopy\tick\xauusd\20190104_quote.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $caseD = New-RunCase 'case-d' $contract $dataRoot @('\cfd\dukascopy\tick\xauusd\20190104_quote.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultD = Invoke-Classifier $caseD $syntheticContractPath
     Check 'exit 1' ($resultD.Code -eq 1)
     Check 'out-of-window request classified' ($resultD.Record.occurrencesByCategory.'unexpected-out-of-window-request' -eq 1)
 
     Write-Host 'Case E: frozen-window absent day not requested at all'
-    $caseE = New-RunCase 'case-e' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $caseE = New-RunCase 'case-e' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultE = Invoke-Classifier $caseE $syntheticContractPath
     Check 'exit 1' ($resultE.Code -eq 1)
     Check 'unrequested absence classified' ($resultE.Record.occurrencesByCategory.'unexpected-unrequested-absence' -eq 1)
 
-    Write-Host 'Case F: contract partition count drifts from the manifest'
-    $caseF = New-RunCase 'case-f' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    Write-Host 'Case F: contract partition count drifts from the run evidence'
+    $caseF = New-RunCase 'case-f' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $driftedContract = [System.IO.File]::ReadAllText($syntheticContractPath) | ConvertFrom-Json
     $driftedContract.qualifiedDataIdentity.continuousHistoryPartitionCount = 7
     $driftedContractPath = Join-Path $root 'baseline-contract-drifted.json'
@@ -380,15 +475,16 @@ try {
     $caseG = Join-Path $runRoot 'case-g'
     New-Item -ItemType Directory -Path (Join-Path $caseG 'storage\single-anchor') -Force | Out-Null
     New-Results (Join-Path $caseG 'storage\single-anchor\results.json') $contract 'oanda' $null $null
-    New-InvocationEvidence (Join-Path $caseG 'marketlab-run-invocation.json') $contract $dataRoot $parametersString $caseG $algorithmFilePath $algorithmFileHash
+    New-InvocationEvidence (Join-Path $caseG 'marketlab-run-invocation.json') $contract $dataRoot $parametersString $caseG $algorithmFilePath $algorithmFileHash $script:syntheticContractSha $script:syntheticRegisterPath $script:syntheticContractSha $runtimeRoot $runtimeHashes
     New-FailedRequests $caseG @('\cfd\dukascopy\hour\xauusd.zip')
     New-Monitor $caseG 1
+    New-Outcome $caseG 0 0 $true 0 $runtimeRoot $runtimeHashes
     $resultG = Invoke-Classifier $caseG $syntheticContractPath
     Check 'exit 2' ($resultG.Code -eq 2)
     Check 'controlled failure recorded' ($resultG.Record.qualification -eq 'CONTROLLED_FAILURE')
 
     Write-Host 'Case H: AccountStopOut bounds the expected-absence horizon'
-    $caseH = New-RunCase 'case-h' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'AccountStopOut' '2019-01-01T12:00:00' $null $algorithmFilePath $algorithmFileHash
+    $caseH = New-RunCase 'case-h' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'AccountStopOut' '2019-01-01T12:00:00' $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultH = Invoke-Classifier $caseH $syntheticContractPath
     Check 'exit 0' ($resultH.Code -eq 0)
     Check 'qualification EXPECTED' ($resultH.Record.qualification -eq 'EXPECTED')
@@ -396,16 +492,16 @@ try {
     Check 'termination kind recorded' ($resultH.Record.terminationKind -eq 'AccountStopOut')
     Check 'coverage horizon is the failure day' ($resultH.Record.coverageEndDay -eq '2019-01-01')
     Check 'absence after termination recorded' ($resultH.Record.sourceAbsentDaysAfterTermination -eq 1)
-    Check 'no unrequested absence within the horizon' ($resultH.Record.occurrencesByCategory.'unexpected-unrequested-absence' -eq 0)
+    Check 'terminal outcome shape verified' ($resultH.Record.helperExitCode -eq 1)
 
     Write-Host 'Case I: unrequested absence within a stop-out horizon is still invalid'
-    $caseI = New-RunCase 'case-i' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'AccountStopOut' '2019-01-03T12:00:00' $null $algorithmFilePath $algorithmFileHash
+    $caseI = New-RunCase 'case-i' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'AccountStopOut' '2019-01-03T12:00:00' $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultI = Invoke-Classifier $caseI $syntheticContractPath
     Check 'exit 1' ($resultI.Code -eq 1)
     Check 'unrequested absence within horizon classified' ($resultI.Record.occurrencesByCategory.'unexpected-unrequested-absence' -eq 1)
 
     Write-Host 'Case J: a contract missing top-level fields is a controlled failure'
-    $caseJ = New-RunCase 'case-j' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $caseJ = New-RunCase 'case-j' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $malformedPath = Join-Path $root 'malformed-contract.json'
     [System.IO.File]::WriteAllText($malformedPath, '{}', (New-Object System.Text.UTF8Encoding($false)))
     $resultJ = Invoke-Classifier $caseJ $malformedPath
@@ -414,9 +510,9 @@ try {
 
     Write-Host 'Case K: modified partition with unchanged partition count'
     $treeK = New-Tree (Join-Path $root 'data-k') $presentDays
-    New-Manifest $treeK $presentDays
+    New-Manifest $treeK $presentDays $contract
     [System.IO.File]::WriteAllText((Join-Path $treeK.Root 'cfd\dukascopy\tick\xauusd\20190102_quote.zip'), 'tampered-content')
-    $caseK = New-RunCase 'case-k' $contract $treeK.Root @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $caseK = New-RunCase 'case-k' $contract $treeK.Root @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultK = Invoke-Classifier $caseK $syntheticContractPath -DataFolderOverride $treeK.Root
     Check 'exit 2' ($resultK.Code -eq 2)
     Check 'controlled failure recorded' ($resultK.Record.qualification -eq 'CONTROLLED_FAILURE')
@@ -424,50 +520,106 @@ try {
 
     Write-Host 'Case L: present/absent day swap, partition count unchanged'
     $treeL = New-Tree (Join-Path $root 'data-l') @('20190102', '20190103')
-    New-Manifest $treeL $presentDays
-    $caseL = New-RunCase 'case-l' $contract $treeL.Root @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    New-Manifest $treeL $presentDays $contract
+    $caseL = New-RunCase 'case-l' $contract $treeL.Root @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultL = Invoke-Classifier $caseL $syntheticContractPath -DataFolderOverride $treeL.Root
     Check 'exit 2' ($resultL.Code -eq 2)
     Check 'controlled failure recorded' ($resultL.Record.qualification -eq 'CONTROLLED_FAILURE')
 
     Write-Host 'Case M: invocation evidence data folder mismatch'
-    $caseM = New-RunCase 'case-m' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null (Join-Path $root 'other-data') $algorithmFilePath $algorithmFileHash
+    $caseM = New-RunCase 'case-m' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null (Join-Path $root 'other-data') $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultM = Invoke-Classifier $caseM $syntheticContractPath
     Check 'exit 2' ($resultM.Code -eq 2)
     Check 'controlled failure recorded' ($resultM.Record.qualification -eq 'CONTROLLED_FAILURE')
 
     Write-Host 'Case N: data-monitor count disagrees with the failed-request lines'
-    $caseN = New-RunCase 'case-n' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 3 $null $null $null $algorithmFilePath $algorithmFileHash
+    $caseN = New-RunCase 'case-n' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 3 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultN = Invoke-Classifier $caseN $syntheticContractPath
     Check 'exit 1' ($resultN.Code -eq 1)
     Check 'accounting mismatch classified' ($resultN.Record.occurrencesByCategory.'failed-request-accounting-mismatch' -eq 1)
 
     Write-Host 'Case O: a non-approved run termination is a controlled failure'
-    $caseO = New-RunCase 'case-o' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'StrategyInvariant' '2019-01-01T12:00:00' $null $algorithmFilePath $algorithmFileHash
+    $caseO = New-RunCase 'case-o' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'StrategyInvariant' '2019-01-01T12:00:00' $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultO = Invoke-Classifier $caseO $syntheticContractPath
     Check 'exit 2' ($resultO.Code -eq 2)
     Check 'controlled failure recorded' ($resultO.Record.qualification -eq 'CONTROLLED_FAILURE')
 
     Write-Host 'Case P: auxiliary request count disagrees with the tracked evidence'
-    $caseP = New-RunCase 'case-p' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip', '\cfd\dukascopy\hour\xauusd.zip') 2 $null $null $null $algorithmFilePath $algorithmFileHash
+    $caseP = New-RunCase 'case-p' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip', '\cfd\dukascopy\hour\xauusd.zip') 2 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     $resultP = Invoke-Classifier $caseP $syntheticContractPath
     Check 'exit 1' ($resultP.Code -eq 1)
     Check 'auxiliary/evidence mismatch classified' ($resultP.Record.occurrencesByCategory.'contract-evidence-mismatch' -eq 1)
     Check 'repeated path recorded' ($resultP.Record.repeatedFailedPaths.'cfd/dukascopy/hour/xauusd.zip' -eq 2)
 
     Write-Host 'Case Q: a contract not pinned by the register is refused without the test override'
-    $caseQ = New-RunCase 'case-q' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
-    $resultQ = Invoke-Classifier $caseQ $syntheticContractPath -NoOverride
+    $caseQ = New-RunCase 'case-q' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
+    $unpinnedContract = [System.IO.File]::ReadAllText($syntheticContractPath) | ConvertFrom-Json
+    $unpinnedContract.parameters[0].value = 'NOT-XAUUSD'
+    $unpinnedContractPath = Join-Path $root 'unpinned-contract.json'
+    Write-JsonFile $unpinnedContractPath $unpinnedContract
+    $resultQ = Invoke-Classifier $caseQ $unpinnedContractPath -NoOverride
     Check 'exit 2' ($resultQ.Code -eq 2)
     Check 'controlled failure recorded' ($resultQ.Record.qualification -eq 'CONTROLLED_FAILURE')
 
     Write-Host 'Case R: a data-folder override is refused without the test override'
-    $caseR = New-RunCase 'case-r' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash
+    $caseR = New-RunCase 'case-r' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
     # Use the real register-pinned contract so the pin check passes and the override gate itself is exercised.
     $resultR = Invoke-Classifier $caseR $realContract -NoOverride -DataFolderOverride $dataRoot
     Check 'exit 2' ($resultR.Code -eq 2)
     Check 'controlled failure recorded' ($resultR.Record.qualification -eq 'CONTROLLED_FAILURE')
     Check 'failure names the override gate' ($resultR.Record.failure -match 'must not be overridden')
+
+    Write-Host 'Case S: a non-clean helper outcome (engine errors) is refused'
+    $caseS = New-RunCase 'case-s' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
+    New-Outcome $caseS 0 4 $true 1 $runtimeRoot $runtimeHashes
+    $resultS = Invoke-Classifier $caseS $syntheticContractPath
+    Check 'exit 2' ($resultS.Code -eq 2)
+    Check 'controlled failure recorded' ($resultS.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case T: missing post-run outcome evidence is refused'
+    $caseT = New-RunCase 'case-t' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
+    Remove-Item -LiteralPath (Join-Path $caseT 'marketlab-run-outcome.json') -Force
+    $resultT = Invoke-Classifier $caseT $syntheticContractPath
+    Check 'exit 2' ($resultT.Code -eq 2)
+    Check 'controlled failure recorded' ($resultT.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case U: pre-run contract hash mismatch is refused'
+    $caseU = New-RunCase 'case-u' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
+    $invocationU = [System.IO.File]::ReadAllText((Join-Path $caseU 'marketlab-run-invocation.json')) | ConvertFrom-Json
+    $invocationU.baselineContractSha256 = ('0' * 64)
+    Write-JsonFile (Join-Path $caseU 'marketlab-run-invocation.json') $invocationU
+    # Re-write the outcome so it still binds the (modified) invocation file.
+    New-Outcome $caseU 0 0 $true 0 $runtimeRoot $runtimeHashes
+    $resultU = Invoke-Classifier $caseU $syntheticContractPath
+    Check 'exit 2' ($resultU.Code -eq 2)
+    Check 'controlled failure recorded' ($resultU.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case V: a runtime binary changed after the run is refused'
+    $runtimeRootV = Join-Path $root 'runtime-v'
+    $runtimeHashesV = New-RuntimeSet $runtimeRootV
+    $caseV = New-RunCase 'case-v' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRootV $runtimeHashesV
+    [System.IO.File]::WriteAllText((Join-Path $runtimeRootV 'QuantConnect.Common.dll'), 'changed after the run')
+    $resultV = Invoke-Classifier $caseV $syntheticContractPath
+    Check 'exit 2' ($resultV.Code -eq 2)
+    Check 'controlled failure recorded' ($resultV.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case W: a manifest not anchored to the qualification record is refused'
+    $treeW = New-Tree (Join-Path $root 'data-w') $presentDays
+    New-Manifest $treeW $presentDays $contract
+    $manifestW = [System.IO.File]::ReadAllText((Join-Path $treeW.Root 'marketlab-qualification\continuous-composition.json')) | ConvertFrom-Json
+    $manifestW | Add-Member -NotePropertyName 'note' -NotePropertyValue 'tampered after the qualification record' -Force
+    Write-JsonFile (Join-Path $treeW.Root 'marketlab-qualification\continuous-composition.json') $manifestW
+    $caseW = New-RunCase 'case-w' $contract $treeW.Root @('\cfd\dukascopy\hour\xauusd.zip') 1 $null $null $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
+    $resultW = Invoke-Classifier $caseW $syntheticContractPath -DataFolderOverride $treeW.Root
+    Check 'exit 2' ($resultW.Code -eq 2)
+    Check 'controlled failure recorded' ($resultW.Record.qualification -eq 'CONTROLLED_FAILURE')
+
+    Write-Host 'Case X: AccountStopOut with a non-terminal outcome shape is refused'
+    $caseX = New-RunCase 'case-x' $contract $dataRoot @('\cfd\dukascopy\hour\xauusd.zip') 1 'AccountStopOut' '2019-01-01T12:00:00' $null $algorithmFilePath $algorithmFileHash $runtimeRoot $runtimeHashes
+    New-Outcome $caseX 0 0 $true 0 $runtimeRoot $runtimeHashes
+    $resultX = Invoke-Classifier $caseX $syntheticContractPath
+    Check 'exit 2' ($resultX.Code -eq 2)
+    Check 'controlled failure recorded' ($resultX.Record.qualification -eq 'CONTROLLED_FAILURE')
 }
 finally {
     if (Test-Path -LiteralPath $root) {

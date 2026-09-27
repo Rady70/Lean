@@ -145,13 +145,28 @@ Downgrade failed data requests from exit code 3 to a warning.
 Downgrade engine ERROR:: lines in an exit-0 run from exit code 4 to a warning.
 
 .PARAMETER RunEvidence
-Write a machine-readable invocation-evidence file into the run directory before
-LEAN is launched: the resolved absolute inputs (build configuration, config file
-with its LF-normalized SHA-256, algorithm location and SHA-256, data folder,
-the exact `--parameters` pairs, the allow flags, the launcher and its SHA-256,
-and the exact launcher argv array). The file is evidence of what the run
-actually resolved to, not a reconstruction; failing to write it stops the run
-before LEAN is launched (exit 2). Default: off (dry runs never create it).
+Write machine-readable run evidence into the run directory. Before LEAN is
+launched, `marketlab-run-invocation.json` records the resolved absolute inputs
+(build configuration, config file with its LF-normalized SHA-256, algorithm
+location and SHA-256, data folder, the exact `--parameters` pairs, the allow
+flags, the launcher and its SHA-256, the exact launcher argv array, the Git HEAD
+and dirty state, and the hashes of the qualified runtime binary set). After the
+run, `marketlab-run-outcome.json` records the LEAN exit code, the final helper
+exit code, the engine-error check and count, the data-monitor result and
+whether the runtime binaries changed during the run. The files are evidence of
+what the run actually did, not a reconstruction; failing to write the pre-run
+file stops the run before LEAN is launched (exit 2). Default: off (dry runs
+never create it).
+
+.PARAMETER BaselineContract
+With -RunEvidence: path to the frozen baseline contract whose LF-normalized
+SHA-256 is recorded in the pre-run evidence. Must be passed together with
+-BaselineRegister, must exist, and must hash exactly to the register pin or the
+run refuses to launch (exit 2).
+
+.PARAMETER BaselineRegister
+With -RunEvidence: path to the authoritative decision register that pins the
+frozen contract hash. See -BaselineContract.
 
 .PARAMETER DryRun
 Validate everything, print the resolved paths and the exact command line, create
@@ -202,6 +217,8 @@ param(
     [switch]$AllowMissingData,
     [switch]$AllowEngineErrors,
     [switch]$RunEvidence,
+    [string]$BaselineContract,
+    [string]$BaselineRegister,
     [switch]$DryRun
 )
 
@@ -239,6 +256,19 @@ $script:QualifiedHandlers = @{
 }
 # Keys that only exist for live trading; they must not appear anywhere.
 $script:ForbiddenKeys = @('live-mode-brokerage', 'data-queue-handler')
+
+# The qualified LEAN runtime binary set (the continuous-qualification route's
+# engine assembly list, without its probe assembly): -RunEvidence hashes these
+# before the run and again after it, so a mid-run binary change is visible.
+$script:RuntimeBinaryFileNames = @(
+    'QuantConnect.Lean.Launcher.dll',
+    'QuantConnect.Lean.Engine.dll',
+    'QuantConnect.Common.dll',
+    'QuantConnect.Algorithm.dll',
+    'QuantConnect.AlgorithmFactory.dll',
+    'QuantConnect.Configuration.dll',
+    'QuantConnect.Logging.dll'
+)
 
 # ----------------------------------------------------------------------------
 # Helpers
@@ -817,6 +847,66 @@ elseif (-not (Test-Path -LiteralPath $outputRootPath -PathType Container)) {
     }
 }
 
+# Baseline contract identity and runtime set for -RunEvidence: the pre-run
+# evidence must be able to name the exact frozen contract (contract hash and
+# register pin, verified equal) and the qualified runtime it is about to run.
+$baselineContractPathResolved = $null
+$baselineRegisterPathResolved = $null
+$baselineContractSha256 = $null
+$baselineRegisterPin = $null
+$runtimeBinaryHashes = [ordered]@{}
+if ($RunEvidence) {
+    foreach ($name in $script:RuntimeBinaryFileNames) {
+        $runtimePath = Join-Path $launcherDir $name
+        if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+            $problems.Add("Runtime binary `"$runtimePath`" is missing; -RunEvidence needs the qualified Release runtime set (build it with MarketLab\scripts\build.ps1).")
+        }
+        else {
+            $runtimeBinaryHashes[$name] = Get-Sha256Hex $runtimePath
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($BaselineContract) -and [string]::IsNullOrWhiteSpace($BaselineRegister)) {
+        Write-WarningLine "-RunEvidence without -BaselineContract/-BaselineRegister: the evidence will not bind a baseline contract identity, so the baseline classifier will refuse the run."
+    }
+    elseif ([string]::IsNullOrWhiteSpace($BaselineContract) -or [string]::IsNullOrWhiteSpace($BaselineRegister)) {
+        $problems.Add("-BaselineContract and -BaselineRegister must be passed together with -RunEvidence.")
+    }
+    else {
+        try { $baselineContractPathResolved = ConvertTo-AbsolutePath $BaselineContract }
+        catch { $problems.Add("-BaselineContract `"$BaselineContract`" is not a usable path: $($_.Exception.Message)") }
+        try { $baselineRegisterPathResolved = ConvertTo-AbsolutePath $BaselineRegister }
+        catch { $problems.Add("-BaselineRegister `"$BaselineRegister`" is not a usable path: $($_.Exception.Message)") }
+        if ($null -ne $baselineContractPathResolved) {
+            if (-not (Test-Path -LiteralPath $baselineContractPathResolved -PathType Leaf)) {
+                $problems.Add("Baseline contract `"$baselineContractPathResolved`" does not exist.")
+            }
+            else {
+                $baselineContractSha256 = Get-Sha256Hex $baselineContractPathResolved -LfNormalized
+            }
+        }
+        if ($null -ne $baselineRegisterPathResolved) {
+            if (-not (Test-Path -LiteralPath $baselineRegisterPathResolved -PathType Leaf)) {
+                $problems.Add("Baseline register `"$baselineRegisterPathResolved`" does not exist.")
+            }
+            else {
+                try {
+                    $baselineRegisterObject = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($baselineRegisterPathResolved))
+                    $baselineRegisterPin = [string](Get-JsonProperty $baselineRegisterObject 'frozenBaselineContractSha256')
+                }
+                catch {
+                    $problems.Add("Baseline register `"$baselineRegisterPathResolved`" is unreadable: $($_.Exception.Message)")
+                }
+            }
+        }
+        if ($null -ne $baselineContractSha256 -and $null -ne $baselineRegisterPin -and $baselineContractSha256 -ne $baselineRegisterPin) {
+            $problems.Add("Baseline contract hash $baselineContractSha256 does not match the register pin $baselineRegisterPin; refusing to launch the frozen baseline with an unpinned contract.")
+        }
+    }
+}
+elseif (-not [string]::IsNullOrWhiteSpace($BaselineContract) -or -not [string]::IsNullOrWhiteSpace($BaselineRegister)) {
+    $problems.Add("-BaselineContract/-BaselineRegister are only meaningful with -RunEvidence; pass -RunEvidence or omit them.")
+}
+
 if ($problems.Count -gt 0) {
     foreach ($problem in $problems) { Write-ErrorLine $problem }
     Write-ErrorLine "Pre-flight validation failed with $($problems.Count) problem(s); LEAN was not launched. Exit code $script:ExitPreflight."
@@ -905,6 +995,25 @@ if ($RunEvidence) {
     $invocationEvidencePath = Join-Path $runDir 'marketlab-run-invocation.json'
     try {
         $evidenceParameters = @($parameterPairs)
+        $repositoryHead = $null
+        $repositoryDirty = $null
+        try {
+            $previousGitPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $gitHead = @(& git -C $leanRootPath rev-parse HEAD 2>$null)
+                if ($LASTEXITCODE -eq 0 -and $gitHead.Count -gt 0) { $repositoryHead = ([string]$gitHead[0]).Trim() }
+                $gitStatus = @(& git -C $leanRootPath status --porcelain 2>$null)
+                if ($LASTEXITCODE -eq 0) { $repositoryDirty = ($gitStatus.Count -gt 0) }
+            }
+            finally {
+                $ErrorActionPreference = $previousGitPreference
+            }
+        }
+        catch {
+            $repositoryHead = $null
+            $repositoryDirty = $null
+        }
         $invocationEvidence = [ordered]@{
             contract = 'marketlab-run-invocation-evidence-v1'
             generatedUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -928,6 +1037,14 @@ if ($RunEvidence) {
             commandLine = @($launcherArgs)
             workingDirectory = $runDir
             runDirectory = $runDir
+            baselineContractPath = $baselineContractPathResolved
+            baselineContractSha256 = $baselineContractSha256
+            baselineRegisterPath = $baselineRegisterPathResolved
+            baselineRegisterPin = $baselineRegisterPin
+            repositoryHead = $repositoryHead
+            repositoryDirty = $repositoryDirty
+            runtimeBinariesRoot = $launcherDir
+            runtimeBinaries = $runtimeBinaryHashes
         }
         [System.IO.File]::WriteAllText($invocationEvidencePath, ($invocationEvidence | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
         Write-Info "  run evidence:     $invocationEvidencePath"
@@ -982,6 +1099,8 @@ Write-Info ("LEAN exited with code {0} after {1:N1} s." -f $leanExitCode, $elaps
 # ----------------------------------------------------------------------------
 
 $exitCode = $leanExitCode
+$failed = $null
+$total = $null
 $report = Get-ChildItem -LiteralPath $runDir -Filter 'data-monitor-report-*.json' -File -ErrorAction SilentlyContinue |
     Sort-Object -Property Name -Descending | Select-Object -First 1
 
@@ -1063,6 +1182,8 @@ else {
 #    check above already owns them (exit 3 / -AllowMissingData). The same line
 #    for a file that is NOT in that list means the file exists but produced no
 #    data (empty entry, unreadable content) and is counted.
+$engineErrorCheckPerformed = $false
+$engineErrorCountForEvidence = $null
 if ($leanExitCode -eq 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
     $missingFiles = @()
     $missingList = Get-ChildItem -LiteralPath $runDir -Filter 'failed-data-requests-*.txt' -File -ErrorAction SilentlyContinue |
@@ -1073,6 +1194,7 @@ if ($leanExitCode -eq 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
     }
     $missingMarker = 'SubscriptionDataSourceReader.InvalidSource(): File not found: '
     $engineErrors = @()
+    $engineErrorCheckPerformed = $true
     try {
         $engineErrors = @([System.IO.File]::ReadAllLines($logPath) | Where-Object {
             $index = $_.IndexOf(' ERROR:: ', [System.StringComparison]::Ordinal)
@@ -1090,8 +1212,10 @@ if ($leanExitCode -eq 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
         })
     }
     catch {
+        $engineErrorCheckPerformed = $false
         Write-WarningLine "Could not read `"$logPath`" for the engine-error check: $($_.Exception.Message)."
     }
+    $engineErrorCountForEvidence = if ($engineErrorCheckPerformed) { $engineErrors.Count } else { $null }
     if ($engineErrors.Count -gt 0) {
         $lines = @(
             "$($engineErrors.Count) engine ERROR:: line(s) in `"$logPath`" although LEAN exited 0: the algorithm completed, but the engine reported errors on the way (for example a corrupt or empty data file it skipped, or a failure while generating the statistics), so the results are not a clean backtest.",
@@ -1115,6 +1239,51 @@ if ($leanExitCode -eq 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
                 $exitCode = $script:ExitEngineErrors
             }
         }
+    }
+}
+
+if ($RunEvidence) {
+    # Post-run outcome evidence: the helper's own verdict on the run (exit
+    # codes, engine-error check, data-monitor result) plus a re-hash of the
+    # runtime set so a binary changed mid-run is visible. Bound to the exact
+    # pre-run evidence file by its SHA-256.
+    $outcomePath = Join-Path $runDir 'marketlab-run-outcome.json'
+    try {
+        $runtimeBinariesAfter = [ordered]@{}
+        foreach ($name in $script:RuntimeBinaryFileNames) {
+            $runtimePath = Join-Path $launcherDir $name
+            if (Test-Path -LiteralPath $runtimePath -PathType Leaf) {
+                $runtimeBinariesAfter[$name] = Get-Sha256Hex $runtimePath
+            }
+        }
+        $runtimeBinariesUnchanged = $true
+        foreach ($name in $script:RuntimeBinaryFileNames) {
+            if (-not $runtimeBinariesAfter.Contains($name) -or [string]$runtimeBinariesAfter[$name] -ne [string]$runtimeBinaryHashes[$name]) {
+                $runtimeBinariesUnchanged = $false
+            }
+        }
+        $outcome = [ordered]@{
+            contract = 'marketlab-run-outcome-evidence-v1'
+            generatedUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+            invocationEvidence = 'marketlab-run-invocation.json'
+            invocationEvidenceSha256 = Get-Sha256Hex $invocationEvidencePath
+            leanExitCode = $leanExitCode
+            helperExitCode = $exitCode
+            leanElapsedSeconds = [math]::Round($elapsed.TotalSeconds, 1)
+            engineErrorCheckPerformed = $engineErrorCheckPerformed
+            engineErrorCount = $engineErrorCountForEvidence
+            dataMonitorReport = if ($null -ne $report) { $report.Name } else { $null }
+            failedDataRequestCount = $failed
+            totalDataRequestCount = $total
+            runtimeBinariesAfter = $runtimeBinariesAfter
+            runtimeBinariesUnchanged = $runtimeBinariesUnchanged
+        }
+        [System.IO.File]::WriteAllText($outcomePath, ($outcome | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
+        Write-Info "  run outcome:      $outcomePath"
+    }
+    catch {
+        Write-ErrorLine "Could not write the run outcome evidence to `"$outcomePath`": $($_.Exception.Message)"
+        if ($exitCode -eq 0) { $exitCode = $script:ExitPreflight }
     }
 }
 

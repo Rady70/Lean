@@ -129,7 +129,7 @@ section 6:
 - the canonical, complete, machine-readable configuration is
   `config/baseline-contract.json`, with the human-auditable rendering
   `BASELINE_CONTRACT.md`; baseline contract identity (LF-normalized SHA-256)
-  `2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c`;
+  `59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4`;
 - the approved values include the qualified data identity
   (XAUUSD/dukascopy/Cfd; the continuous folder at
   `E:\MarketLab\data\lean\xauusd-dukascopy` with its 90 months, 2,332
@@ -152,15 +152,19 @@ section 6:
   the authority is the approved baseline decision and the register records
   that explicitly;
 - the helper failed-data policy is `-AllowMissingData` and `-RunEvidence`
-  enabled **with** a mandatory post-run classification of every failed request
+  (with `-BaselineContract`/`-BaselineRegister`) enabled **with** a mandatory
+  post-run classification of every failed request
   (`scripts/Test-SingleAnchorBaselineFailedData.ps1`); the run's pre-run
-  invocation evidence is persisted into the run directory and checked against
-  the contract, the continuous tree is verified against its composition
-  manifest (all 2,332 partition hashes and the auxiliary database hashes,
-  without replaying the rows), the failed-request lines are reconciled with the
-  engine's data-monitor count, and only normal completion or the intended
-  `AccountStopOut` outcome is classifiable; an unexpected missing qualified
-  partition invalidates the baseline, and `-AllowEngineErrors` remains
+  invocation evidence records the verified contract identity, the resolved
+  inputs, the clean Git HEAD and the qualified runtime hashes, the post-run
+  outcome evidence records the helper's verdict, the continuous tree is
+  verified against its composition manifest and the manifest against the
+  replay qualification record (all 2,332 partition hashes and the auxiliary
+  database hashes, without replaying the rows), the failed-request lines are
+  reconciled with the engine's data-monitor count, and only a clean normal
+  completion or the intended `AccountStopOut` terminal shape is classifiable;
+  an unexpected missing qualified partition or an engine `ERROR::` line in a
+  completed run invalidates the baseline, and `-AllowEngineErrors` remains
   prohibited;
 - the Windows-local checks are
   `tests/SingleAnchor/BaselineDecisionAuditTests.cs`,

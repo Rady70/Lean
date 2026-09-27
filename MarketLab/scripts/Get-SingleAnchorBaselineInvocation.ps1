@@ -153,7 +153,9 @@ $renderedCommand = "pwsh -File MarketLab\scripts\run-backtest.ps1" `
     + " -AlgorithmLocation $($runHost.algorithmLocation)" `
     + " -DataFolder $($dataIdentity.dataFolder)" `
     + " -Parameters `"$parametersString`"" `
-    + " -AllowMissingData -RunEvidence"
+    + " -AllowMissingData -RunEvidence" `
+    + " -BaselineContract MarketLab\config\baseline-contract.json" `
+    + " -BaselineRegister MarketLab\config\baseline-decision-audit.json"
 
 $recordedCommand = Get-JsonProperty $runProcedure 'exactRunCommand'
 if ($recordedCommand -ne $renderedCommand) {

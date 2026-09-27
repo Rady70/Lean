@@ -570,7 +570,7 @@ configuration is
 [`config/baseline-contract.json`](config/baseline-contract.json) (human-auditable
 rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)), baseline contract
 identity (LF-normalized SHA-256)
-`2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c`. The
+`59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4`. The
 contract freezes `StepPercent = 0.25`, `BaseLot = 0.10`,
 `InitialBalance = 20,000 USD`, `ProjectedSpread = 0.50` (an approved baseline
 projection assumption, not an empirical optimum), `Slippage = 0` and
@@ -579,14 +579,21 @@ the implementation defaults), margin enabled with the approved PR #3
 margin/survival model, and the `-AllowMissingData` policy with a mandatory
 post-run classification of every failed data request
 ([`scripts\Test-SingleAnchorBaselineFailedData.ps1`](scripts/Test-SingleAnchorBaselineFailedData.ps1)).
-The authoritative run also passes `-RunEvidence`, so the helper persists the
-actual resolved invocation (`marketlab-run-invocation.json`) into the run
-directory before LEAN launches; the classifier refuses a contract whose hash
-is not the decision register's frozen pin, a run whose persisted invocation
-differs from the contract, and a continuous tree that no longer matches its
-composition manifest (all 2,332 partition hashes and the auxiliary database
-hashes are verified without replaying the 413,750,130 rows), and it reconciles
-the failed-request lines with the engine's data-monitor count.
+The authoritative run also passes `-RunEvidence` with
+`-BaselineContract`/`-BaselineRegister`: the helper persists the actual
+resolved invocation, the verified contract hash and register pin, the Git
+HEAD/clean state and the qualified runtime binary hashes before LEAN launches,
+and a post-run outcome record (LEAN/helper exit codes, engine-error check and
+count, data-monitor result, runtime re-hash) after it. The classifier refuses a
+contract whose hash is not the decision register's frozen pin, a run whose
+pre-run identity or resolved invocation differs from the contract, a dirty
+working tree, a changed runtime binary, a non-clean completed run or an
+`AccountStopOut` that is not exactly the modeled terminal shape, and a
+continuous tree that no longer matches its composition manifest (all 2,332
+partition hashes, the auxiliary database hashes and the manifest's anchor to
+the replay qualification record are verified without replaying the
+413,750,130 rows); it reconciles the failed-request lines with the engine's
+data-monitor count.
 The decision register is resolved (`unresolvedDecisionCount: 0`) and bound to
 the contract. The first untouched full-history strategy baseline has **not**
 been run and parameter optimization has **not** started. The continuous

@@ -12,26 +12,39 @@ audit step and proves the chain around it:
    register (frozenBaselineContractSha256), unless the caller explicitly opts into a
    non-authoritative test override.
 2. The run must carry the pre-run invocation evidence written by
-   run-backtest.ps1 -RunEvidence (marketlab-run-invocation.json): this script verifies the
-   resolved build configuration, config file and its hash, algorithm location and hash,
-   data folder, exact parameter pairs and the allow flags against the contract. A run
-   without it, or one whose actual resolved invocation differs from the frozen contract,
-   is refused as a controlled configuration failure.
-3. The machine-local continuous tree must still be the qualified PR 13 tree: the
+   run-backtest.ps1 -RunEvidence -BaselineContract ... -BaselineRegister ...
+   (marketlab-run-invocation.json): this script requires the recorded contract path,
+   SHA-256 and register pin to equal the canonical contract/pin, the resolved build
+   configuration, config file and its hash, algorithm location and hash, data folder,
+   exact parameter pairs and allow flags to equal the contract's, the Git HEAD to be
+   present with a clean working tree, and the qualified runtime binary set to be
+   recorded and unchanged on disk.
+3. The run must carry the post-run outcome evidence
+   (marketlab-run-outcome.json) written by the helper, bound to the pre-run file by its
+   SHA-256: a completed run must show LEAN exit 0, helper exit 0 and a performed
+   engine-error check with zero engine ERROR:: lines; an AccountStopOut run must show
+   exactly LEAN exit 1, helper exit 1 and no engine-error check. The recorded
+   failed-data count must equal the data-monitor count and the runtime binaries must be
+   unchanged during the run.
+4. The machine-local continuous tree must still be the qualified PR 13 tree: the
    composition manifest (marketlab-qualification\continuous-composition.json) is checked
    against the contract, every one of the 2,332 partition zips is SHA-256 verified against
-   the manifest's recorded zip_sha256, the partition name set must match exactly, and the
-   market-hours database, symbol-properties database and session map are hash-verified.
-   This catches a modified partition, or a present/absent-day swap that keeps the count at
-   2,332, without replaying the 413,750,130 rows.
-4. The run must be the frozen baseline run: storage\single-anchor\results.json must carry
+   the manifest's recorded zip_sha256, the partition name set must match exactly, the
+   per-day semantic map must describe the same days, the market-hours database,
+   symbol-properties database and session map are hash-verified, and the manifest file is
+   anchored to the replay qualification record
+   (continuous-qualification-record.json: PASS with continuous.composition_sha256 equal
+   to the actual manifest hash). This catches a modified partition, or a
+   present/absent-day swap that keeps the count at 2,332, without replaying the
+   413,750,130 rows.
+5. The run must be the frozen baseline run: storage\single-anchor\results.json must carry
    the contract's symbol, market, period, research account, margin mode, session map and
    every mapped strategy parameter.
-5. The engine's data-monitor report must exist (exactly one) and its
+6. The engine's data-monitor report must exist (exactly one) and its
    failed-data-requests-count must equal the total number of failed-request lines; every
    line is classified (occurrences are counted, distinct paths are compared), and the
    known auxiliary request count must equal the tracked evidence's expected count.
-6. Only a normally completed run or an AccountStopOut (the intended modeled terminal
+7. Only a normally completed run or an AccountStopOut (the intended modeled terminal
    target-account stop-out) is classifiable; any other run-ending condition is refused as
    a controlled failure and cannot receive failed-data qualification EXPECTED.
 
@@ -275,6 +288,12 @@ try {
     $marketHoursSha256 = [string](Get-RequiredProperty $dataIdentity 'marketHoursDatabaseSha256')
     $symbolPropertiesSha256 = [string](Get-RequiredProperty $dataIdentity 'symbolPropertiesDatabaseSha256')
     $semanticDigest = [string](Get-RequiredProperty $dataIdentity 'continuousHistorySemanticDigest')
+    $sourceFileSetSha256 = [string](Get-RequiredProperty $dataIdentity 'sourceFileSetSha256')
+    $orderedMonthDigestChainSha256 = [string](Get-RequiredProperty $dataIdentity 'orderedMonthDigestChainSha256')
+    $monthCount = [int](Get-RequiredProperty $dataIdentity 'continuousHistoryMonthCount')
+    $quoteCount = [long](Get-RequiredProperty $dataIdentity 'continuousHistoryQuoteCount')
+    $firstCanonicalUtc = [string](Get-RequiredProperty $dataIdentity 'continuousHistoryFirstQuoteUtc')
+    $lastCanonicalUtc = [string](Get-RequiredProperty $dataIdentity 'continuousHistoryLastQuoteUtc')
     $knownAuxiliary = @(Get-RequiredProperty $policy 'knownAuxiliaryRequestPaths')
     $expectedCategories = @(Get-RequiredProperty $policy 'expectedCategories')
 }
@@ -314,15 +333,22 @@ if ($manifestContract -ne 'marketlab-continuous-history-composition-v1') {
 }
 
 try {
+    $manifestCounts = Get-RequiredProperty $manifestData 'counts'
     $manifestChecks = [ordered]@{
         partitionCount = ([int](Get-RequiredProperty $manifestComposition 'partition_count') -eq $partitionCount)
+        monthCount = ([int](Get-RequiredProperty $manifestComposition 'month_count') -eq $monthCount)
         orderedSourceDigest = ([string](Get-RequiredProperty $manifestComposition 'ordered_source_semantic_digest') -eq $semanticDigest)
+        sourceFileSet = ([string](Get-RequiredProperty $manifestComposition 'source_file_set_sha256') -eq $sourceFileSetSha256)
+        orderedMonthChain = ([string](Get-RequiredProperty $manifestComposition 'ordered_month_digest_chain_sha256') -eq $orderedMonthDigestChainSha256)
         sessionMapSha256 = ([string](Get-RequiredProperty $manifestSessionMap 'sha256') -eq $sessionMapSha256)
         sessionMapPath = ([string](Get-RequiredProperty $manifestSessionMap 'relative_path') -eq $sessionMapRelative)
         windowStart = ([string](Get-PropertyOrNull (Get-RequiredProperty $manifestComposition 'lean_run_window') 'start_date') -eq $startText)
         windowEnd = ([string](Get-PropertyOrNull (Get-RequiredProperty $manifestComposition 'lean_run_window') 'end_date') -eq $endText)
-        firstCanonicalUtc = ([string](Get-RequiredProperty $manifestComposition 'first_canonical_utc') -eq [string](Get-RequiredProperty $dataIdentity 'continuousHistoryFirstQuoteUtc'))
-        lastCanonicalUtc = ([string](Get-RequiredProperty $manifestComposition 'last_canonical_utc') -eq [string](Get-RequiredProperty $dataIdentity 'continuousHistoryLastQuoteUtc'))
+        firstCanonicalUtc = ([string](Get-RequiredProperty $manifestComposition 'first_canonical_utc') -eq $firstCanonicalUtc)
+        lastCanonicalUtc = ([string](Get-RequiredProperty $manifestComposition 'last_canonical_utc') -eq $lastCanonicalUtc)
+        acceptedRowCount = ([long](Get-RequiredProperty $manifestCounts 'accepted_row_count') -eq $quoteCount)
+        convertedRowCount = ([long](Get-RequiredProperty $manifestCounts 'converted_row_count') -eq $quoteCount)
+        rejectedRows = ([long](Get-RequiredProperty $manifestCounts 'rejected_row_count') -eq 0L)
         marketHoursSha256 = ([string](Get-PropertyOrNull (Get-RequiredProperty $manifestLean 'market_hours_database') 'database_sha256') -eq $marketHoursSha256)
         symbolPropertiesSha256 = ([string](Get-RequiredProperty (Get-RequiredProperty $manifestLean 'symbol_properties_database') 'sha256') -eq $symbolPropertiesSha256)
         qualificationPass = (
@@ -341,6 +367,40 @@ foreach ($check in $manifestChecks.GetEnumerator()) {
 }
 if ($manifestProblems.Count -gt 0) {
     Fail-Preflight ("the composition manifest does not match the frozen contract: " + ($manifestProblems -join ', ') + ".") $outputFullPath $authoritative
+}
+
+# The composition manifest itself is anchored to the replay qualification record:
+# the record's composition_sha256 must be the actual manifest file hash, and the
+# record must be a PASS. This closes the loop manifest -> qualification -> the
+# tracked PR #13 evidence without replaying any rows.
+$qualificationRecordPath = Join-Path (Join-Path $resolvedDataFolder 'marketlab-qualification') 'continuous-qualification-record.json'
+if (-not (Test-Path -LiteralPath $qualificationRecordPath -PathType Leaf)) {
+    Fail-Preflight "the qualified tree's replay qualification record '$qualificationRecordPath' does not exist; the composition manifest cannot be anchored." $outputFullPath $authoritative
+}
+$manifestFileSha256 = Get-FileSha256 $manifestPath
+try {
+    $qualificationRecord = [System.IO.File]::ReadAllText($qualificationRecordPath) | ConvertFrom-Json
+    $recordContract = Get-RequiredProperty $qualificationRecord 'contract'
+    $recordContinuous = Get-RequiredProperty $qualificationRecord 'continuous'
+    $recordChecks = [ordered]@{
+        contract = ($recordContract -eq 'marketlab-historical-data-qualification-record-v1')
+        overallPass = ((Get-RequiredProperty $qualificationRecord 'overall_qualification') -eq 'PASS')
+        helperExitZero = ([int](Get-RequiredProperty $qualificationRecord 'helper_exit_code') -eq 0)
+        compositionSha256 = ([string](Get-RequiredProperty $recordContinuous 'composition_sha256') -eq $manifestFileSha256)
+        partitionCount = ([int](Get-RequiredProperty $recordContinuous 'partition_count') -eq $partitionCount)
+        monthCount = ([int](Get-RequiredProperty $recordContinuous 'month_count') -eq $monthCount)
+        sessionMapSha256 = ([string](Get-PropertyOrNull (Get-RequiredProperty $recordContinuous 'session_map') 'sha256') -eq $sessionMapSha256)
+    }
+}
+catch {
+    Fail-Preflight "the replay qualification record is incomplete: $($_.Exception.Message)" $outputFullPath $authoritative
+}
+$recordProblems = @()
+foreach ($check in $recordChecks.GetEnumerator()) {
+    if (-not $check.Value) { $recordProblems += $check.Key }
+}
+if ($recordProblems.Count -gt 0) {
+    Fail-Preflight ("the replay qualification record does not match the composition manifest: " + ($recordProblems -join ', ') + ".") $outputFullPath $authoritative
 }
 
 # Every partition zip must exist and hash exactly as the manifest recorded it: this is
@@ -621,6 +681,62 @@ if ($actualAlgorithmHash -ne $recordedAlgorithmHash) {
     Fail-Preflight "the run's algorithm assembly now hashes to $actualAlgorithmHash but the invocation evidence recorded $recordedAlgorithmHash; the run binary changed after the run." $outputFullPath $authoritative
 }
 
+# Contract identity at launch time: the pre-run evidence must name this exact
+# canonical contract and the register pin, and the two must agree. This is what
+# binds the run to the frozen contract identity rather than to "whatever
+# contract the classifier happens to see now".
+$preRunContractPath = [string](Get-PropertyOrNull $invocation 'baselineContractPath')
+$preRunContractSha256 = [string](Get-PropertyOrNull $invocation 'baselineContractSha256')
+$preRunRegisterPath = [string](Get-PropertyOrNull $invocation 'baselineRegisterPath')
+$preRunRegisterPin = [string](Get-PropertyOrNull $invocation 'baselineRegisterPin')
+if ([string]::IsNullOrWhiteSpace($preRunContractPath) -or [string]::IsNullOrWhiteSpace($preRunRegisterPath) -or [string]::IsNullOrWhiteSpace($preRunContractSha256) -or [string]::IsNullOrWhiteSpace($preRunRegisterPin)) {
+    Fail-Preflight "the run's pre-run invocation evidence names no baseline contract identity; the run cannot be bound to the frozen contract." $outputFullPath $authoritative
+}
+if ([System.IO.Path]::GetFullPath($preRunContractPath) -ne $contractPath -or [System.IO.Path]::GetFullPath($preRunRegisterPath) -ne $registerPath) {
+    Fail-Preflight "the run's pre-run evidence names contract '$preRunContractPath' / register '$preRunRegisterPath', not the canonical '$contractPath' / '$registerPath'." $outputFullPath $authoritative
+}
+if ($preRunContractSha256 -ne $contractSha256 -or $preRunRegisterPin -ne $preRunContractSha256) {
+    Fail-Preflight "the run's pre-run contract hash $preRunContractSha256 / pin $preRunRegisterPin does not match the canonical contract hash $contractSha256." $outputFullPath $authoritative
+}
+
+# Repository and qualified runtime provenance captured before the run.
+$repositoryHead = [string](Get-PropertyOrNull $invocation 'repositoryHead')
+$repositoryDirty = Get-PropertyOrNull $invocation 'repositoryDirty'
+if ([string]::IsNullOrWhiteSpace($repositoryHead)) {
+    Fail-Preflight "the run's pre-run evidence records no Git HEAD; the reviewed freeze commit cannot be established." $outputFullPath $authoritative
+}
+if ($null -eq $repositoryDirty -or [bool]$repositoryDirty) {
+    Fail-Preflight "the run was launched from a dirty working tree (or the evidence does not say); the authoritative baseline must run from the reviewed and merged freeze commit." $outputFullPath $authoritative
+}
+$expectedRuntimeBinaries = @(
+    'QuantConnect.Lean.Launcher.dll',
+    'QuantConnect.Lean.Engine.dll',
+    'QuantConnect.Common.dll',
+    'QuantConnect.Algorithm.dll',
+    'QuantConnect.AlgorithmFactory.dll',
+    'QuantConnect.Configuration.dll',
+    'QuantConnect.Logging.dll'
+)
+$runtimeBinariesRoot = [string](Get-PropertyOrNull $invocation 'runtimeBinariesRoot')
+$runtimeBinaries = Get-PropertyOrNull $invocation 'runtimeBinaries'
+if ([string]::IsNullOrWhiteSpace($runtimeBinariesRoot) -or $null -eq $runtimeBinaries) {
+    Fail-Preflight "the run's pre-run evidence records no qualified runtime binary set." $outputFullPath $authoritative
+}
+$runtimeNames = @($runtimeBinaries.PSObject.Properties.Name)
+if ((@($runtimeNames | Sort-Object) -join ',') -ne (@($expectedRuntimeBinaries | Sort-Object) -join ',')) {
+    Fail-Preflight "the run's runtime binary set is not the qualified set: $($runtimeNames -join ', ')." $outputFullPath $authoritative
+}
+foreach ($name in $expectedRuntimeBinaries) {
+    $runtimePath = Join-Path $runtimeBinariesRoot $name
+    if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+        Fail-Preflight "the qualified runtime binary '$runtimePath' no longer exists; the run runtime identity cannot be proven." $outputFullPath $authoritative
+    }
+    $runtimeHash = Get-FileSha256 $runtimePath
+    if ($runtimeHash -ne [string]$runtimeBinaries.$name) {
+        Fail-Preflight "the runtime binary '$name' now hashes to $runtimeHash but the pre-run evidence recorded $($runtimeBinaries.$name); the qualified runtime changed after the run." $outputFullPath $authoritative
+    }
+}
+
 # --- Data-monitor reconciliation and approved termination -----------------------
 $monitorFiles = @(Get-ChildItem -LiteralPath $runPath -Filter 'data-monitor-report-*.json' -File -ErrorAction SilentlyContinue)
 if ($monitorFiles.Count -ne 1) {
@@ -674,6 +790,71 @@ foreach ($absent in $expectedAbsentDays) {
     }
     else {
         [void]$absentDaysAfterTermination.Add($absent)
+    }
+}
+
+# --- Post-run outcome evidence: the helper's own verdict on the run -------------
+# The pre-run evidence says what was launched; this record says how it ended. A
+# normally completed run must have a clean helper outcome (LEAN exit 0, helper
+# exit 0, engine-error check performed with zero engine errors). An
+# AccountStopOut run has exactly the modeled terminal shape (LEAN exit 1,
+# helper exit 1, engine-error check not performed because LEAN did not exit 0).
+# Anything else is not an authoritative baseline outcome.
+$outcomePath = Join-Path $runPath 'marketlab-run-outcome.json'
+if (-not (Test-Path -LiteralPath $outcomePath -PathType Leaf)) {
+    Fail-Preflight "the run has no outcome evidence '$outcomePath'; launch the baseline with run-backtest.ps1 -RunEvidence so the helper's verdict is provable." $outputFullPath $authoritative
+}
+try {
+    $outcome = [System.IO.File]::ReadAllText($outcomePath) | ConvertFrom-Json
+    $outcomeContract = Get-RequiredProperty $outcome 'contract'
+    $outcomeInvocationSha = [string](Get-RequiredProperty $outcome 'invocationEvidenceSha256')
+    $outcomeLeanExit = [int](Get-RequiredProperty $outcome 'leanExitCode')
+    $outcomeHelperExit = [int](Get-RequiredProperty $outcome 'helperExitCode')
+    $outcomeEnginePerformed = [bool](Get-RequiredProperty $outcome 'engineErrorCheckPerformed')
+    $outcomeEngineCount = Get-PropertyOrNull $outcome 'engineErrorCount'
+    $outcomeFailedCount = Get-PropertyOrNull $outcome 'failedDataRequestCount'
+    $outcomeMonitor = [string](Get-PropertyOrNull $outcome 'dataMonitorReport')
+    $outcomeBinariesUnchanged = [bool](Get-RequiredProperty $outcome 'runtimeBinariesUnchanged')
+    $outcomeBinariesAfter = Get-RequiredProperty $outcome 'runtimeBinariesAfter'
+}
+catch {
+    Fail-Preflight "the run outcome evidence is incomplete: $($_.Exception.Message)" $outputFullPath $authoritative
+}
+if ($outcomeContract -ne 'marketlab-run-outcome-evidence-v1') {
+    Fail-Preflight "the run outcome contract '$outcomeContract' is not 'marketlab-run-outcome-evidence-v1'." $outputFullPath $authoritative
+}
+if ($outcomeInvocationSha -ne (Get-FileSha256 $invocationEvidencePath)) {
+    Fail-Preflight "the run outcome is not bound to the pre-run invocation evidence (recorded $outcomeInvocationSha)." $outputFullPath $authoritative
+}
+if ($outcomeMonitor -ne $monitorFiles[0].Name) {
+    Fail-Preflight "the run outcome names monitor '$outcomeMonitor' but the run directory carries '$($monitorFiles[0].Name)'." $outputFullPath $authoritative
+}
+if ($null -eq $outcomeFailedCount -or [int]$outcomeFailedCount -ne $monitorFailedCount) {
+    Fail-Preflight "the run outcome records failed-data count '$outcomeFailedCount' but the data monitor reports $monitorFailedCount." $outputFullPath $authoritative
+}
+if (-not $outcomeBinariesUnchanged) {
+    Fail-Preflight 'the qualified runtime binaries changed during the run; the run runtime identity is not stable.' $outputFullPath $authoritative
+}
+$outcomeRuntimeNames = @($outcomeBinariesAfter.PSObject.Properties.Name)
+if ((@($outcomeRuntimeNames | Sort-Object) -join ',') -ne (@($expectedRuntimeBinaries | Sort-Object) -join ',')) {
+    Fail-Preflight "the run outcome runtime binary set is not the qualified set: $($outcomeRuntimeNames -join ', ')." $outputFullPath $authoritative
+}
+foreach ($name in $expectedRuntimeBinaries) {
+    if ([string]$outcomeBinariesAfter.$name -ne [string]$runtimeBinaries.$name) {
+        Fail-Preflight "the run outcome's post-run hash of '$name' differs from the pre-run hash." $outputFullPath $authoritative
+    }
+}
+if ($runTerminated) {
+    if ($outcomeLeanExit -ne 1 -or $outcomeHelperExit -ne 1 -or $outcomeEnginePerformed) {
+        Fail-Preflight "the AccountStopOut run outcome is not the approved terminal shape (LEAN exit $outcomeLeanExit, helper exit $outcomeHelperExit, engine check performed $outcomeEnginePerformed)." $outputFullPath $authoritative
+    }
+}
+else {
+    if ($outcomeLeanExit -ne 0 -or $outcomeHelperExit -ne 0 -or -not $outcomeEnginePerformed) {
+        Fail-Preflight "the run outcome is not clean (LEAN exit $outcomeLeanExit, helper exit $outcomeHelperExit, engine check performed $outcomeEnginePerformed); the baseline is invalid." $outputFullPath $authoritative
+    }
+    if ($null -eq $outcomeEngineCount -or [int]$outcomeEngineCount -ne 0) {
+        Fail-Preflight "the run outcome records $outcomeEngineCount engine ERROR:: line(s); an engine/runtime error makes the baseline invalid." $outputFullPath $authoritative
     }
 }
 
@@ -836,6 +1017,18 @@ $record['runDirectory'] = $runPath
 $record['resultsFile'] = $resultsPath
 $record['invocationEvidenceFile'] = $invocationEvidencePath
 $record['invocationEvidenceVerified'] = $true
+$record['preRunContractSha256'] = $preRunContractSha256
+$record['preRunRegisterPin'] = $preRunRegisterPin
+$record['repositoryHead'] = $repositoryHead
+$record['repositoryDirty'] = $repositoryDirty
+$record['runtimeBinaryNames'] = $expectedRuntimeBinaries
+$record['runtimeBinariesVerified'] = $true
+$record['runOutcomeFile'] = $outcomePath
+$record['runOutcomeVerified'] = $true
+$record['leanExitCode'] = $outcomeLeanExit
+$record['helperExitCode'] = $outcomeHelperExit
+$record['engineErrorCheckPerformed'] = $outcomeEnginePerformed
+$record['engineErrorCount'] = $outcomeEngineCount
 $record['symbol'] = $symbol
 $record['market'] = $market
 $record['startDate'] = $startText
@@ -843,6 +1036,8 @@ $record['endDate'] = $endText
 $record['resolvedDataFolder'] = $resolvedDataFolder
 $record['dataFolderSource'] = $dataFolderSource
 $record['compositionManifest'] = $manifestPath
+$record['compositionManifestSha256'] = $manifestFileSha256
+$record['qualificationRecord'] = $qualificationRecordPath
 $record['verifiedPartitionCount'] = $verifiedPartitionCount
 $record['sessionMapSha256'] = $sessionMapSha256
 $record['marketHoursDatabaseSha256'] = $marketHoursSha256

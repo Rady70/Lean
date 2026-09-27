@@ -1354,7 +1354,7 @@ the freeze is **complete**: the canonical, complete, immutable configuration is
 [config/baseline-contract.json](config/baseline-contract.json) with its
 human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), and
 baseline contract identity (LF-normalized SHA-256)
-`2b933e1e34da7d83a622965548844cb457ecd4622f1ba7c8669ba0cf34590a1c`. The
+`59261cc7a6fed1210cac04a0293c18eab88e4b839c4340dbd9f5ee594747eaa4`. The
 approved values are StepPercent 0.25, BaseLot 0.10, InitialBalance 20,000 USD,
 ProjectedSpread 0.50 (a fixed hard-BE projection assumption, not an empirical
 optimum), Slippage 0 and CommissionBuffer 0 (explicit baseline decisions even
@@ -1369,18 +1369,25 @@ former fixture/default value, the register records that the authority is the
 approved baseline decision.
 
 The authoritative run is procedurally bound to the contract: the helper is
-launched with `-RunEvidence`, which persists the actual resolved invocation
-(`marketlab-run-invocation.json`: paths, parameter pairs, allow flags, launcher
-argv and the config/algorithm hashes) into the run directory before LEAN
-launches, and the classifier refuses to qualify a run without it or with a
-different resolved invocation. The classifier additionally verifies that the
-contract file is the register-pinned frozen contract, that the continuous tree
-still matches its composition manifest (all 2,332 partition hashes, the
-partition name set, the per-day semantic map and the market-hours/
-symbol-properties/session-map hashes  -  without replaying the 413,750,130
-rows), and that the engine's data-monitor failed-request count equals the
-failed-request lines; only normal completion or the intended `AccountStopOut`
-terminal outcome is classifiable.
+launched with `-RunEvidence -BaselineContract ... -BaselineRegister ...`,
+which verifies the contract hash equals the register pin and persists the
+contract identity, the actual resolved invocation, the Git HEAD/clean state
+and the qualified runtime binary hashes
+(`marketlab-run-invocation.json`) into the run directory before LEAN
+launches, and the helper's own post-run verdict
+(`marketlab-run-outcome.json`: LEAN/helper exit codes, engine-error check and
+count, data-monitor result, runtime re-hash) after it; the classifier refuses
+to qualify a run without the evidence or with a different resolved invocation,
+identity, repository state or runtime. The classifier additionally verifies
+that the continuous tree still matches its composition manifest (all 2,332
+partition hashes, the partition name set, the per-day semantic map and the
+market-hours/symbol-properties/session-map hashes  -  without replaying the
+413,750,130 rows), that the manifest file is anchored to the replay
+qualification record (`continuous-qualification-record.json`, PASS with the
+manifest hash), and that the engine's data-monitor failed-request count equals
+the failed-request lines; a completed run must have a clean helper outcome
+(no engine `ERROR::` lines) and only the intended `AccountStopOut` terminal
+outcome may end a run early.
 
 The Windows-local checks are
 [tests/SingleAnchor/BaselineDecisionAuditTests.cs](tests/SingleAnchor/BaselineDecisionAuditTests.cs)
