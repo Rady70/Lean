@@ -30,8 +30,11 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `SINGLE_ANCHOR_VNEXT_STRATEGY.md` | the SingleAnchor vNext strategy specification (authoritative behaviour) |
 | `SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` | where its C# implementation lives, how it is built, tested and run, what is deferred |
 | `SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md` | approved roadmap for historical-data qualification, C# research analytics, account survival and the first baseline research run |
+| `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` | the baseline-decision audit: every baseline-relevant value classified, the approved data identity, and the unresolved decisions that block the freeze |
+| `config\baseline-decision-audit.json` | machine-readable audit register (explicitly not the frozen baseline contract and not a run configuration) |
 | `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
+| `tests\SingleAnchor\BaselineDecisionAuditTests.cs` | the Windows-local drift check for the audit, the implementation defaults and the PR #13 evidence |
 | `tools\historical-data\` | offline source qualification, exact-decimal native LEAN tick conversion and the actual LEAN replay probe (PR 1); see its [README](tools/historical-data/README.md) and [provenance](tools/historical-data/PROVENANCE.md) |
 | `tools\research-account-probe\` | paired per-quote throughput and allocation probe for the PR 2 research account |
 | `.gitignore` | ignores `output\` (generated runs) |
@@ -547,9 +550,15 @@ the complete history reproduced the qualified 413,750,130 quotes, the qualified
 boundaries and every per-partition count and semantic digest; after that
 verification the redundant complete 90-folder native representations were
 retired, so exactly one complete derived native representation remains. The
-canonical raw source is unchanged. The baseline configuration freeze and the
-first untouched full-history baseline remain later steps
-([tools README](tools/historical-data/README.md) section 10); the continuous
+canonical raw source is unchanged. The baseline configuration freeze has since
+been audited ([BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md),
+with the machine-readable [`config/baseline-decision-audit.json`](config/baseline-decision-audit.json)):
+the approved data identity and the already-approved strategy, execution,
+research-account and margin values are inventoried, and the freeze is
+**blocked** on explicit decisions for `StepPercent`, `BaseLot`,
+`ProjectedSpread`, `Slippage`, `CommissionBuffer`, `InitialBalance`, margin
+enablement and the helper failed-data-request policy; no full-history strategy
+baseline has been run. The continuous
 composition and its replay re-verification are implemented and merged through
 GitHub PR #13. **PR 2** (C# research account and bounded analytics) is implemented
 and merged (GitHub PR #9):
@@ -591,7 +600,11 @@ added results fields are additive. The user's live account is EUR-denominated; h
 conversion is deliberately out of scope, so the USD research result must not be
 presented as an exact reconstruction of the live EUR monetary path. The
 full-history composition is complete (section 10 of the tools README); the
-baseline freeze and the first full-history baseline are still later steps.
+baseline configuration freeze is audited but **blocked** on the decisions
+listed in
+[BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md)
+(baseline configuration frozen: no), and the first full-history baseline has
+not been run.
 
 ## 10. When required data is missing
 

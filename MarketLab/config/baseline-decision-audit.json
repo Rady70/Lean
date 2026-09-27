@@ -1,0 +1,679 @@
+{
+  "contract": "marketlab-baseline-decision-audit-v1",
+  "auditDate": "2026-09-27",
+  "baseRevision": "bdf3c29a4e1b20be4110a6c9e75ecff9e00856f3",
+  "description": "Machine-readable baseline-decision audit for the first untouched continuous full-history SingleAnchor baseline. This is an audit and completeness record, NOT the frozen baseline configuration and NOT a runnable run configuration: it contains no complete run-parameter set, and it must never be consumed as one. The authoritative values it records stay owned by their cited project sources; this file only inventories them and exposes the unresolved decisions. The human-auditable record is ../BASELINE_CONFIGURATION_FREEZE_AUDIT.md; the executable Windows-local consistency check is ../tests/SingleAnchor/BaselineDecisionAuditTests.cs.",
+  "status": "blocked",
+  "baselineConfigurationFrozen": false,
+  "unresolvedDecisionCount": 8,
+  "classification": {
+    "A": "explicitly approved/frozen by the authoritative project contract",
+    "B": "explicitly defined strategy default that is valid for the authoritative baseline",
+    "C": "fixture/test/example value only; recorded in fixtureValues, never a baseline value",
+    "D": "configurable value (or run policy) for which no authoritative baseline value has yet been approved; value is null and the decision record is mandatory"
+  },
+  "fields": [
+    {
+      "field": "symbol",
+      "class": "A",
+      "value": "XAUUSD",
+      "runParameter": "single-anchor-symbol",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6 (freeze list) and sections 4-5; README.md section 9"
+    },
+    {
+      "field": "market",
+      "class": "A",
+      "value": "dukascopy",
+      "runParameter": "single-anchor-market",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 4-6; tools/historical-data/README.md sections 9-10"
+    },
+    {
+      "field": "securityType",
+      "class": "A",
+      "value": "Cfd",
+      "runParameter": "single-anchor-security-type",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 4-6; tools/historical-data/README.md sections 9-10"
+    },
+    {
+      "field": "dataFolder",
+      "class": "A",
+      "value": "E:\\MarketLab\\data\\lean\\xauusd-dukascopy",
+      "runParameter": "-DataFolder (run-backtest.ps1)",
+      "source": "tools/historical-data/README.md section 10; tools/historical-data/fixtures/continuous-history-evidence.json composition.data_folder"
+    },
+    {
+      "field": "startDate",
+      "class": "A",
+      "value": "2019-01-01",
+      "runParameter": "single-anchor-start-date",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 5-6; continuous-history-evidence.json composition.lean_run_window.start_date"
+    },
+    {
+      "field": "endDate",
+      "class": "A",
+      "value": "2026-06-30",
+      "runParameter": "single-anchor-end-date",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 5-6; continuous-history-evidence.json composition.lean_run_window.end_date"
+    },
+    {
+      "field": "dataResolution",
+      "class": "A",
+      "value": "Tick",
+      "runParameter": null,
+      "source": "src/SingleAnchor/SingleAnchorVNextAlgorithm.cs (AddCfd with Resolution.Tick); README.md section 9"
+    },
+    {
+      "field": "fillForward",
+      "class": "A",
+      "value": false,
+      "runParameter": null,
+      "source": "src/SingleAnchor/SingleAnchorVNextAlgorithm.cs (AddCfd ... fillForward: false); upstream AddCfd default is true, so this is an explicit host decision"
+    },
+    {
+      "field": "dataTimeZone",
+      "class": "A",
+      "value": "UTC",
+      "runParameter": null,
+      "source": "tools/historical-data/README.md sections 4, 9-10 (derived always-open identity, DataTimeZone = ExchangeTimeZone = UTC); continuous-history-evidence.json identity"
+    },
+    {
+      "field": "exchangeTimeZone",
+      "class": "A",
+      "value": "UTC",
+      "runParameter": null,
+      "source": "tools/historical-data/README.md sections 4, 9-10; continuous-history-evidence.json identity"
+    },
+    {
+      "field": "sessionMapPath",
+      "class": "A",
+      "value": "marketlab-sessions/xauusd-sessions.json",
+      "runParameter": "single-anchor-session-map",
+      "source": "tools/historical-data/README.md section 10; continuous-history-evidence.json composition.session_map_relative_path; tools/session-map/README.md (relative path is the -Parameters route, a value cannot contain ':')"
+    },
+    {
+      "field": "sessionMapSha256",
+      "class": "A",
+      "value": "33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949",
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 5-6; continuous-history-evidence.json composition.session_map_sha256; re-verified on the local tree during this audit"
+    },
+    {
+      "field": "marketHoursDatabaseSha256",
+      "class": "A",
+      "value": "325a7abc8214216c9107d45bb4e0a7fd291d2a5d771d3ebed6828d02da72518e",
+      "runParameter": null,
+      "source": "tools/historical-data/README.md section 9; continuous-history-evidence.json composition.market_hours_database_sha256; re-verified on the local tree during this audit"
+    },
+    {
+      "field": "symbolPropertiesDatabaseSha256",
+      "class": "A",
+      "value": "7d52262f53fbec169b6e03c7acb220a73ea4ff95f48c198e4977e2280407d5ed",
+      "runParameter": null,
+      "source": "tools/historical-data/README.md section 9; continuous-history-evidence.json composition.symbol_properties_database_sha256; re-verified on the local tree during this audit"
+    },
+    {
+      "field": "continuousHistorySemanticDigest",
+      "class": "A",
+      "value": "sha256:231cf63850cd033ea8167ab7d0017bdfbd7744f40412c1a899c2b9d98942886a",
+      "runParameter": null,
+      "source": "tools/historical-data/README.md section 10; continuous-history-evidence.json composition.ordered_source_semantic_digest"
+    },
+    {
+      "field": "continuousHistoryMonthCount",
+      "class": "A",
+      "value": 90,
+      "runParameter": null,
+      "source": "tools/historical-data/README.md section 10; continuous-history-evidence.json composition.month_count"
+    },
+    {
+      "field": "continuousHistoryPartitionCount",
+      "class": "A",
+      "value": 2332,
+      "runParameter": null,
+      "source": "tools/historical-data/README.md section 10; continuous-history-evidence.json composition.partition_count; re-counted on the local tree during this audit"
+    },
+    {
+      "field": "continuousHistoryQuoteCount",
+      "class": "A",
+      "value": 413750130,
+      "runParameter": null,
+      "source": "tools/historical-data/README.md sections 9-10; continuous-history-evidence.json composition.totals.accepted_row_count and replay.lean_delivered_row_count"
+    },
+    {
+      "field": "continuousHistoryFirstQuoteUtc",
+      "class": "A",
+      "value": "2019-01-01T23:00:07.151Z",
+      "runParameter": null,
+      "source": "continuous-history-evidence.json composition.first_canonical_utc"
+    },
+    {
+      "field": "continuousHistoryLastQuoteUtc",
+      "class": "A",
+      "value": "2026-06-30T23:59:59.678Z",
+      "runParameter": null,
+      "source": "continuous-history-evidence.json composition.last_canonical_utc"
+    },
+    {
+      "field": "sourceFileSetSha256",
+      "class": "A",
+      "value": "8ce98dd27c2df3166a0dc3ec30c6be4756887f323934a6a0ca1c348592c6f1fd",
+      "runParameter": null,
+      "source": "tools/historical-data/README.md section 9; continuous-history-evidence.json composition.source_file_set_sha256"
+    },
+    {
+      "field": "orderedMonthDigestChainSha256",
+      "class": "A",
+      "value": "9d29c36bcd5ada21cdbf6f8e8a7ea3601efd5bab65e2acf7b4c3ee0f8b41f769",
+      "runParameter": null,
+      "source": "tools/historical-data/README.md section 9; continuous-history-evidence.json composition.ordered_month_digest_chain_sha256"
+    },
+    {
+      "field": "leanBacktestingConfig",
+      "class": "A",
+      "value": "MarketLab/config/backtesting.json",
+      "runParameter": "-Config (run-backtest.ps1 default)",
+      "source": "README.md section 3 (complete backtesting-only configuration; handler set enforced by run-backtest.ps1 pre-flight)"
+    },
+    {
+      "field": "leanBacktestingConfigSha256",
+      "class": "A",
+      "value": "877dadf1ff325ed836970cd36090a2b1ba48f3d687d4ad68ef11ba56e7b1a99f",
+      "runParameter": null,
+      "source": "the tracked MarketLab/config/backtesting.json content at this audit; the helper validates the file against the backtesting-only invariant set before every run",
+      "note": "SHA-256 of the tracked file's UTF-8 text content with CRLF normalized to LF. The Windows working-tree file holds CRLF (Git normalizes it to LF on commit); the normalized hash is the content identity on any checkout."
+    },
+    {
+      "field": "algorithmTypeName",
+      "class": "A",
+      "value": "SingleAnchorVNextAlgorithm",
+      "runParameter": "-AlgorithmTypeName (run-backtest.ps1)",
+      "source": "README.md section 9; src/SingleAnchor/SingleAnchorVNextAlgorithm.cs"
+    },
+    {
+      "field": "algorithmLanguage",
+      "class": "A",
+      "value": "CSharp",
+      "runParameter": "-AlgorithmLanguage (run-backtest.ps1)",
+      "source": "README.md sections 2, 9 (the C# path is the qualified Release path; the Python path is a fixture-only route and is not this baseline)"
+    },
+    {
+      "field": "buildConfiguration",
+      "class": "A",
+      "value": "Release",
+      "runParameter": "-Configuration (run-backtest.ps1; default Release)",
+      "source": "README.md sections 2 and 9 (the C# strategy is built and run from Launcher and strategy Release binaries; the Debug route exists only for Python)"
+    },
+    {
+      "field": "algorithmLocation",
+      "class": "A",
+      "value": "MarketLab\\src\\SingleAnchor\\bin\\Release\\MarketLab.SingleAnchor.dll",
+      "runParameter": "-AlgorithmLocation (run-backtest.ps1)",
+      "source": "README.md section 9 and SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 2 (the MarketLab helper's default -AlgorithmLocation is the unrelated QuantConnect.Algorithm.CSharp.dll, so the authoritative run must name this assembly explicitly)"
+    },
+    {
+      "field": "allowEngineErrors",
+      "class": "A",
+      "value": false,
+      "runParameter": "-AllowEngineErrors (run-backtest.ps1; must be absent)",
+      "source": "README.md sections 5 and 10 (an exit-0 run with engine ERROR:: lines fails the helper with exit code 4; the override is not part of any qualified run and must not suppress engine errors in the authoritative baseline)"
+    },
+    {
+      "field": "tradingAvailabilityBufferMinutes",
+      "class": "A",
+      "value": 5,
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_VNEXT_STRATEGY.md section 1.1; SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 5; SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 8.2 (fixed research assumption; not configurable)"
+    },
+    {
+      "field": "normalTradeCount",
+      "class": "A",
+      "value": 4,
+      "runParameter": "single-anchor-normal-trade-count",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 1.7 and 6; SINGLE_ANCHOR_VNEXT_STRATEGY.md section 5"
+    },
+    {
+      "field": "hardBreakevenCeilingPercent",
+      "class": "A",
+      "value": 4.478,
+      "runParameter": "single-anchor-hard-be-ceiling-percent",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 1.7 and 6; SINGLE_ANCHOR_VNEXT_STRATEGY.md section 6 (approved starting value, not a proven optimum)"
+    },
+    {
+      "field": "minimumVolume",
+      "class": "A",
+      "value": 0.01,
+      "runParameter": "single-anchor-minimum-volume",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6; SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.1"
+    },
+    {
+      "field": "volumeStep",
+      "class": "A",
+      "value": 0.01,
+      "runParameter": "single-anchor-volume-step",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6; SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.1"
+    },
+    {
+      "field": "maximumVolume",
+      "class": "A",
+      "value": 50,
+      "runParameter": "single-anchor-maximum-volume",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6; SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.1",
+      "note": "The engine's unrelated global default is 100 (implementation note section 10.4); the approved broker profile 50 must be passed explicitly, not defaulted."
+    },
+    {
+      "field": "escapeEnabled",
+      "class": "B",
+      "value": true,
+      "runParameter": "single-anchor-escape-enabled",
+      "source": "SINGLE_ANCHOR_VNEXT_STRATEGY.md section 11 (Default configuration); SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 3 table (default true)",
+      "note": "The frozen baseline must pass the specified default explicitly rather than rely on the runtime default."
+    },
+    {
+      "field": "escapeProfitUnits",
+      "class": "B",
+      "value": 0.05,
+      "runParameter": "single-anchor-escape-profit-units",
+      "source": "SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 11 and 17 (current default 0.05)",
+      "note": "Pass explicitly."
+    },
+    {
+      "field": "escapeMinimumOpenPositions",
+      "class": "B",
+      "value": 2,
+      "runParameter": "single-anchor-escape-minimum-open-positions",
+      "source": "SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 11 and 17 (at least 2; default 2)",
+      "note": "Pass explicitly."
+    },
+    {
+      "field": "fixedTakeProfitUnits",
+      "class": "B",
+      "value": 0,
+      "runParameter": "single-anchor-fixed-tp-units",
+      "source": "SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 12 and 17 (current default 0.0, disabled)",
+      "note": "Pass explicitly; 0 disables fixed TP."
+    },
+    {
+      "field": "trailingEnabled",
+      "class": "B",
+      "value": true,
+      "runParameter": "single-anchor-trailing-enabled",
+      "source": "SINGLE_ANCHOR_VNEXT_STRATEGY.md section 13 (Default configuration)",
+      "note": "Pass explicitly."
+    },
+    {
+      "field": "trailingActivationUnits",
+      "class": "B",
+      "value": 0.50,
+      "runParameter": "single-anchor-trailing-activation-units",
+      "source": "SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 13 and 17 (current default 0.50)",
+      "note": "Pass explicitly."
+    },
+    {
+      "field": "trailingDropUnits",
+      "class": "B",
+      "value": 0.25,
+      "runParameter": "single-anchor-trailing-drop-units",
+      "source": "SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 13 and 17 (current default 0.25)",
+      "note": "Pass explicitly."
+    },
+    {
+      "field": "commissionPerLot",
+      "class": "A",
+      "value": 0,
+      "runParameter": "single-anchor-commission-per-lot",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6 (baseline commission per lot 0); SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.1"
+    },
+    {
+      "field": "pointValuePerLot",
+      "class": "A",
+      "value": 100,
+      "runParameter": "single-anchor-point-value-per-lot",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6 (100 for the USD XAUUSD research account); SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.1; the host supplies 100 for XAUUSD and margin mode enforces it",
+      "note": "Pass explicitly so no host default is relied on."
+    },
+    {
+      "field": "buySwapPerLotPerDay",
+      "class": "A",
+      "value": 0,
+      "runParameter": "single-anchor-buy-swap-per-lot-per-day",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6 (Islamic baseline: 0); SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 7 and 17 (non-zero financing is rejected)"
+    },
+    {
+      "field": "sellSwapPerLotPerDay",
+      "class": "A",
+      "value": 0,
+      "runParameter": "single-anchor-sell-swap-per-lot-per-day",
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6 (Islamic baseline: 0); SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 7 and 17 (non-zero financing is rejected)"
+    },
+    {
+      "field": "researchAccountEnabled",
+      "class": "B",
+      "value": true,
+      "runParameter": "single-anchor-research-account",
+      "source": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md sections 3 and 9.6 (default true); SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 7 requires the account metrics in the baseline report, and margin mode requires the account",
+      "note": "Pass explicitly as true. This is a read-only derived account; it changes no strategy decision."
+    },
+    {
+      "field": "researchAccountCurrency",
+      "class": "A",
+      "value": "USD",
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 3.16 (USD-denominated XM-style research account; no EURUSD conversion); SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.1"
+    },
+    {
+      "field": "contractSize",
+      "class": "A",
+      "value": 100,
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6; src/SingleAnchor/Margin.cs (MarginParameters.ContractSize = 100m, not host-configurable)"
+    },
+    {
+      "field": "leverage",
+      "class": "A",
+      "value": 500,
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6 (fixed 1:500, no dynamic tiers); src/SingleAnchor/Margin.cs (MarginParameters.Leverage = 500m)"
+    },
+    {
+      "field": "initialMarginRate",
+      "class": "A",
+      "value": 1.0,
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 3.16 and SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.1 (initial/maintenance margin rate 1.0/1.0); applied as the unit factor of the uncovered-volume formula in src/SingleAnchor/Margin.cs (MarginModel.UsedMargin)"
+    },
+    {
+      "field": "maintenanceMarginRate",
+      "class": "A",
+      "value": 1.0,
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 3.16 and SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.1 (initial/maintenance margin rate 1.0/1.0); the survival path uses the same used-margin amount (MarginLevel = equity / used margin)"
+    },
+    {
+      "field": "matchedHedgeMarginRule",
+      "class": "A",
+      "value": "matched BUY/SELL Gold volume contributes zero margin; only the uncovered side is charged",
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6; src/SingleAnchor/Margin.cs (MarginModel.UsedMargin returns zero when the inventory is net-flat and charges only abs(buyLots - sellLots))"
+    },
+    {
+      "field": "uncoveredVolumeMarginRule",
+      "class": "A",
+      "value": "uncovered lots * contract size * weighted-average open price / leverage; the projected post-fill calculation includes the candidate fill",
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 3.16; src/SingleAnchor/Margin.cs (MarginModel.UsedMargin and ProjectedUsedMargin)"
+    },
+    {
+      "field": "marginCallThresholdPercent",
+      "class": "A",
+      "value": 50,
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6; src/SingleAnchor/Margin.cs (MarginParameters.MarginCallLevelPercent = 50m); at or below it new entries are blocked while exits remain allowed"
+    },
+    {
+      "field": "stopOutThresholdPercent",
+      "class": "A",
+      "value": 20,
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 6; src/SingleAnchor/Margin.cs (MarginParameters.StopOutLevelPercent = 20m); terminal, no liquidation sequence is simulated"
+    },
+    {
+      "field": "negativeEquityHandling",
+      "class": "A",
+      "value": "an account with open positions and negative equity is terminal stop-out, including the zero-used-margin matched-hedge case",
+      "runParameter": null,
+      "source": "SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md sections 3.16 and 3.20; src/SingleAnchor/Margin.cs (StopOutReason.NegativeEquity)"
+    },
+    {
+      "field": "stepPercent",
+      "class": "D",
+      "value": null,
+      "runParameter": "single-anchor-step-percent",
+      "source": "required by SINGLE_ANCHOR_VNEXT_STRATEGY.md section 2 and listed in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6; no approved value",
+      "whyRequired": "P sets the fixed grid distance S = A * P / 100, so it fixes every entry level of every basket and therefore changes entries, sizing, exits and every downstream result. The strategy specification states no value, and the implementation rejects the unset value.",
+      "currentCodeDefault": "none: SingleAnchorParameters.StepPercent has no initializer (0) and validation rejects it ('the specification states no default, set it explicitly').",
+      "fixtureExampleValues": [
+        "0.2 (implementation note section 7 example run; session-map README example)",
+        "0.1 (wide-first-entry scenario, implementation note section 7)",
+        "1.0 (unit-test reference harness)"
+      ],
+      "notAuthoritativeBecause": "The implementation note presents 0.2 as an example and not a calibration; the plan section 6 states the example step percent is not automatically an approved research setting; the harness value is a test fixture.",
+      "decisionRequired": "Approve the baseline step percentage. If step sensitivity is intended, approve which values are separate sensitivity runs rather than part of the baseline."
+    },
+    {
+      "field": "baseLot",
+      "class": "D",
+      "value": null,
+      "runParameter": "single-anchor-base-lot",
+      "source": "required by SINGLE_ANCHOR_VNEXT_STRATEGY.md section 4 and listed in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6; no approved value",
+      "whyRequired": "B builds trades 1-4 (Q_n = B * n) and scales the hard-BE tail; it is the position-scale and risk parameter of the whole run. The plan states it must be frozen by an explicit risk policy before geometry sweeps or studied as a separate risk dimension.",
+      "currentCodeDefault": "none: SingleAnchorParameters.BaseLot has no initializer (0) and validation rejects it.",
+      "fixtureExampleValues": [
+        "0.01 (specification section 4 example; implementation note section 7 example; unit-test reference harness)",
+        "0.015 (sizing unit tests)",
+        "20 (margin volume-profile tests)"
+      ],
+      "notAuthoritativeBecause": "All are specification examples or test inputs; no risk policy has been approved, and 0.01 appears only because it is the smallest broker volume.",
+      "decisionRequired": "Approve the baseline base lot under an explicit risk policy, or approve BaseLot as a separately studied risk dimension with an explicit baseline value."
+    },
+    {
+      "field": "projectedSpread",
+      "class": "D",
+      "value": null,
+      "runParameter": "single-anchor-projected-spread",
+      "source": "required by SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 6-7 and listed in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6; no approved value",
+      "whyRequired": "W reconstructs the opposite quote side of the projected simultaneous basket close in the hard-BE sizing valuation, so it directly changes the required tail lots and the resulting rejection behaviour. The implementation requires it to be supplied; zero is a valid sensitivity case but must still be supplied.",
+      "currentCodeDefault": "none: SingleAnchorParameters.ProjectedSpread is a nullable decimal without a value, and validation requires it.",
+      "fixtureExampleValues": [
+        "0.5 (implementation note section 7 example run; session-map README example)",
+        "0.2 (unit-test reference harness)"
+      ],
+      "notAuthoritativeBecause": "The implementation note explicitly says 0.5 sits above the sample's usual spread and is not a calibration; the plan section 6 states the representative fixture's projected spread is not automatically approved; the harness value is a test fixture.",
+      "decisionRequired": "Approve the baseline target spread. If spread sensitivity is intended, approve the sensitivity schedule separately from the single frozen baseline value."
+    },
+    {
+      "field": "slippage",
+      "class": "D",
+      "value": null,
+      "runParameter": "single-anchor-slippage",
+      "source": "execution economics input required by SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 7, 9 and 17 and listed in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6; no approved value",
+      "whyRequired": "Slippage moves every fill against the basket (entries and closes), enters the hard-BE projection, and flows into realized P/L, floating P/L, equity and therefore the margin/survival path. It is an execution assumption that must be explicit.",
+      "currentCodeDefault": "0 (SingleAnchorParameters.Slippage default; also the unit-test reference).",
+      "fixtureExampleValues": [
+        "0 (all recorded fixture runs, including implementation note sections 7 and 10.4)",
+        "0.05 (fill-model unit test)"
+      ],
+      "notAuthoritativeBecause": "The plan section 6 lists Slippage as a freeze item with no value and section 8 says execution assumptions such as slippage/spread should be sensitivity scenarios rather than values chosen to maximize profit; the 0 default is only the implementation default, and 0.05 is a unit-test input.",
+      "decisionRequired": "Approve the baseline slippage (zero is allowed but must be an explicit decision), and whether any slippage sensitivity scenarios are separate runs."
+    },
+    {
+      "field": "commissionBuffer",
+      "class": "D",
+      "value": null,
+      "runParameter": "single-anchor-commission-buffer",
+      "source": "exit-decision input defined by SINGLE_ANCHOR_VNEXT_STRATEGY.md section 9 and required by the completeness audit; no approved value",
+      "whyRequired": "The buffer is deducted from raw basket profit before every escape, fixed-TP and trailing exit decision, so it changes close timing and realized P/L; the baseline must state it explicitly rather than default it.",
+      "currentCodeDefault": "0 (disabled): SingleAnchorParameters.CommissionBuffer default, recorded as the default in SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 3.",
+      "fixtureExampleValues": [
+        "0 (all recorded runs and the unit-test reference harness)"
+      ],
+      "notAuthoritativeBecause": "The strategy specification defines the buffer as optional and states no default value; the plan section 6 freeze list does not adopt one; the only recorded value is the implementation default used by fixtures. If the project decides the implementation's '0 (disabled)' is the approved strategy default, this field may be reclassified B with no other change.",
+      "decisionRequired": "Approve the baseline commission buffer (0/disabled or an explicit amount)."
+    },
+    {
+      "field": "initialBalance",
+      "class": "D",
+      "value": null,
+      "runParameter": "single-anchor-cash",
+      "source": "research-account input explicitly deferred by SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 3.16 ('InitialBalance remains a configurable research input and is frozen only with the complete baseline configuration') and section 6; no approved value",
+      "note": "single-anchor-cash is also LEAN's SetCash (the host's portfolio is empty, so it does not affect LEAN statistics); it is the research account's InitialBalance.",
+      "whyRequired": "InitialBalance seeds Balance = InitialBalance + RealizedProfit and Equity, so it determines the whole account path, drawdown, margin level and whether the account can finance entries or survives. With margin enabled it is a first-order survival parameter.",
+      "currentCodeDefault": "100000 (host field single-anchor-cash default; implementation note section 3).",
+      "fixtureExampleValues": [
+        "100000 (default and implementation note section 7 representative run)",
+        "1000000 (margin parity run, implementation note section 10.4)",
+        "7, 12 and 5 (margin stress runs, implementation note section 10.4)",
+        "1000 (unit tests)"
+      ],
+      "notAuthoritativeBecause": "The plan defers the value to this freeze; the recorded values are defaults, examples and deliberately small stress-test amounts, not an approved research balance.",
+      "decisionRequired": "Approve the baseline initial balance in the USD research account. The value must be large enough to be a realistic survival question while remaining a deliberate, documented choice."
+    },
+    {
+      "field": "marginEnabled",
+      "class": "D",
+      "value": null,
+      "runParameter": "single-anchor-margin-enabled",
+      "source": "freeze item in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6 ('margin enabled/disabled'); the PR 3 contract (sections 3.16-3.21) freezes the model but not the baseline toggle; no approved value",
+      "whyRequired": "The toggle decides whether the authoritative baseline measures target-account survival. When enabled, the 50% Margin Call entry block, InsufficientMargin rejections, per-quote stop-out and post-fill stop-out can change the actual entries, closes and realized P/L and can terminally stop the run; when disabled, no survival claim may be made from the run (plan section 7).",
+      "currentCodeDefault": "false (the pre-PR-3 strategy path exactly; implementation note section 10.3).",
+      "fixtureExampleValues": [
+        "false (default and parity runs)",
+        "true (margin validation and stress runs, implementation note section 10.4)"
+      ],
+      "notAuthoritativeBecause": "The existence of the approved margin model does not decide whether the baseline enables it; the plan leaves the toggle as an explicit freeze item, and fixture runs are diagnostics.",
+      "decisionRequired": "Approve whether the first authoritative baseline runs with the frozen margin/survival model enabled or disabled. If enabled, the run's survival interpretation and the InitialBalance decision are the approved ones."
+    },
+    {
+      "field": "helperFailedDataRequestPolicy",
+      "class": "D",
+      "value": null,
+      "runParameter": "-AllowMissingData (run-backtest.ps1; present or absent)",
+      "source": "run-procedure input discovered by this audit; the plan's freeze list (section 6) does not state it; the PR 1/PR 13 records show the expected failed requests",
+      "whyRequired": "Under the always-open XAUUSD/dukascopy/Cfd identity LEAN requests a partition for every calendar day. The qualified continuous record counts 406 source-absent calendar days plus 1 unrelated missing benchmark file (cfd/dukascopy/hour/xauusd.zip) as failed data requests. Without -AllowMissingData the helper turns those into exit code 3, so the authoritative procedure must define how those already-classified, expected failures are handled. It must not hide a failed request for a partition that carries rows, and it must not weaken the missing-data guard.",
+      "currentCodeDefault": "run-backtest.ps1 fails with exit code 3 when any local data request fails; -AllowMissingData downgrades that to a warning. The PR 1 qualification driver ran the probe with -AllowMissingData and classified every failed request in the qualification record.",
+      "fixtureExampleValues": [
+        "-AllowMissingData in the tools README quick-start and qualification route",
+        "helper exit code 3 without it for the same data folder"
+      ],
+      "notAuthoritativeBecause": "The qualification driver's flag belongs to the qualification run; no project document states the strategy baseline's policy, and the helper default would make the authoritative run end as a failed helper exit rather than a documented expected outcome.",
+      "decisionRequired": "Approve the baseline policy: (a) run with -AllowMissingData and record a classification of every failed request (source-absent days and the unrelated benchmark request), or (b) run without it and define the expected exit code 3 interpretation. -AllowEngineErrors must not be used either way."
+    }
+  ],
+  "fixtureValues": [
+    {
+      "field": "stepPercent",
+      "value": "0.2",
+      "where": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 7 example run; tools/session-map/README.md example",
+      "whyNotAuthoritative": "Documented example, not a calibration; the plan section 6 explicitly says the example step percent is not automatically an approved research setting."
+    },
+    {
+      "field": "stepPercent",
+      "value": "0.1",
+      "where": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 7 wide-first-entry and rejection scenarios",
+      "whyNotAuthoritative": "Deliberate test scenario used to exercise skipping and rejection behaviour."
+    },
+    {
+      "field": "stepPercent",
+      "value": "1.0",
+      "where": "tests/SingleAnchor test harness reference parameter set",
+      "whyNotAuthoritative": "Unit-test reference fixture."
+    },
+    {
+      "field": "baseLot",
+      "value": "0.01",
+      "where": "SINGLE_ANCHOR_VNEXT_STRATEGY.md section 4 example; SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 7 example; unit-test harness",
+      "whyNotAuthoritative": "Specification example and smallest broker volume; no refined risk policy has been approved."
+    },
+    {
+      "field": "baseLot",
+      "value": "0.015",
+      "where": "tests/SingleAnchor/SizingTests.cs",
+      "whyNotAuthoritative": "Unit-test input chosen to exercise upward normalization."
+    },
+    {
+      "field": "baseLot",
+      "value": "20",
+      "where": "tests/SingleAnchor/MarginTests.cs approved-volume-profile test",
+      "whyNotAuthoritative": "Unit-test input chosen to exceed the maximum volume."
+    },
+    {
+      "field": "projectedSpread",
+      "value": "0.5",
+      "where": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 7 example run; tools/session-map/README.md example",
+      "whyNotAuthoritative": "Example above the sample's usual spread; explicitly not a calibration."
+    },
+    {
+      "field": "projectedSpread",
+      "value": "0.2",
+      "where": "tests/SingleAnchor test harness reference parameter set",
+      "whyNotAuthoritative": "Unit-test reference fixture."
+    },
+    {
+      "field": "hardBreakevenCeilingPercent",
+      "value": "0.1",
+      "where": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 7 rejection-heavy scenario",
+      "whyNotAuthoritative": "Deliberate rejection test scenario; the approved starting value is 4.478."
+    },
+    {
+      "field": "initialBalance",
+      "value": "100000",
+      "where": "host default; SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 7 representative run",
+      "whyNotAuthoritative": "In-code default used by fixture runs; the plan defers InitialBalance to this freeze."
+    },
+    {
+      "field": "initialBalance",
+      "value": "1000000",
+      "where": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.4 margin parity run",
+      "whyNotAuthoritative": "Chosen to keep margin non-binding in a parity test."
+    },
+    {
+      "field": "initialBalance",
+      "value": "7",
+      "where": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.4 margin stress run",
+      "whyNotAuthoritative": "Deliberately small amount used to force stop-out."
+    },
+    {
+      "field": "initialBalance",
+      "value": "12",
+      "where": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.4 margin stress run",
+      "whyNotAuthoritative": "Deliberately small amount used to force Margin Call episodes before stop-out."
+    },
+    {
+      "field": "initialBalance",
+      "value": "5",
+      "where": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 10.4 margin stress run",
+      "whyNotAuthoritative": "Deliberately small amount used to force stop-out."
+    },
+    {
+      "field": "initialBalance",
+      "value": "1000",
+      "where": "research-account and margin unit tests",
+      "whyNotAuthoritative": "Unit-test input."
+    },
+    {
+      "field": "maximumVolume",
+      "value": "100",
+      "where": "engine global default (SingleAnchorParameters.MaximumVolume; test harness)",
+      "whyNotAuthoritative": "The engine's unrelated global default; the approved broker profile is 50 and must be passed explicitly (implementation note section 10.4)."
+    },
+    {
+      "field": "marginEnabled",
+      "value": "true",
+      "where": "margin validation and stress runs, implementation note section 10.4",
+      "whyNotAuthoritative": "Diagnostic runs that exercise the survival path; they do not decide the baseline toggle."
+    },
+    {
+      "field": "market",
+      "value": "oanda",
+      "where": "host in-code default and the shipped Oanda XAUUSD fixture runs",
+      "whyNotAuthoritative": "Engine-fixture identity; the authoritative research identity is dukascopy."
+    },
+    {
+      "field": "startDate",
+      "value": "2014-05-02",
+      "where": "host default; implementation note section 3",
+      "whyNotAuthoritative": "Shipped Oanda sample dates; not the qualified 2019-01..2026-06 period."
+    },
+    {
+      "field": "endDate",
+      "value": "2014-05-14",
+      "where": "host default; implementation note section 3",
+      "whyNotAuthoritative": "Shipped Oanda sample dates; not the qualified 2019-01..2026-06 period."
+    },
+    {
+      "field": "helperFailedDataRequestPolicy",
+      "value": "-AllowMissingData (qualification driver)",
+      "where": "PR 1 qualification driver and tools README quick start",
+      "whyNotAuthoritative": "Belongs to the replay probe qualification; the strategy baseline policy for the expected source-absent-day failed requests is undecided."
+    }
+  ]
+}

@@ -649,8 +649,11 @@ against the original sweep and relocation fixtures by
 `python\tests\test_continuous_evidence.py`. The composition and the continuous
 run outputs stay outside Git.
 
-The baseline configuration freeze and the first untouched full-history
-baseline remain later steps; parameter research remains later still.
+The baseline configuration freeze has since been audited but is **blocked** on
+unresolved baseline values and one run-procedure decision
+([BASELINE_CONFIGURATION_FREEZE_AUDIT.md](../../BASELINE_CONFIGURATION_FREEZE_AUDIT.md);
+baseline configuration frozen: no); the first untouched full-history baseline
+has not been run and parameter research has not started.
 
 ## 11. Provenance of adapted retired code
 

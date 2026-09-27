@@ -1324,3 +1324,32 @@ CFD-leverage/hedging margin documentation, reviewed on 2026-09-26:
 - https://www.xm.com/help-center/trading-conditions/faq-why-are-rollover-rates-tripled
 - https://www.xm.com/assets/pdf/new/terms/XMGlobal-Client-Agreement-Terms-and-Conditions-of-Business.pdf
 - https://www.metatrader5.com/en/terminal/help/trading_advanced/margin_forex
+
+## 11. Baseline configuration freeze audit (2026-09-27): blocked
+
+The baseline freeze required before the first full-history baseline was audited
+against the current implementation, the approved contracts and the tracked
+PR #13 continuous-history evidence. The human-auditable record is
+[BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md),
+the machine-readable register is
+[config/baseline-decision-audit.json](config/baseline-decision-audit.json) and
+the Windows-local drift check is
+[tests/SingleAnchor/BaselineDecisionAuditTests.cs](tests/SingleAnchor/BaselineDecisionAuditTests.cs).
+The audit inventories every baseline-relevant value, binds the approved data
+identity to the continuous folder and classifies the approved values (the
+qualified `XAUUSD/dukascopy/Cfd` identity and period, the required session map,
+NormalTradeCount 4, HardBreakevenCeilingPercent 4.478, the 0.01/0.01/50 volume
+profile, PointValuePerLot 100, CommissionPerLot 0, zero swaps, the USD research
+account and the PR #3 margin contract) separately from the fixture/example
+values.
+
+The freeze is **blocked** and the project state is
+`baseline configuration frozen: no`: StepPercent, BaseLot, ProjectedSpread,
+Slippage, CommissionBuffer, InitialBalance, margin enablement and the helper
+failed-data-request policy have no approved baseline values, and the
+fixture/stress values (0.2, 0.01, 0.5, 100000/1000000/7/12, hard-BE 0.1,
+MaximumVolume 100, ...) were not promoted. The forward-looking sentence at the
+end of section 10.5 is superseded: the next roadmap action is obtaining those
+explicit decisions, not running the baseline. No strategy behavior,
+account/margin contract, data or qualification semantics changed and no
+full-history strategy baseline was run.

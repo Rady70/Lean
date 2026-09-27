@@ -109,6 +109,34 @@ milestone is implemented and merged through GitHub PR #13 (merge commit
 strategy, conversion or qualification-rule change. The complete baseline
 freeze and the first full-history baseline remain unimplemented.
 
+Implementation note (baseline configuration freeze audit record): the complete
+baseline freeze required by section 6 was audited on 2026-09-27 against the
+current implementation, the approved contracts and the tracked PR #13
+continuous-history evidence. The audit inventories every baseline-relevant
+value and classifies it as approved (A), an explicitly defined strategy default
+valid for the baseline (B), a fixture/example value (C) or unresolved (D), in
+`BASELINE_CONFIGURATION_FREEZE_AUDIT.md` and the machine-readable
+`config/baseline-decision-audit.json`, with a Windows-local NUnit drift check
+(`tests/SingleAnchor/BaselineDecisionAuditTests.cs`). The approved portion
+includes the qualified data identity (XAUUSD/dukascopy/Cfd; the continuous
+folder at `E:\MarketLab\data\lean\xauusd-dukascopy` with its 90 months, 2,332
+partitions, 413,750,130 quotes and recorded digests; the required
+source-derived session map
+`33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`; the UTC/UTC
+always-open identity; 2019-01-01..2026-06-30), NormalTradeCount = 4,
+HardBreakevenCeilingPercent = 4.478, the volume profile 0.01/0.01/50,
+PointValuePerLot = 100, CommissionPerLot = 0, zero swaps, the USD research
+account and the PR #3 margin contract (100 oz/lot, fixed 1:500, 50%/20%,
+matched-hedge zero margin, uncovered-volume formula, terminal negative
+equity). The freeze is **blocked**: no authoritative baseline values exist yet
+for StepPercent, BaseLot, ProjectedSpread, Slippage, CommissionBuffer,
+InitialBalance and margin enablement, and the helper failed-data-request policy
+for the always-open tree's expected source-absent days is also undecided;
+fixture/example values (0.2, 0.01, 0.5, 100000/1000000/7/12, hard-BE 0.1,
+MaximumVolume 100, ...) were not promoted into the baseline. Section 6's
+checklist is not met, the baseline is not frozen, the first untouched
+full-history baseline was not run and parameter optimization has not started.
+
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
 behaviour. The behavioural authority remains
