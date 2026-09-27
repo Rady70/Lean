@@ -549,7 +549,9 @@ verification the redundant complete 90-folder native representations were
 retired, so exactly one complete derived native representation remains. The
 canonical raw source is unchanged. The baseline configuration freeze and the
 first untouched full-history baseline remain later steps
-([tools README](tools/historical-data/README.md) section 10). **PR 2** (C# research account and bounded analytics) is implemented
+([tools README](tools/historical-data/README.md) section 10); the continuous
+composition and its replay re-verification are implemented and merged through
+GitHub PR #13. **PR 2** (C# research account and bounded analytics) is implemented
 and merged (GitHub PR #9):
 the engine can feed a read-only `IResearchObserver`, and
 `SingleAnchorResearchAccount` (`src\SingleAnchor\ResearchAccount.cs`) derives

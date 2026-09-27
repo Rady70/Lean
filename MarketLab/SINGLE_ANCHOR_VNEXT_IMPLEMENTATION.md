@@ -1311,7 +1311,8 @@ LEAN data folder at `E:\MarketLab\data\lean\xauusd-dukascopy`, whose single
 uninterrupted LEAN replay reproduced the qualified 413,750,130 quotes,
 boundaries and per-partition digests, and the redundant complete 90-folder
 native representations were retired
-(`tools/historical-data/README.md` section 10). The next roadmap step is
+(`tools/historical-data/README.md` section 10). The milestone is implemented
+and merged through GitHub PR #13. The next roadmap step is
 freezing the complete baseline configuration (including the margin values
 above) and running the first untouched full-history baseline.
 

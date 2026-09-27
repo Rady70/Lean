@@ -548,7 +548,7 @@ folder and its continuous replay qualification are recorded in section 10;
 the baseline configuration freeze and the first full-history baseline remain
 later steps.
 
-## 10. Continuous full-history native history (2019-01..2026-06)
+## 10. Continuous full-history native history (2019-01..2026-06; implemented and merged through GitHub PR #13)
 
 The already-qualified daily native partitions are composed into one continuous
 LEAN data folder that is the single historical-data input for the

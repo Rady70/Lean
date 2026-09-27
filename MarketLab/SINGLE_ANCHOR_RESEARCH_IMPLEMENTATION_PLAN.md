@@ -103,7 +103,9 @@ root and the retired-workspace original sweep) were verified against their
 records and their partition zips were removed, so exactly one complete derived
 native representation remains: the continuous tree. The canonical raw CSV
 source is unchanged. Evidence: `tools/historical-data/README.md` section 10
-and `tools/historical-data/fixtures/continuous-history-evidence.json`. No
+and `tools/historical-data/fixtures/continuous-history-evidence.json`. The
+milestone is implemented and merged through GitHub PR #13 (merge commit
+`b60e2b344cac1b82a7c7c1297c458b59e48ba6c7`). No
 strategy, conversion or qualification-rule change. The complete baseline
 freeze and the first full-history baseline remain unimplemented.
 
