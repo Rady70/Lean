@@ -30,11 +30,18 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `SINGLE_ANCHOR_VNEXT_STRATEGY.md` | the SingleAnchor vNext strategy specification (authoritative behaviour) |
 | `SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` | where its C# implementation lives, how it is built, tested and run, what is deferred |
 | `SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md` | approved roadmap for historical-data qualification, C# research analytics, account survival and the first baseline research run |
-| `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` | the baseline-decision audit: every baseline-relevant value classified, the approved data identity, and the unresolved decisions that block the freeze |
-| `config\baseline-decision-audit.json` | machine-readable audit register (explicitly not the frozen baseline contract and not a run configuration) |
+| `BASELINE_CONTRACT.md` | the human-auditable immutable baseline contract: the exact frozen values, the baseline contract identity and the exact future run invocation |
+| `config\baseline-contract.json` | canonical machine-readable frozen baseline configuration (the single source of truth for the first untouched baseline's effective values) |
+| `config\baseline-decision-audit.json` | resolved decision register: every baseline field's class, value and authority, bound to the frozen contract |
+| `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` | the PR #14 baseline-decision audit, updated: all eight former class-D blockers resolved and the freeze recorded |
+| `scripts\Get-SingleAnchorBaselineInvocation.ps1` | reports the baseline contract identity and renders the exact frozen run invocation from the contract |
+| `scripts\Test-SingleAnchorBaselineFailedData.ps1` | classifies every failed data request of a baseline run against the frozen contract and the qualified continuous tree |
 | `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
-| `tests\SingleAnchor\BaselineDecisionAuditTests.cs` | the Windows-local drift check for the audit, the implementation defaults and the PR #13 evidence |
+| `tests\SingleAnchor\BaselineDecisionAuditTests.cs` | the Windows-local drift check for the audit register, the implementation defaults and the PR #13 evidence |
+| `tests\SingleAnchor\BaselineContractTests.cs` | the Windows-local checks for the frozen contract: completeness, values, identity, invocation, data/margin identity and run policy |
+| `tests\Test-SingleAnchorBaselineFailedData.ps1` | synthetic-fixture tests for the failed-data classifier (invocation evidence, composition-manifest tree verification, data-monitor reconciliation, termination whitelist and mutation cases) |
+| `tests\Test-SingleAnchorBaselineInvocation.ps1` | tests that the invocation reporter refuses a contract whose hash is not the register's frozen pin |
 | `tools\historical-data\` | offline source qualification, exact-decimal native LEAN tick conversion and the actual LEAN replay probe (PR 1); see its [README](tools/historical-data/README.md) and [provenance](tools/historical-data/PROVENANCE.md) |
 | `tools\research-account-probe\` | paired per-quote throughput and allocation probe for the PR 2 research account |
 | `.gitignore` | ignores `output\` (generated runs) |
@@ -557,14 +564,44 @@ complete and merged through GitHub PR #14 (reviewed head
 [BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md)
 with the machine-readable
 [`config/baseline-decision-audit.json`](config/baseline-decision-audit.json).
-The audit inventories the approved data identity and the already-approved
-strategy, execution, research-account and margin values as 65 fields
-(49 class A, 8 class B, 8 class D) plus the inventoried fixture/example values,
-and it remains explicitly non-runnable and is not the frozen baseline
-configuration. The freeze itself is **blocked** on explicit decisions for
-`StepPercent`, `BaseLot`, `ProjectedSpread`, `Slippage`, `CommissionBuffer`,
-`InitialBalance`, margin enablement and the helper failed-data-request policy;
-no full-history strategy baseline has been run. The continuous
+The eight class-D decisions it exposed were then explicitly approved and the
+baseline configuration freeze is **complete**: the canonical immutable
+configuration is
+[`config/baseline-contract.json`](config/baseline-contract.json) (human-auditable
+rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)), baseline contract
+identity (LF-normalized SHA-256)
+`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`. The
+contract freezes `StepPercent = 0.25`, `BaseLot = 0.10`,
+`InitialBalance = 20,000 USD`, `ProjectedSpread = 0.50` (an approved baseline
+projection assumption, not an empirical optimum), `Slippage = 0` and
+`CommissionBuffer = 0` (both explicit baseline decisions even though they equal
+the implementation defaults), margin enabled with the approved PR #3
+margin/survival model, and the `-AllowMissingData` policy with a mandatory
+post-run classification of every failed data request
+([`scripts\Test-SingleAnchorBaselineFailedData.ps1`](scripts/Test-SingleAnchorBaselineFailedData.ps1)).
+The authoritative procedure runs the classifier's `-Preflight` stage first: it
+verifies the contract/register pin, the clean Git checkout and the complete
+qualified-tree identity before LEAN launches, so pre-run-knowable drift cannot
+consume the one-off run. The run then passes `-RunEvidence` with
+`-BaselineContract`/`-BaselineRegister`/`-ExpectedTerminalException`: the
+helper refuses a dirty tree or an unpinned contract and persists the actual
+resolved invocation, the verified contract hash and register pin, the Git
+HEAD/clean state and the qualified runtime binary hashes before LEAN launches,
+plus a post-run outcome record (LEAN/helper exit codes, the always-run
+engine-error audit with only the declared terminal exception separated,
+data-monitor result, runtime re-hash). The classifier refuses a contract whose
+hash is not the decision register's frozen pin, a run whose pre-run identity
+or resolved invocation differs from the contract, a dirty working tree, a
+changed runtime binary, a non-clean completed run, an `AccountStopOut` that is
+not exactly the modeled terminal shape or that carries any unrelated engine
+`ERROR::` line, and a continuous tree that no longer matches its composition
+manifest (all 2,332 partition hashes, the auxiliary database hashes and the
+manifest's anchor to the replay qualification record are verified without
+replaying the 413,750,130 rows); it reconciles the failed-request lines with
+the engine's data-monitor count.
+The decision register is resolved (`unresolvedDecisionCount: 0`) and bound to
+the contract. The first untouched full-history strategy baseline has **not**
+been run and parameter optimization has **not** started. The continuous
 composition and its replay re-verification are implemented and merged through
 GitHub PR #13. **PR 2** (C# research account and bounded analytics) is implemented
 and merged (GitHub PR #9):
@@ -607,11 +644,13 @@ conversion is deliberately out of scope, so the USD research result must not be
 presented as an exact reconstruction of the live EUR monetary path. The
 full-history composition is complete (section 10 of the tools README); the
 baseline configuration decision audit is complete and merged through GitHub
-PR #14, while the baseline configuration itself remains **blocked** on the
-decisions listed in
-[BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md)
-(baseline configuration frozen: no), and the first full-history baseline has
-not been run.
+PR #14, and the baseline configuration freeze is complete: the immutable
+contract is
+[`config/baseline-contract.json`](config/baseline-contract.json) with its
+human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), the
+resolved decision audit is
+[BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md),
+and the first untouched full-history baseline has not been run yet.
 
 ## 10. When required data is missing
 

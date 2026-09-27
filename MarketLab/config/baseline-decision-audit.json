@@ -2,15 +2,17 @@
   "contract": "marketlab-baseline-decision-audit-v1",
   "auditDate": "2026-09-27",
   "baseRevision": "bdf3c29a4e1b20be4110a6c9e75ecff9e00856f3",
-  "description": "Machine-readable baseline-decision audit for the first untouched continuous full-history SingleAnchor baseline. This is an audit and completeness record, NOT the frozen baseline configuration and NOT a runnable run configuration: it contains no complete run-parameter set, and it must never be consumed as one. The authoritative values it records stay owned by their cited project sources; this file only inventories them and exposes the unresolved decisions. The human-auditable record is ../BASELINE_CONFIGURATION_FREEZE_AUDIT.md; the executable Windows-local consistency check is ../tests/SingleAnchor/BaselineDecisionAuditTests.cs.",
-  "status": "blocked",
-  "baselineConfigurationFrozen": false,
-  "unresolvedDecisionCount": 8,
+  "description": "Machine-readable baseline-decision audit for the first untouched continuous full-history SingleAnchor baseline. The PR #14 audit inventoried every baseline-relevant value, bound the approved data identity and exposed eight unresolved class-D decisions. All eight are now resolved by the approved baseline decisions recorded here and frozen in config/baseline-contract.json, which is the canonical source of the run's effective values. This register remains the decision record: for each field it records the class, the value and the source, and for the former blockers the authority, the approved decision and the preserved audit-time fixture/example context. The human-auditable decision record is ../BASELINE_CONFIGURATION_FREEZE_AUDIT.md, the human-auditable frozen contract is ../BASELINE_CONTRACT.md, and the executable Windows-local consistency checks are ../tests/SingleAnchor/BaselineDecisionAuditTests.cs and ../tests/SingleAnchor/BaselineContractTests.cs.",
+  "status": "resolved",
+  "baselineConfigurationFrozen": true,
+  "unresolvedDecisionCount": 0,
+  "frozenBaselineContract": "config/baseline-contract.json",
+  "frozenBaselineContractSha256": "d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e",
   "classification": {
     "A": "explicitly approved/frozen by the authoritative project contract",
     "B": "explicitly defined strategy default that is valid for the authoritative baseline",
     "C": "fixture/test/example value only; recorded in fixtureValues, never a baseline value",
-    "D": "configurable value (or run policy) for which no authoritative baseline value has yet been approved; value is null and the decision record is mandatory"
+    "D": "configurable value (or run policy) with no approved baseline value; no field carries class D any more, and a value can only return to class D by a deliberate re-opening of the decision"
   },
   "fields": [
     {
@@ -425,10 +427,12 @@
     },
     {
       "field": "stepPercent",
-      "class": "D",
-      "value": null,
+      "class": "A",
+      "wasClassD": true,
+      "value": 0.25,
       "runParameter": "single-anchor-step-percent",
-      "source": "required by SINGLE_ANCHOR_VNEXT_STRATEGY.md section 2 and listed in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6; no approved value",
+      "source": "approved baseline decision (2026-09-27), frozen in config/baseline-contract.json and recorded in BASELINE_CONFIGURATION_FREEZE_AUDIT.md section 10",
+      "authority": "the approved baseline decision, not any fixture/example value; 0.25 was chosen as the frozen reference configuration before the first baseline and was not selected from full-history performance (the baseline has not been run)",
       "whyRequired": "P sets the fixed grid distance S = A * P / 100, so it fixes every entry level of every basket and therefore changes entries, sizing, exits and every downstream result. The strategy specification states no value, and the implementation rejects the unset value.",
       "currentCodeDefault": "none: SingleAnchorParameters.StepPercent has no initializer (0) and validation rejects it ('the specification states no default, set it explicitly').",
       "fixtureExampleValues": [
@@ -436,15 +440,17 @@
         "0.1 (wide-first-entry scenario, implementation note section 7)",
         "1.0 (unit-test reference harness)"
       ],
-      "notAuthoritativeBecause": "The implementation note presents 0.2 as an example and not a calibration; the plan section 6 states the example step percent is not automatically an approved research setting; the harness value is a test fixture.",
-      "decisionRequired": "Approve the baseline step percentage. If step sensitivity is intended, approve which values are separate sensitivity runs rather than part of the baseline."
+      "notAuthoritativeBecause": "At the time of the PR #14 audit the implementation note presented 0.2 as an example and not a calibration; the plan section 6 states the example step percent is not automatically an approved research setting; the harness value is a test fixture. None of them was promoted; the approved value is a separate explicit decision.",
+      "approvedDecision": "StepPercent = 0.25 for the frozen baseline. Step sensitivity, if any, belongs to later separately identified configurations, never to the baseline."
     },
     {
       "field": "baseLot",
-      "class": "D",
-      "value": null,
+      "class": "A",
+      "wasClassD": true,
+      "value": 0.10,
       "runParameter": "single-anchor-base-lot",
-      "source": "required by SINGLE_ANCHOR_VNEXT_STRATEGY.md section 4 and listed in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6; no approved value",
+      "source": "approved baseline decision (2026-09-27), frozen in config/baseline-contract.json and recorded in BASELINE_CONFIGURATION_FREEZE_AUDIT.md section 10",
+      "authority": "the approved baseline decision under an explicit risk scale (0.10 lots against the 20,000 USD research account), not any fixture/example value; the first baseline has not been run, so no historical result selected it",
       "whyRequired": "B builds trades 1-4 (Q_n = B * n) and scales the hard-BE tail; it is the position-scale and risk parameter of the whole run. The plan states it must be frozen by an explicit risk policy before geometry sweeps or studied as a separate risk dimension.",
       "currentCodeDefault": "none: SingleAnchorParameters.BaseLot has no initializer (0) and validation rejects it.",
       "fixtureExampleValues": [
@@ -452,59 +458,67 @@
         "0.015 (sizing unit tests)",
         "20 (margin volume-profile tests)"
       ],
-      "notAuthoritativeBecause": "All are specification examples or test inputs; no risk policy has been approved, and 0.01 appears only because it is the smallest broker volume.",
-      "decisionRequired": "Approve the baseline base lot under an explicit risk policy, or approve BaseLot as a separately studied risk dimension with an explicit baseline value."
+      "notAuthoritativeBecause": "At the time of the PR #14 audit all recorded amounts were specification examples or test inputs, no risk policy had been approved, and 0.01 appeared only because it is the smallest broker volume. None of them was promoted; the approved value is a separate explicit decision.",
+      "approvedDecision": "BaseLot = 0.10 for the frozen baseline under the approved risk scale; later geometry research treats BaseLot as a separate, clearly identified study dimension."
     },
     {
       "field": "projectedSpread",
-      "class": "D",
-      "value": null,
+      "class": "A",
+      "wasClassD": true,
+      "value": 0.50,
       "runParameter": "single-anchor-projected-spread",
-      "source": "required by SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 6-7 and listed in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6; no approved value",
+      "source": "approved baseline decision (2026-09-27), frozen in config/baseline-contract.json and recorded in BASELINE_CONFIGURATION_FREEZE_AUDIT.md section 10",
+      "authority": "the approved baseline decision. The value happens to equal the fixture/example 0.5, but its authority is the explicit baseline decision: a fixed hard-BE projection assumption, not declared empirically optimal or permanently correct.",
       "whyRequired": "W reconstructs the opposite quote side of the projected simultaneous basket close in the hard-BE sizing valuation, so it directly changes the required tail lots and the resulting rejection behaviour. The implementation requires it to be supplied; zero is a valid sensitivity case but must still be supplied.",
       "currentCodeDefault": "none: SingleAnchorParameters.ProjectedSpread is a nullable decimal without a value, and validation requires it.",
       "fixtureExampleValues": [
-        "0.5 (implementation note section 7 example run; session-map README example)",
+        "0.5 (implementation note section 7 example run; session-map README example; promoted only by the explicit baseline decision below)",
         "0.2 (unit-test reference harness)"
       ],
-      "notAuthoritativeBecause": "The implementation note explicitly says 0.5 sits above the sample's usual spread and is not a calibration; the plan section 6 states the representative fixture's projected spread is not automatically approved; the harness value is a test fixture.",
-      "decisionRequired": "Approve the baseline target spread. If spread sensitivity is intended, approve the sensitivity schedule separately from the single frozen baseline value."
+      "notAuthoritativeBecause": "At the time of the PR #14 audit the implementation note explicitly said 0.5 sat above the sample's usual spread and was not a calibration, the plan section 6 stated the representative fixture's projected spread was not automatically approved, and 0.2 was a test fixture. The approved baseline decision was made separately from those values.",
+      "approvedDecision": "ProjectedSpread = 0.50 as the fixed baseline hard-BE projection assumption. Spread sensitivity, if any, belongs to later separately identified configurations, never to the baseline."
     },
     {
       "field": "slippage",
-      "class": "D",
-      "value": null,
+      "class": "A",
+      "wasClassD": true,
+      "value": 0,
       "runParameter": "single-anchor-slippage",
-      "source": "execution economics input required by SINGLE_ANCHOR_VNEXT_STRATEGY.md sections 7, 9 and 17 and listed in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6; no approved value",
+      "source": "approved baseline decision (2026-09-27), frozen in config/baseline-contract.json and recorded in BASELINE_CONFIGURATION_FREEZE_AUDIT.md section 10",
+      "authority": "the approved baseline decision. The value happens to equal the implementation default 0, but its authority is the explicit baseline decision: no separately qualified slippage/latency model exists yet.",
       "whyRequired": "Slippage moves every fill against the basket (entries and closes), enters the hard-BE projection, and flows into realized P/L, floating P/L, equity and therefore the margin/survival path. It is an execution assumption that must be explicit.",
       "currentCodeDefault": "0 (SingleAnchorParameters.Slippage default; also the unit-test reference).",
       "fixtureExampleValues": [
-        "0 (all recorded fixture runs, including implementation note sections 7 and 10.4)",
+        "0 (all recorded fixture runs, including implementation note sections 7 and 10.4; promoted only by the explicit baseline decision below)",
         "0.05 (fill-model unit test)"
       ],
-      "notAuthoritativeBecause": "The plan section 6 lists Slippage as a freeze item with no value and section 8 says execution assumptions such as slippage/spread should be sensitivity scenarios rather than values chosen to maximize profit; the 0 default is only the implementation default, and 0.05 is a unit-test input.",
-      "decisionRequired": "Approve the baseline slippage (zero is allowed but must be an explicit decision), and whether any slippage sensitivity scenarios are separate runs."
+      "notAuthoritativeBecause": "At the time of the PR #14 audit the plan section 6 listed Slippage as a freeze item with no value and section 8 said execution assumptions such as slippage/spread should be sensitivity scenarios rather than values chosen to maximize profit; the 0 was only the implementation default, and 0.05 was a unit-test input. The approved baseline decision was made separately from those values.",
+      "approvedDecision": "Slippage = 0 for the frozen baseline because no separately qualified slippage/latency model exists yet. Slippage sensitivity, if any, belongs to later separately identified configurations, never to the baseline."
     },
     {
       "field": "commissionBuffer",
-      "class": "D",
-      "value": null,
+      "class": "A",
+      "wasClassD": true,
+      "value": 0,
       "runParameter": "single-anchor-commission-buffer",
-      "source": "exit-decision input defined by SINGLE_ANCHOR_VNEXT_STRATEGY.md section 9 and required by the completeness audit; no approved value",
+      "source": "approved baseline decision (2026-09-27), frozen in config/baseline-contract.json and recorded in BASELINE_CONFIGURATION_FREEZE_AUDIT.md section 10",
+      "authority": "the approved baseline decision. The value happens to equal the implementation default 0, but its authority is the explicit baseline decision: the optional exit-decision buffer is disabled for the baseline. It stays conceptually distinct from CommissionPerLot, which is also 0.",
       "whyRequired": "The buffer is deducted from raw basket profit before every escape, fixed-TP and trailing exit decision, so it changes close timing and realized P/L; the baseline must state it explicitly rather than default it.",
       "currentCodeDefault": "0 (disabled): SingleAnchorParameters.CommissionBuffer default, recorded as the default in SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 3.",
       "fixtureExampleValues": [
-        "0 (all recorded runs and the unit-test reference harness)"
+        "0 (all recorded runs and the unit-test reference harness; promoted only by the explicit baseline decision below)"
       ],
-      "notAuthoritativeBecause": "The strategy specification defines the buffer as optional and states no default value; the plan section 6 freeze list does not adopt one; the only recorded value is the implementation default used by fixtures. If the project decides the implementation's '0 (disabled)' is the approved strategy default, this field may be reclassified B with no other change.",
-      "decisionRequired": "Approve the baseline commission buffer (0/disabled or an explicit amount)."
+      "notAuthoritativeBecause": "At the time of the PR #14 audit the strategy specification defined the buffer as optional with no default value, the plan section 6 freeze list did not adopt one, and the only recorded value was the implementation default used by fixtures. The approved baseline decision was made separately from that default.",
+      "approvedDecision": "CommissionBuffer = 0 (disabled) for the frozen baseline; the optional exit-decision buffer is not enabled."
     },
     {
       "field": "initialBalance",
-      "class": "D",
-      "value": null,
+      "class": "A",
+      "wasClassD": true,
+      "value": 20000,
       "runParameter": "single-anchor-cash",
-      "source": "research-account input explicitly deferred by SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 3.16 ('InitialBalance remains a configurable research input and is frozen only with the complete baseline configuration') and section 6; no approved value",
+      "source": "approved baseline decision (2026-09-27), frozen in config/baseline-contract.json and recorded in BASELINE_CONFIGURATION_FREEZE_AUDIT.md section 10",
+      "authority": "the approved baseline decision: 20,000 USD on the existing derived research account. The host default 100,000 and the recorded stress amounts are not the authority.",
       "note": "single-anchor-cash is also LEAN's SetCash (the host's portfolio is empty, so it does not affect LEAN statistics); it is the research account's InitialBalance.",
       "whyRequired": "InitialBalance seeds Balance = InitialBalance + RealizedProfit and Equity, so it determines the whole account path, drawdown, margin level and whether the account can finance entries or survives. With margin enabled it is a first-order survival parameter.",
       "currentCodeDefault": "100000 (host field single-anchor-cash default; implementation note section 3).",
@@ -514,38 +528,43 @@
         "7, 12 and 5 (margin stress runs, implementation note section 10.4)",
         "1000 (unit tests)"
       ],
-      "notAuthoritativeBecause": "The plan defers the value to this freeze; the recorded values are defaults, examples and deliberately small stress-test amounts, not an approved research balance.",
-      "decisionRequired": "Approve the baseline initial balance in the USD research account. The value must be large enough to be a realistic survival question while remaining a deliberate, documented choice."
+      "notAuthoritativeBecause": "At the time of the PR #14 audit the plan deferred the value to this freeze and the recorded values were defaults, examples and deliberately small stress-test amounts, not an approved research balance. The approved value is a separate explicit decision.",
+      "approvedDecision": "InitialBalance = 20,000 USD in the USD research account for the frozen baseline; the baseline is intended to reveal real modeled survival outcomes at this scale."
     },
     {
       "field": "marginEnabled",
-      "class": "D",
-      "value": null,
+      "class": "A",
+      "wasClassD": true,
+      "value": true,
       "runParameter": "single-anchor-margin-enabled",
-      "source": "freeze item in SINGLE_ANCHOR_RESEARCH_IMPLEMENTATION_PLAN.md section 6 ('margin enabled/disabled'); the PR 3 contract (sections 3.16-3.21) freezes the model but not the baseline toggle; no approved value",
+      "source": "approved baseline decision (2026-09-27), frozen in config/baseline-contract.json and recorded in BASELINE_CONFIGURATION_FREEZE_AUDIT.md section 10",
+      "authority": "the approved baseline decision: the already-approved PR #3 target-account margin/survival model is enabled for the baseline. The value happens to equal a recorded diagnostic run's toggle, but its authority is the explicit baseline decision, not that fixture.",
       "whyRequired": "The toggle decides whether the authoritative baseline measures target-account survival. When enabled, the 50% Margin Call entry block, InsufficientMargin rejections, per-quote stop-out and post-fill stop-out can change the actual entries, closes and realized P/L and can terminally stop the run; when disabled, no survival claim may be made from the run (plan section 7).",
       "currentCodeDefault": "false (the pre-PR-3 strategy path exactly; implementation note section 10.3).",
       "fixtureExampleValues": [
         "false (default and parity runs)",
-        "true (margin validation and stress runs, implementation note section 10.4)"
+        "true (margin validation and stress runs, implementation note section 10.4; promoted only by the explicit baseline decision below)"
       ],
-      "notAuthoritativeBecause": "The existence of the approved margin model does not decide whether the baseline enables it; the plan leaves the toggle as an explicit freeze item, and fixture runs are diagnostics.",
-      "decisionRequired": "Approve whether the first authoritative baseline runs with the frozen margin/survival model enabled or disabled. If enabled, the run's survival interpretation and the InitialBalance decision are the approved ones."
+      "notAuthoritativeBecause": "At the time of the PR #14 audit the existence of the approved margin model did not decide whether the baseline enables it; the plan left the toggle as an explicit freeze item and fixture runs were diagnostics. The approved baseline decision was made separately from those runs.",
+      "approvedDecision": "marginEnabled = true for the frozen baseline: it uses the already-approved PR #3 target-account margin/survival model and is intended to reveal real modeled survival outcomes, including Margin Call, InsufficientMargin and terminal stop-out. Do not disable or soften it because the result looks unfavorable."
     },
     {
       "field": "helperFailedDataRequestPolicy",
-      "class": "D",
-      "value": null,
+      "class": "A",
+      "wasClassD": true,
+      "value": true,
       "runParameter": "-AllowMissingData (run-backtest.ps1; present or absent)",
-      "source": "run-procedure input discovered by this audit; the plan's freeze list (section 6) does not state it; the PR 1/PR 13 records show the expected failed requests",
+      "source": "approved baseline decision (2026-09-27), frozen in config/baseline-contract.json and recorded in BASELINE_CONFIGURATION_FREEZE_AUDIT.md section 10",
+      "authority": "the approved baseline decision: -AllowMissingData is enabled, but every failed request must be classified against the frozen contract, the run's persisted -RunEvidence invocation and the qualified continuous tree by scripts/Test-SingleAnchorBaselineFailedData.ps1; the classifier refuses a contract not pinned by the register, a run whose resolved invocation differs from the contract, a tree that no longer matches its composition manifest, and any run ending other than normal completion or AccountStopOut. -AllowEngineErrors remains prohibited.",
+      "policy": "enabled with mandatory classification: expected source-absent calendar days inside the frozen window, the enumerated known auxiliary benchmark path, and source-absent days after the actually processed horizon of an AccountStopOut run (the intended modeled terminal survival outcome) may be accepted; a failed request for a partition carrying qualified rows, an out-of-window or unknown request, a source-absent day within the processed horizon that was not requested at all, or a failed-request accounting mismatch between the engine data-monitor count and the failed-request lines invalidates the baseline",
       "whyRequired": "Under the always-open XAUUSD/dukascopy/Cfd identity LEAN requests a partition for every calendar day. The qualified continuous record counts 406 source-absent calendar days plus 1 unrelated missing benchmark file (cfd/dukascopy/hour/xauusd.zip) as failed data requests. Without -AllowMissingData the helper turns those into exit code 3, so the authoritative procedure must define how those already-classified, expected failures are handled. It must not hide a failed request for a partition that carries rows, and it must not weaken the missing-data guard.",
       "currentCodeDefault": "run-backtest.ps1 fails with exit code 3 when any local data request fails; -AllowMissingData downgrades that to a warning. The PR 1 qualification driver ran the probe with -AllowMissingData and classified every failed request in the qualification record.",
       "fixtureExampleValues": [
         "-AllowMissingData in the tools README quick-start and qualification route",
         "helper exit code 3 without it for the same data folder"
       ],
-      "notAuthoritativeBecause": "The qualification driver's flag belongs to the qualification run; no project document states the strategy baseline's policy, and the helper default would make the authoritative run end as a failed helper exit rather than a documented expected outcome.",
-      "decisionRequired": "Approve the baseline policy: (a) run with -AllowMissingData and record a classification of every failed request (source-absent days and the unrelated benchmark request), or (b) run without it and define the expected exit code 3 interpretation. -AllowEngineErrors must not be used either way."
+      "notAuthoritativeBecause": "At the time of the PR #14 audit the qualification driver's flag belonged to the qualification run and no project document stated the strategy baseline's policy; the helper default would have made the authoritative run end as a failed helper exit rather than a documented expected outcome. The approved baseline decision was made separately from the qualification run.",
+      "approvedDecision": "Run with -AllowMissingData and classify every failed request (option a). -AllowEngineErrors must not be used. The strong distinction between expected source-absent requests, known non-strategy/auxiliary requests, unexpected missing qualified data and engine/runtime errors is preserved."
     }
   ],
   "fixtureValues": [
@@ -589,13 +608,31 @@
       "field": "projectedSpread",
       "value": "0.5",
       "where": "SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md section 7 example run; tools/session-map/README.md example",
-      "whyNotAuthoritative": "Example above the sample's usual spread; explicitly not a calibration."
+      "whyNotAuthoritative": "Example above the sample's usual spread; explicitly not a calibration.",
+      "promotedByExplicitDecision": true,
+      "authorityNote": "The approved baseline value happens to be 0.50, numerically equal to this example. Its authority is the explicit baseline decision (2026-09-27), not this example; the example was not promoted because of its own value."
     },
     {
       "field": "projectedSpread",
       "value": "0.2",
       "where": "tests/SingleAnchor test harness reference parameter set",
       "whyNotAuthoritative": "Unit-test reference fixture."
+    },
+    {
+      "field": "slippage",
+      "value": "0",
+      "where": "all recorded fixture runs and the SingleAnchorParameters implementation default (implementation note sections 7 and 10.4)",
+      "whyNotAuthoritative": "Implementation default used by fixtures; not an approved execution assumption at audit time.",
+      "promotedByExplicitDecision": true,
+      "authorityNote": "The approved baseline value happens to be 0, equal to the implementation default and the recorded fixture runs. Its authority is the explicit baseline decision (2026-09-27), not the default."
+    },
+    {
+      "field": "commissionBuffer",
+      "value": "0",
+      "where": "all recorded fixture runs and the SingleAnchorParameters implementation default (implementation note section 3)",
+      "whyNotAuthoritative": "Implementation default used by fixtures; the strategy specification stated no value at audit time.",
+      "promotedByExplicitDecision": true,
+      "authorityNote": "The approved baseline value happens to be 0, equal to the implementation default and the recorded fixture runs. Its authority is the explicit baseline decision (2026-09-27), not the default."
     },
     {
       "field": "hardBreakevenCeilingPercent",
@@ -649,7 +686,9 @@
       "field": "marginEnabled",
       "value": "true",
       "where": "margin validation and stress runs, implementation note section 10.4",
-      "whyNotAuthoritative": "Diagnostic runs that exercise the survival path; they do not decide the baseline toggle."
+      "whyNotAuthoritative": "Diagnostic runs that exercise the survival path; they do not decide the baseline toggle.",
+      "promotedByExplicitDecision": true,
+      "authorityNote": "The approved baseline value happens to be true, equal to this diagnostic run's toggle. Its authority is the explicit baseline decision (2026-09-27), not the diagnostic run; the run was not promoted because of its own value."
     },
     {
       "field": "market",
@@ -673,7 +712,9 @@
       "field": "helperFailedDataRequestPolicy",
       "value": "-AllowMissingData (qualification driver)",
       "where": "PR 1 qualification driver and tools README quick start",
-      "whyNotAuthoritative": "Belongs to the replay probe qualification; the strategy baseline policy for the expected source-absent-day failed requests is undecided."
+      "whyNotAuthoritative": "Belongs to the replay probe qualification; the strategy baseline policy for the expected source-absent-day failed requests was undecided at audit time.",
+      "promotedByExplicitDecision": true,
+      "authorityNote": "The approved baseline policy enables -AllowMissingData like the qualification driver, but with a mandatory post-run classification of every failed request. Its authority is the explicit baseline decision (2026-09-27), not the qualification driver."
     }
   ]
 }

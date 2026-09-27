@@ -16,17 +16,17 @@ using QuantConnect.Parameters;
 namespace MarketLab.SingleAnchor.Tests
 {
     /// <summary>
-    /// Windows-local consistency check for the baseline configuration freeze audit
+    /// Windows-local consistency check for the resolved baseline configuration freeze audit
     /// (MarketLab\BASELINE_CONFIGURATION_FREEZE_AUDIT.md and MarketLab\config\baseline-decision-audit.json).
     ///
-    /// The audit is deliberately not the frozen baseline contract: seven baseline-critical values and
-    /// one run-procedure policy are unresolved, so the register must stay explicitly not frozen. These
-    /// tests detect drift between the audit, the live implementation defaults, the frozen margin
-    /// contract and the tracked PR 13 continuous-history evidence. They do not run a strategy backtest,
-    /// do not re-verify the machine-local data tree and do not judge whether a cited source authorizes
-    /// a value; that remains human review. Completing the freeze (filling a class D value or adding a
-    /// new required field) is always a deliberate edit of the audit, this required-field list and the
-    /// register together.
+    /// The eight class-D decisions exposed by PR #14 were explicitly approved and the immutable
+    /// baseline contract (MarketLab\config\baseline-contract.json) is the canonical run configuration;
+    /// the register is the resolved decision record and must agree with the contract. These tests
+    /// detect drift between the audit, the contract, the live implementation defaults, the frozen
+    /// margin contract and the tracked PR 13 continuous-history evidence. They do not run a strategy
+    /// backtest, do not re-verify the machine-local data tree and do not judge whether a cited source
+    /// authorizes a value; that remains human review. Re-opening a decision or adding a required field
+    /// is always a deliberate edit of the audit, this required-field list and the register together.
     /// </summary>
     [TestFixture]
     [NonParallelizable]
@@ -101,7 +101,44 @@ namespace MarketLab.SingleAnchor.Tests
             "helperFailedDataRequestPolicy"
         };
 
-        private static readonly string[] UnresolvedFields =
+        /// <summary>
+        /// The eight decisions PR #14 recorded as class D and the freeze resolved: they must still be
+        /// identifiable as the former blockers, now class A with the approved decision recorded.
+        /// </summary>
+        private static readonly string[] FormerUnresolvedFields =
+        {
+            "stepPercent",
+            "baseLot",
+            "projectedSpread",
+            "slippage",
+            "commissionBuffer",
+            "initialBalance",
+            "marginEnabled",
+            "helperFailedDataRequestPolicy"
+        };
+
+        /// <summary>
+        /// The approved values of the eight former class-D decisions, keyed by register field. These
+        /// are the frozen baseline decisions; the contract check re-verifies them from the canonical
+        /// contract and this pin keeps either file from drifting silently.
+        /// </summary>
+        private static readonly Dictionary<string, object> ResolvedBaselineValues = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["stepPercent"] = 0.25m,
+            ["baseLot"] = 0.10m,
+            ["projectedSpread"] = 0.50m,
+            ["slippage"] = 0m,
+            ["commissionBuffer"] = 0m,
+            ["initialBalance"] = 20000m,
+            ["marginEnabled"] = true,
+            ["helperFailedDataRequestPolicy"] = true
+        };
+
+        /// <summary>
+        /// Register values whose authority is an approved baseline decision rather than the
+        /// fixture/default that happens to use the same number; the register must say so explicitly.
+        /// </summary>
+        private static readonly string[] DecisionAuthorisedFields =
         {
             "stepPercent",
             "baseLot",
@@ -154,10 +191,11 @@ namespace MarketLab.SingleAnchor.Tests
         };
 
         /// <summary>
-        /// The approved baseline deliberately overrides these host defaults (qualified identity,
-        /// qualified period, approved broker volume maximum, host-supplied point value); every other
-        /// class A/B value must equal its host default, because the baseline passes the specified
-        /// default explicitly.
+        /// The approved baseline deliberately overrides these host defaults (qualified identity and
+        /// period, the required session map, the approved step/base lot, the research-account balance,
+        /// the approved broker volume maximum, the host-supplied point value, the target spread that
+        /// has no host default, and margin enablement); every other class A/B value must equal its
+        /// host default, and the baseline still passes it explicitly rather than relying on it.
         /// </summary>
         private static readonly HashSet<string> OverridesHostDefault = new HashSet<string>(StringComparer.Ordinal)
         {
@@ -165,8 +203,13 @@ namespace MarketLab.SingleAnchor.Tests
             "single-anchor-start-date",
             "single-anchor-end-date",
             "single-anchor-session-map",
+            "single-anchor-step-percent",
+            "single-anchor-base-lot",
+            "single-anchor-cash",
             "single-anchor-maximum-volume",
-            "single-anchor-point-value-per-lot"
+            "single-anchor-point-value-per-lot",
+            "single-anchor-projected-spread",
+            "single-anchor-margin-enabled"
         };
 
         /// <summary>
@@ -195,18 +238,22 @@ namespace MarketLab.SingleAnchor.Tests
             "LeanRoot",
             "PythonDll",
             "OutputRoot",
+            "RunEvidence",
+            "BaselineContract",
+            "BaselineRegister",
+            "ExpectedTerminalException",
             "DryRun"
         };
 
         [Test]
-        public void TheAuditIsPresentAndExplicitlyNotTheFrozenBaseline()
+        public void TheAuditRecordsTheResolvedFreezeAndBindsTheContract()
         {
             using var audit = ReadAudit();
             var root = audit.RootElement;
 
             Assert.That(root.GetProperty("contract").GetString(), Is.EqualTo("marketlab-baseline-decision-audit-v1"));
-            Assert.That(root.GetProperty("status").GetString(), Is.EqualTo("blocked"));
-            Assert.That(root.GetProperty("baselineConfigurationFrozen").GetBoolean(), Is.False);
+            Assert.That(root.GetProperty("status").GetString(), Is.EqualTo("resolved"));
+            Assert.That(root.GetProperty("baselineConfigurationFrozen").GetBoolean(), Is.True);
 
             var unresolved = Fields(root).Values.Count(field => ClassOf(field) == "D");
             Assert.That(root.GetProperty("unresolvedDecisionCount").GetInt32(), Is.EqualTo(unresolved));
@@ -214,6 +261,14 @@ namespace MarketLab.SingleAnchor.Tests
                 root.GetProperty("baselineConfigurationFrozen").GetBoolean(),
                 Is.EqualTo(unresolved == 0),
                 "the frozen flag must be the exact complement of the unresolved decisions");
+            Assert.That(unresolved, Is.Zero, "every former class-D decision must be resolved");
+
+            Assert.That(root.GetProperty("frozenBaselineContract").GetString(), Is.EqualTo("config/baseline-contract.json"));
+            var recordedContractSha = root.GetProperty("frozenBaselineContractSha256").GetString();
+            Assert.That(
+                recordedContractSha,
+                Is.EqualTo(Sha256LfNormalized(Path.Combine(FindMarketLabRoot(), "config", "baseline-contract.json"))),
+                "the register must pin the LF-normalized hash of the canonical baseline contract");
         }
 
         [Test]
@@ -230,70 +285,92 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void ApprovedAndDefaultEntriesAreValuedAndSourcedUnresolvedEntriesAreNot()
+        public void ApprovedAndDefaultEntriesAreValuedAndSourced()
         {
             using var audit = ReadAudit();
             foreach (var field in Fields(audit.RootElement).Values)
             {
                 var id = field.GetProperty("field").GetString();
                 var classification = ClassOf(field);
-                Assert.That(classification, Is.AnyOf("A", "B", "D"), $"field '{id}' has an unknown class");
-                if (classification == "D")
-                {
-                    Assert.That(
-                        field.GetProperty("value").ValueKind,
-                        Is.EqualTo(JsonValueKind.Null),
-                        $"unresolved field '{id}' must not carry a selected value");
-                }
-                else
-                {
-                    Assert.That(
-                        field.GetProperty("value").ValueKind,
-                        Is.Not.EqualTo(JsonValueKind.Null),
-                        $"approved/default field '{id}' must carry its value");
-                    RequiredText(field, "source");
-                }
+                Assert.That(classification, Is.AnyOf("A", "B"), $"field '{id}' has an unknown or re-opened class");
+                Assert.That(
+                    field.GetProperty("value").ValueKind,
+                    Is.Not.EqualTo(JsonValueKind.Null),
+                    $"approved/default field '{id}' must carry its value");
+                RequiredText(field, "source");
             }
         }
 
         [Test]
-        public void UnresolvedEntriesCarryTheFullDecisionRecord()
+        public void ResolvedFormerDecisionsCarryTheApprovedDecisionAndPreservedHistory()
         {
             using var audit = ReadAudit();
-            var unresolved = Fields(audit.RootElement).Values.Where(field => ClassOf(field) == "D").ToList();
-            Assert.That(unresolved, Is.Not.Empty, "the audit must expose the current blockers");
+            var fields = Fields(audit.RootElement);
+            var former = fields.Values.Where(field => field.TryGetProperty("wasClassD", out var flag) && flag.GetBoolean()).ToList();
+            Assert.That(former, Is.Not.Empty, "the resolved decisions must remain identifiable as the former blockers");
 
-            foreach (var field in unresolved)
+            foreach (var field in former)
             {
                 var id = field.GetProperty("field").GetString();
+                Assert.That(ClassOf(field), Is.EqualTo("A"), $"former blocker '{id}' must be explicitly approved (class A)");
+                RequiredText(field, "approvedDecision");
+                RequiredText(field, "authority");
                 RequiredText(field, "whyRequired");
                 RequiredText(field, "currentCodeDefault");
                 RequiredText(field, "notAuthoritativeBecause");
-                RequiredText(field, "decisionRequired");
-                Assert.That(field.GetProperty("fixtureExampleValues").ValueKind, Is.EqualTo(JsonValueKind.Array), $"field '{id}'");
+                Assert.That(
+                    field.GetProperty("fixtureExampleValues").ValueKind,
+                    Is.EqualTo(JsonValueKind.Array),
+                    $"field '{id}' must preserve the audit-time fixture/example context");
                 Assert.That(field.GetProperty("fixtureExampleValues").GetArrayLength(), Is.GreaterThan(0), $"field '{id}'");
                 foreach (var example in field.GetProperty("fixtureExampleValues").EnumerateArray())
                 {
                     Assert.That(example.ValueKind, Is.EqualTo(JsonValueKind.String));
                     Assert.That(string.IsNullOrWhiteSpace(example.GetString()), Is.False, $"field '{id}' has an empty example value");
                 }
+
+                Assert.That(ResolvedBaselineValues.TryGetValue(id!, out var expected), Is.True, $"field '{id}' is not pinned in this check");
+                var value = field.GetProperty("value");
+                object? actual = value.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Number => value.GetDecimal(),
+                    _ => throw new AssertionException($"field '{id}' has unexpected value kind {value.ValueKind}")
+                };
+                Assert.That(actual, Is.EqualTo(expected), $"the approved value of '{id}' changed unexpectedly");
             }
         }
 
         [Test]
-        public void TheKnownBlockersAreExactlyTheOnesReported()
+        public void TheFormerBlockersAreExactlyTheOnesResolved()
         {
             using var audit = ReadAudit();
             var reported = Fields(audit.RootElement).Values
-                .Where(field => ClassOf(field) == "D")
+                .Where(field => field.TryGetProperty("wasClassD", out var flag) && flag.GetBoolean())
                 .Select(field => field.GetProperty("field").GetString())
                 .OrderBy(id => id, StringComparer.Ordinal)
                 .ToArray();
 
             Assert.That(
                 reported,
-                Is.EqualTo(UnresolvedFields.OrderBy(id => id, StringComparer.Ordinal).ToArray()),
-                "closing or adding a baseline blocker must be a deliberate change of this audit and its check");
+                Is.EqualTo(FormerUnresolvedFields.OrderBy(id => id, StringComparer.Ordinal).ToArray()),
+                "re-opening or adding a baseline decision must be a deliberate change of this audit and its check");
+        }
+
+        [Test]
+        public void DecisionAuthorisedValuesStateThatTheApprovedDecisionIsTheAuthority()
+        {
+            using var audit = ReadAudit();
+            var fields = Fields(audit.RootElement);
+            foreach (var id in DecisionAuthorisedFields)
+            {
+                var authority = RequiredText(fields[id], "authority");
+                Assert.That(
+                    authority,
+                    Does.Contain("approved").IgnoreCase,
+                    $"field '{id}' must state that its authority is the approved decision, not a fixture/default");
+            }
         }
 
         [Test]
@@ -347,7 +424,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(replay.GetProperty("helper_exit_code").GetInt32(), Is.EqualTo(0));
             Assert.That(replay.GetProperty("missing_native_partitions").GetInt32(), Is.EqualTo(0));
             Assert.That(replay.GetProperty("source_coverage_gap_days").GetInt32(), Is.EqualTo(0));
-            // The factual basis of the unresolved helper failed-data-request policy (audit section 10.8):
+            // The factual basis of the approved helper failed-data-request policy (audit section 10.8):
             // every failed request is a calendar day the always-open identity requests that carries no
             // source rows, plus the unrelated missing benchmark hour file.
             Assert.That(replay.GetProperty("native_partition_failed_data_requests").GetInt32(), Is.EqualTo(406));
@@ -408,6 +485,22 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(RequiredDecimal(fields["maintenanceMarginRate"], "value"), Is.EqualTo(1.0m));
             Assert.That(RequiredText(fields["researchAccountCurrency"], "value"), Is.EqualTo("USD"));
             Assert.That(RequiredBool(fields["researchAccountEnabled"], "value"), Is.True);
+
+            // The approved decisions that have no host default, or whose value deliberately overrides
+            // a host default: the register must carry the approved value, not the host/fixture one.
+            Assert.That(new SingleAnchorParameters().StepPercent, Is.EqualTo(0m), "the host has no approved step default; the contract must supply it");
+            Assert.That(new SingleAnchorParameters().BaseLot, Is.EqualTo(0m), "the host has no approved base-lot default; the contract must supply it");
+            Assert.That(new SingleAnchorParameters().ProjectedSpread, Is.Null, "the target spread has no host default; the contract must supply it");
+            Assert.That(new SingleAnchorParameters().Slippage, Is.EqualTo(0m));
+            Assert.That(new SingleAnchorParameters().CommissionBuffer, Is.EqualTo(0m));
+            Assert.That(RequiredDecimal(fields["stepPercent"], "value"), Is.EqualTo(0.25m));
+            Assert.That(RequiredDecimal(fields["baseLot"], "value"), Is.EqualTo(0.10m));
+            Assert.That(RequiredDecimal(fields["projectedSpread"], "value"), Is.EqualTo(0.50m));
+            Assert.That(RequiredDecimal(fields["slippage"], "value"), Is.EqualTo(0m));
+            Assert.That(RequiredDecimal(fields["commissionBuffer"], "value"), Is.EqualTo(0m));
+            Assert.That(RequiredDecimal(fields["initialBalance"], "value"), Is.EqualTo(20000m));
+            Assert.That(RequiredBool(fields["marginEnabled"], "value"), Is.True);
+            Assert.That(RequiredBool(fields["helperFailedDataRequestPolicy"], "value"), Is.True);
         }
 
         [Test]
@@ -469,10 +562,6 @@ namespace MarketLab.SingleAnchor.Tests
                     hostDefault,
                     Is.EqualTo(expected),
                     $"host parameter '{entry.Key}' default changed; the audit and the register must be revisited deliberately");
-                if (ClassOf(field) == "D")
-                {
-                    continue;
-                }
                 var approved = ApprovedText(field);
                 var defaultText = HostDefaultText(expected!);
                 if (OverridesHostDefault.Contains(entry.Key))
@@ -538,12 +627,21 @@ namespace MarketLab.SingleAnchor.Tests
                 RequiredText(fixture, "whyNotAuthoritative");
                 keys.Add(owner + "=" + value);
 
-                if (ClassOf(fields[owner]) != "D")
+                var promoted = fixture.TryGetProperty("promotedByExplicitDecision", out var promotion)
+                    && promotion.ValueKind == JsonValueKind.True;
+                if (value == ApprovedText(fields[owner]))
                 {
                     Assert.That(
-                        value,
-                        Is.Not.EqualTo(ApprovedText(fields[owner])),
-                        $"fixture value '{owner}={value}' must not be presented as the approved value");
+                        promoted,
+                        Is.True,
+                        $"fixture value '{owner}={value}' equals the approved value and must be marked promotedByExplicitDecision with an authorityNote");
+                }
+                if (promoted)
+                {
+                    Assert.That(
+                        RequiredText(fixture, "authorityNote"),
+                        Is.Not.Empty,
+                        $"fixture value '{owner}={value}' claims promotion and must explain that the approved decision is the authority");
                 }
             }
 

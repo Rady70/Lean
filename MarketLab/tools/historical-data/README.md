@@ -545,8 +545,9 @@ converted native partitions and the run outputs stay outside Git under
 historical value, identity, timestamp or conversion rule changed. The
 composition of the partitioned folders into one continuous research data
 folder and its continuous replay qualification are recorded in section 10;
-the baseline configuration freeze and the first full-history baseline remain
-later steps.
+at that point the baseline configuration freeze and the first full-history
+baseline remained later steps (the freeze is now complete; see the end of
+section 10).
 
 ## 10. Continuous full-history native history (2019-01..2026-06; implemented and merged through GitHub PR #13)
 
@@ -654,9 +655,23 @@ GitHub PR #14 (reviewed head
 `8811d20e3d6c701842c5086beee0f141b7886dfe`, merge commit
 `261912d6cbda495c90ea68f578d3952fe3bba699`;
 [BASELINE_CONFIGURATION_FREEZE_AUDIT.md](../../BASELINE_CONFIGURATION_FREEZE_AUDIT.md)),
-while the baseline configuration itself is **blocked** on the audit's eight
-unresolved decisions (baseline configuration frozen: no); the first untouched
-full-history baseline has not been run and parameter research has not started.
+and the eight decisions it exposed were explicitly approved: the baseline
+configuration freeze is complete, with the canonical immutable configuration
+in [`config/baseline-contract.json`](../../config/baseline-contract.json) and
+its human-auditable rendering in
+[BASELINE_CONTRACT.md](../../BASELINE_CONTRACT.md) (contract identity
+`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`). The
+post-run baseline audit reuses this section's composition manifest
+(`marketlab-qualification\continuous-composition.json`) to verify the
+machine-local tree without replaying the source: the classifier hashes all
+2,332 partition zips against the manifest's recorded `zip_sha256`, checks the
+partition name set and the per-day semantic map, hash-verifies the
+market-hours database, symbol-properties database and session map, and anchors
+the manifest file itself to the replay qualification record
+(`marketlab-qualification\continuous-qualification-record.json`:
+`overall_qualification = PASS` and `continuous.composition_sha256` equal to the
+actual manifest hash). The first untouched full-history baseline has **not**
+been run and parameter research has **not** started.
 
 ## 11. Provenance of adapted retired code
 
@@ -761,9 +776,10 @@ material only; nothing here is a runtime dependency on them.
   PR #11 (section 10 of the same note). The composition of the already-qualified
   partitions into one continuous research data folder and its continuous replay
   qualification are recorded in section 10 of this README; the baseline
-  configuration decision audit is complete and merged through GitHub PR #14,
-  while the baseline configuration freeze and the first full-history baseline
-  remain later steps. PR 3 uses
+  configuration decision audit is complete and merged through GitHub PR #14;
+  at that point the baseline configuration freeze and the first full-history
+  baseline remained later steps (the freeze is now complete; see the end of
+  section 10). PR 3 uses
   the approved USD-denominated XM-style research account, so it does **not**
   require an EURUSD conversion dataset or any additional FX-conversion
   qualification; the qualified XAUUSD history remains the market-data input for
