@@ -382,7 +382,8 @@ accounted for:
   `-AlgorithmLanguage`, `-AlgorithmLocation`, `-DataFolder`, `-Parameters`,
   `-AllowMissingData`, `-AllowEngineErrors`) are classified in the register;
   the mechanical helper options (`-LeanRoot`, `-PythonDll`, `-OutputRoot`,
-  `-DryRun`) cannot change the strategy result.
+  `-DryRun`) cannot change the strategy configuration, and the engine/binary
+  identity is covered by the run-evidence requirements above.
 - Run-evidence requirements for the eventual authoritative run: the run must be
   launched from the reviewed and merged freeze commit and must record the
   repository commit, the runtime binary hashes (the PR 1 route already records
