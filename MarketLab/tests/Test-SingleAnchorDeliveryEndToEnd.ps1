@@ -49,6 +49,9 @@ try {
         native = [pscustomobject]@{ partitions = @([pscustomobject]@{ zip_relative_path = 'cfd/dukascopy/tick/xauusd/20260630_quote.zip' }) }
         semantic = [pscustomobject]@{ per_partition = [pscustomobject]@{ '2026-06-30' = [pscustomobject]@{ accepted_row_count = 3; semantic_digest = $native.digest } } }
     }
+    # The former "terminal" fixture (cash 4.05) now exercises the Phase B broker-liquidation model:
+    # the same post-fill Stop Out force-closes the only position and the run continues to the third
+    # quote instead of stopping with the intact basket left open.
     foreach ($terminal in @($false, $true)) {
         $cash = if ($terminal) { '4.05' } else { '20000' }
         $out = Join-Path $scratch ('output-' + $cash)
@@ -59,24 +62,32 @@ try {
             $log = @(& pwsh -NoProfile -File (Join-Path $repo 'MarketLab\scripts\run-backtest.ps1') `
                 -Configuration Release -AlgorithmTypeName SingleAnchorVNextAlgorithm `
                 -AlgorithmLocation (Join-Path $repo 'MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll') `
-                -DataFolder $data -OutputRoot $out -Parameters $parameters -AllowMissingData `
-                -ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException 2>&1)
+                -DataFolder $data -OutputRoot $out -Parameters $parameters -AllowMissingData 2>&1)
             $code = $LASTEXITCODE
         } finally { $ErrorActionPreference = $oldPreference }
-        $expectedCode = if ($terminal) { 1 } else { 0 }
-        Check ($code -eq $expectedCode) ("Unexpected native helper exit $code : " + (($log | Where-Object { [string]$_ -match 'ERROR|Exception' }) -join "`n"))
+        Check ($code -eq 0) ("Unexpected native helper exit $code : " + (($log | Where-Object { [string]$_ -match 'ERROR|Exception' }) -join "`n"))
         $run = @(Get-ChildItem -LiteralPath $out -Directory)
         Check ($run.Count -eq 1) 'Exactly one synthetic run directory is required'
         $result = [IO.File]::ReadAllText((Join-Path $run[0].FullName 'storage\single-anchor\results.json')) | ConvertFrom-Json
         $verified = Assert-BaselineDelivery $result $manifest $identity $data
         Check ($result.algorithmTimeZone -ceq 'UTC') 'Production Initialize must use UTC'
-        Check ($result.completed -eq (-not $terminal)) 'Completion must match the native outcome'
+        Check ($result.completed -eq $true) 'The broker-liquidation model completes both fixtures'
+        Check ($null -eq $result.failure) 'A Stop Out trigger is not a run failure under the Phase B model'
         Check ($result.runtimeVersion -match '^10\.\d+\.\d+$') 'Production host must report its runtime'
+        Check ($verified.mode -eq 'qualified-full-stream' -and $verified.quoteCount -eq 3) 'Both fixtures deliver the full three-quote stream'
         if ($terminal) {
-            Check ($verified.mode -eq 'qualified-prefix' -and $verified.quoteCount -eq 2 -and $verified.terminalDayPrefixRead) 'Native stop-out must retain exactly its two-quote prefix'
-            Check ($result.failure.Quote.Bid -eq 2010) 'Native terminal quote must be the spread-loss quote'
+            Check ($result.forcedLiquidations -eq 1) 'The post-fill Stop Out force-closes one position'
+            Check ($result.basketsLiquidated -eq 1) 'The only position ends through broker liquidation'
+            Check ($result.basketsClosed -eq 0) 'No strategy exit is fabricated for a forced close'
+            Check ($result.realizedProfit -eq -10) '(2010 - 2020) * 0.01 * 100 on the force-closed BUY'
+            Check ($result.researchAccount.Balance -eq -5.95 -and $result.researchAccount.Equity -eq -5.95) 'The realized loss reaches the flat account'
+            Check ($result.researchMargin.StopOutEpisodes.Count -eq 1) 'The Stop Out episode is recorded'
+            Check ($result.researchMargin.StopOutEpisodes[0].Outcome -ceq 'AllPositionsLiquidated') 'The episode outcome is recorded'
+            Check ($result.researchMargin.StopOutEpisodes[0].Liquidations[0].Leg.ClosePrice -eq 2010) 'A BUY closes at the executable Bid'
+            Check ($result.closedBaskets[0].Reason -ceq 'BrokerLiquidation') 'The basket outcome is a broker liquidation'
+            Check ($result.closedBaskets[0].HistoricalEntries -eq 1 -and $result.closedBaskets[0].LiquidatedPositions -eq 1) 'The immutable trade identity survives the forced close'
         } else {
-            Check ($verified.mode -eq 'qualified-full-stream' -and $verified.quoteCount -eq 3) 'Native completion must deliver the late final quote and full digest'
+            Check ($result.forcedLiquidations -eq 0 -and $result.basketsLiquidated -eq 0) 'A healthy account liquidates nothing'
             $failed = @(Get-ChildItem -LiteralPath $run[0].FullName -Filter 'failed-data-requests-*.txt' | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
             Check ($failed -notmatch '20260701_quote.zip') 'UTC end window must not request a July 1 partition'
         }

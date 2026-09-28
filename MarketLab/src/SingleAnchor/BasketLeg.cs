@@ -81,4 +81,33 @@ namespace MarketLab.SingleAnchor
             return $"#{TradeNumber} {Side} {Lots} @ {EntryPrice} ({Regime})";
         }
     }
+
+    /// <summary>
+    /// One position removed from the strategy's basket by deterministic broker-forced liquidation
+    /// on a Stop Out trigger. The leg's immutable identity (trade number, side, lot, entry price
+    /// and time, sizing regime and tail requirement) is copied exactly as it was opened; the
+    /// record adds the forced close. A leg removed this way is never a normal strategy exit and
+    /// never changes the identity of the surviving legs.
+    /// </summary>
+    public sealed record LiquidatedLegRecord(
+        int Basket,
+        int TradeNumber,
+        TradeSide Side,
+        decimal PlacedLot,
+        decimal EntryPrice,
+        DateTime EntryTime,
+        SizingRegime Regime,
+        decimal? RawRequestedLot,
+        decimal? ExactRequiredLot,
+        decimal NormalizedRequiredLot,
+        DateTime LiquidationTime,
+        DateTime TriggerTime,
+        long TriggerQuoteSequence,
+        decimal TriggerBid,
+        decimal TriggerAsk,
+        decimal ClosePrice,
+        decimal Commission,
+        decimal RealizedProfit,
+        StopOutReason Reason,
+        int Ordinal);
 }

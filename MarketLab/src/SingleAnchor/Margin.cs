@@ -33,9 +33,11 @@ namespace MarketLab.SingleAnchor
         public decimal MarginCallLevelPercent { get; init; } = 50m;
 
         /// <summary>
-        /// Stop-out Level in percent. At or below it the survival path is terminal. PR 3 approves
-        /// 20. The negative-equity rule for an account with open positions is additional and does
-        /// not depend on this value.
+        /// Stop-out Level in percent. At or below it (with open positions) the account is in the
+        /// Stop Out condition and Phase B deterministic broker liquidation begins; the episode
+        /// continues until the condition clears or no positions remain. PR 3 approves 20. The
+        /// negative-equity rule for an account with open positions is additional and does not
+        /// depend on this value.
         /// </summary>
         public decimal StopOutLevelPercent { get; init; } = 20m;
 
@@ -47,7 +49,7 @@ namespace MarketLab.SingleAnchor
             if (ContractSize <= 0m) errors.Add($"{nameof(ContractSize)} must be > 0 oz per lot (got {F(ContractSize)}).");
             if (Leverage <= 0m) errors.Add($"{nameof(Leverage)} must be > 0 (got {F(Leverage)}); PR 3 approves a fixed 1:500 and no leverage tiers.");
             if (StopOutLevelPercent <= 0m || StopOutLevelPercent >= 100m) errors.Add($"{nameof(StopOutLevelPercent)} must be > 0 and < 100 (got {F(StopOutLevelPercent)}).");
-            if (MarginCallLevelPercent <= StopOutLevelPercent) errors.Add($"{nameof(MarginCallLevelPercent)} ({F(MarginCallLevelPercent)}) must be > {nameof(StopOutLevelPercent)} ({F(StopOutLevelPercent)}): the entry block sits above the terminal stop-out.");
+            if (MarginCallLevelPercent <= StopOutLevelPercent) errors.Add($"{nameof(MarginCallLevelPercent)} ({F(MarginCallLevelPercent)}) must be > {nameof(StopOutLevelPercent)} ({F(StopOutLevelPercent)}): the entry block sits above the Stop Out threshold.");
             if (MarginCallLevelPercent >= 100m) errors.Add($"{nameof(MarginCallLevelPercent)} must be < 100 (got {F(MarginCallLevelPercent)}).");
 
             return errors;
@@ -175,7 +177,7 @@ namespace MarketLab.SingleAnchor
         decimal? ProjectedUsedMargin,
         decimal? ProjectedFreeMargin);
 
-    /// <summary>Why terminal stop-out was reached.</summary>
+    /// <summary>Why a Stop Out condition was observed.</summary>
     public enum StopOutReason
     {
         /// <summary>The margin level reached the stop-out threshold (at or below it).</summary>
@@ -184,16 +186,17 @@ namespace MarketLab.SingleAnchor
         /// <summary>
         /// The account has open positions and entered negative equity with no defined margin level
         /// (fully matched hedge, zero used margin). A zero-margin state must not look infinitely
-        /// safe.
+        /// safe: deterministic broker liquidation still has to remove positions.
         /// </summary>
         NegativeEquity
     }
 
     /// <summary>
-    /// The terminal survival failure state: the intact SingleAnchor path did not survive and the
-    /// research run stops. This is not a simulated broker liquidation: no ticket was closed and no
-    /// post-stop-out behaviour is invented. The values are the account state observed on the quote
-    /// that tripped the stop-out.
+    /// The Stop Out state observed on one quote under the Phase B broker-liquidation model: the
+    /// account condition that starts deterministic forced liquidation. It is an observation, not a
+    /// run-ending record: the engine proceeds to force-close open positions least-profitable
+    /// first until the condition clears or no positions remain. The values are the account state
+    /// observed on the quote that tripped the condition.
     /// </summary>
     public sealed record MarginStopOut(
         StopOutReason Reason,
@@ -213,7 +216,10 @@ namespace MarketLab.SingleAnchor
     /// margin-level extrema come from the same executable observations as the floating mark, so
     /// when <c>researchAccount.floatingObservationsSkipped</c> is non-zero a skipped mark can have
     /// been an unseen extreme and the true run minimum may be more extreme than reported.
-    /// <see cref="StopOut"/> is null when the account survived the run.
+    /// <see cref="StopOutEpisodes"/> records every Stop Out episode with its ordered forced
+    /// liquidations; an episode whose <see cref="StopOutEpisodeRecord.Outcome"/> is null was still
+    /// active when the run ended. Margin Call counters stay separate from Stop Out: Margin Call
+    /// blocks entries, it never liquidates.
     /// </summary>
     public sealed record ResearchMarginSummary(
         MarginParameters Parameters,
@@ -230,5 +236,6 @@ namespace MarketLab.SingleAnchor
         long MarginCallBlockedEpisodes,
         long InsufficientMarginAttempts,
         long InsufficientMarginEpisodes,
-        MarginStopOut? StopOut);
+        long ForcedLiquidations,
+        IReadOnlyList<StopOutEpisodeRecord> StopOutEpisodes);
 }

@@ -53,23 +53,36 @@ namespace MarketLab.SingleAnchor
         /// for the per-basket research record.
         /// </summary>
         void ObserveClose(BasketCloseRecord record, decimal realizedProfit);
+
+        /// <summary>
+        /// Observes one individual position force-closed by deterministic broker liquidation and
+        /// the engine's realized profit after the close. Called once per forced close, before any
+        /// further account observation on the same quote, so an implementation can capture the
+        /// account state before and after the close without re-deriving it. The engine has already
+        /// removed the position from the basket ledger and updated its realized profit when this
+        /// is called; an implementation must not mutate the engine or change the liquidation.
+        /// </summary>
+        void ObserveForcedLiquidation(in Quote quote, LiquidatedLegRecord leg, decimal realizedProfit, Basket? basket);
     }
 
     /// <summary>
     /// The engine's optional PR 3 target-account survival and entry-financing contract. It is a
     /// derived account view, not a second ledger: the implementation reads the engine's basket and
     /// realized profit and answers two questions under the frozen USD XM-style margin contract
-    /// (approved roadmap sections 3.16-3.21): is the account already terminally stopped out, and
+    /// (approved roadmap sections 3.16-3.21): is the account in the Stop Out condition (which
+    /// starts deterministic broker liquidation), and
     /// can the projected post-fill account finance a candidate order?
     /// </summary>
     /// <remarks>
     /// The engine calls <see cref="EvaluateSurvival"/> on every processed quote after the
     /// account's own observation and before any strategy action that could rescue an account that
-    /// should already have failed survival, and <see cref="AssessEntry"/> only after a valid
-    /// candidate order exists. A non-null <see cref="EvaluateSurvival"/> result is terminal and
-    /// the engine stops; a non-<see cref="MarginEntryDecision.Allowed"/> entry assessment becomes
-    /// an explicit rejection. The implementation owns no positions and never mutates the engine.
-    /// A run without a risk guard is the pre-PR-3 strategy path.
+    /// should already have failed survival. Under the Phase B broker-liquidation model a non-null
+    /// result is not terminal: it starts (or continues) a Stop Out episode and the engine
+    /// force-closes the least-profitable open position deterministically, then asks again, until
+    /// the condition clears or no positions remain. The account records the episode and every
+    /// forced close. <see cref="AssessEntry"/> is called only after a valid candidate order
+    /// exists. The implementation owns no positions and never mutates the engine. A run without a
+    /// risk guard is the pre-PR-3 strategy path.
     /// </remarks>
     public interface IResearchRiskGuard
     {
@@ -83,13 +96,16 @@ namespace MarketLab.SingleAnchor
         bool SurvivalObservable { get; }
 
         /// <summary>
-        /// Evaluates terminal stop-out from the account state already observed for this quote
-        /// (Step 3 of the frozen survival order). Returns the recorded terminal state the first
-        /// time the account stops out; null while the run may continue. The call is idempotent and
-        /// the engine stops the run when it is non-null, so no later quote is delivered. Only
-        /// called while <see cref="SurvivalObservable"/> is true.
+        /// Evaluates the current Stop Out condition from the account state already observed for
+        /// this quote (Step 3 of the frozen survival order). Returns the current condition when the
+        /// margin level is at or below the Stop Out level, or when an account with open positions
+        /// has negative equity; null while the account is outside Stop Out. The evaluation is
+        /// recomputed from the current state on every call, because the engine re-asks after each
+        /// forced close. <paramref name="quoteSequence"/> is the engine's 1-based processed-quote
+        /// number, recorded as the triggering quote identity of a Stop Out episode. Only called
+        /// while <see cref="SurvivalObservable"/> is true.
         /// </summary>
-        MarginStopOut? EvaluateSurvival(in Quote quote);
+        MarginStopOut? EvaluateSurvival(in Quote quote, long quoteSequence);
 
         /// <summary>
         /// Assesses one strategy-validated candidate order against the account: the Margin Call
@@ -126,7 +142,8 @@ namespace MarketLab.SingleAnchor
     /// approved PR 3 target-account capability (<see cref="IResearchRiskGuard"/>): it derives
     /// used margin, free margin and margin level from the same balance/equity state under the
     /// frozen USD XM-style contract, records their run extrema, counts Margin Call and
-    /// insufficient-margin events and records a terminal stop-out. Margin state is derived from
+    /// insufficient-margin events, records every Stop Out episode with its ordered forced
+    /// liquidations and the account state before and after each one. Margin state is derived from
     /// the engine's basket aggregates; it is never a second position registry or Balance/Equity
     /// authority. The observation half of this class remains read-only; only the explicitly
     /// requested risk-guard role can influence the engine, and only by reporting account state
@@ -191,7 +208,9 @@ namespace MarketLab.SingleAnchor
         private long _marginCallBlockedEpisodes;
         private long _insufficientMarginAttempts;
         private long _insufficientMarginEpisodes;
-        private MarginStopOut? _stopOut;
+        private long _forcedLiquidations;
+        private readonly List<StopOutEpisodeRecord> _stopOutEpisodes = new List<StopOutEpisodeRecord>();
+        private StopOutEpisodeBuilder? _stopOutEpisode;
 
         /// <summary>
         /// Creates an account for a validated parameter set and the run's initial balance
@@ -318,8 +337,8 @@ namespace MarketLab.SingleAnchor
         /// <summary>
         /// The run's target-account margin/survival evidence, or null when the account was created
         /// without <see cref="MarginParameters"/> (PR 3 margin disabled). The current values are
-        /// the last observed account state; <see cref="MarginStopOut"/> is non-null exactly when
-        /// the run stopped out.
+        /// the last observed account state; every Stop Out episode and every forced liquidation is
+        /// recorded in <see cref="StopOutEpisodes"/>.
         /// </summary>
         public ResearchMarginSummary? MarginSummary => _margin == null
             ? null
@@ -338,7 +357,35 @@ namespace MarketLab.SingleAnchor
                 _marginCallBlockedEpisodes,
                 _insufficientMarginAttempts,
                 _insufficientMarginEpisodes,
-                _stopOut);
+                _forcedLiquidations,
+                StopOutEpisodes);
+
+        /// <summary>
+        /// Every Stop Out episode observed so far, in trigger order, plus a still-active episode
+        /// (with a null outcome) when the run stopped inside one. An episode is sealed when forced
+        /// liquidation restores the account outside the Stop Out condition or when every position
+        /// has been removed; a null outcome means the run ended before either could happen (a
+        /// forced-close or executable-mark failure), and nothing is fabricated about how it would
+        /// have resolved. The returned list is a read-only view of the retained evidence.
+        /// </summary>
+        public IReadOnlyList<StopOutEpisodeRecord> StopOutEpisodes
+        {
+            get
+            {
+                var active = _stopOutEpisode;
+                if (active == null)
+                {
+                    return _stopOutEpisodes.AsReadOnly();
+                }
+                var list = new List<StopOutEpisodeRecord>(_stopOutEpisodes.Count + 1);
+                list.AddRange(_stopOutEpisodes);
+                list.Add(active.ToRecord(null, null));
+                return list.AsReadOnly();
+            }
+        }
+
+        /// <summary>Number of individual positions force-closed by deterministic broker liquidation over the run.</summary>
+        public long ForcedLiquidations => _forcedLiquidations;
 
         /// <summary>
         /// The compact research state of a basket that is still open (ordinary end of data or a
@@ -359,6 +406,7 @@ namespace MarketLab.SingleAnchor
             var active = _active != null && _active.Sequence == basket.Sequence ? _active : null;
             var facts = ComputeFacts(
                 legs,
+                basket.LiquidationTrace,
                 basket.Rejections,
                 active,
                 basket.OpenPositions,
@@ -386,7 +434,9 @@ namespace MarketLab.SingleAnchor
                 facts.LargestPlacedTailLot,
                 facts.HardBreakevenInfeasibleAttempts,
                 facts.HardBreakevenInfeasibleEpisodes,
-                facts.Rejections);
+                facts.Rejections,
+                basket.LiquidatedPositions,
+                basket.LiquidatedRealizedProfit);
         }
 
         /// <inheritdoc />
@@ -444,54 +494,193 @@ namespace MarketLab.SingleAnchor
         public bool SurvivalObservable => _margin != null && _floatingObservable;
 
         /// <inheritdoc />
-        public MarginStopOut? EvaluateSurvival(in Quote quote)
+        public MarginStopOut? EvaluateSurvival(in Quote quote, long quoteSequence)
         {
             var margin = RequireMargin();
-            if (_stopOut != null)
+            MarginStopOut? stopOut = null;
+            if (_openPositions > 0)
             {
-                return _stopOut;
+                var marginLevel = _currentMarginLevelPercent;
+                StopOutReason reason;
+                if (marginLevel.HasValue && marginLevel.Value <= margin.StopOutLevelPercent)
+                {
+                    reason = StopOutReason.MarginLevel;
+                }
+                else if (_equity < 0m)
+                {
+                    // The approved hedged-account rule: open positions and negative equity are a
+                    // Stop Out condition even when the matched hedge leaves zero used margin and
+                    // the margin level is therefore undefined. Deterministic liquidation must still
+                    // remove positions rather than pretend a zero-margin account is infinitely safe.
+                    reason = StopOutReason.NegativeEquity;
+                }
+                else
+                {
+                    SealEpisode(quote.Time, StopOutEpisodeOutcome.MarginRestored);
+                    return null;
+                }
+
+                // The engine calls this immediately after the observation of the same quote (and
+                // again after each forced close) and only while SurvivalObservable is true, so the
+                // equity and margin values below are current for that state; a skipped executable
+                // mark stops the run instead (the account keeps its last observable values only for
+                // presentation and the skipped-mark count).
+                stopOut = new MarginStopOut(
+                    reason,
+                    quote.Time,
+                    _balance,
+                    _floatingProfit,
+                    _equity,
+                    _currentUsedMargin,
+                    _currentFreeMargin ?? _equity - _currentUsedMargin,
+                    marginLevel,
+                    _openPositions);
             }
-            if (_openPositions <= 0)
+
+            if (stopOut == null)
             {
                 // No open leg can be stopped out. A flat account with a negative balance is not a
                 // broker stop-out: there is nothing to liquidate, and the negative free margin
                 // already blocks every candidate under the financing test.
+                SealEpisode(quote.Time, StopOutEpisodeOutcome.MarginRestored);
                 return null;
             }
 
-            var marginLevel = _currentMarginLevelPercent;
-            StopOutReason reason;
-            if (marginLevel.HasValue && marginLevel.Value <= margin.StopOutLevelPercent)
+            if (_stopOutEpisode == null)
             {
-                reason = StopOutReason.MarginLevel;
+                _stopOutEpisode = new StopOutEpisodeBuilder(_lastBasketSequence, stopOut, quoteSequence, quote, CaptureState(stopOut));
             }
-            else if (_equity < 0m)
+            return stopOut;
+        }
+
+        /// <summary>
+        /// Seals an active Stop Out episode when the account is outside the condition on a later
+        /// evaluation; a no-op otherwise. A forced close that removed the last position seals the
+        /// episode inside <see cref="ObserveForcedLiquidation"/> instead.
+        /// </summary>
+        private void SealEpisode(DateTime resolvedTime, StopOutEpisodeOutcome outcome)
+        {
+            if (_stopOutEpisode == null)
             {
-                // The approved hedged-account rule: open positions and negative equity are
-                // terminal even when the matched hedge leaves zero used margin and the margin
-                // level is therefore undefined.
-                reason = StopOutReason.NegativeEquity;
+                return;
             }
-            else
+            _stopOutEpisodes.Add(_stopOutEpisode.ToRecord(outcome, resolvedTime));
+            _stopOutEpisode = null;
+        }
+
+        /// <inheritdoc />
+        public void ObserveForcedLiquidation(in Quote quote, LiquidatedLegRecord leg, decimal realizedProfit, Basket? basket)
+        {
+            if (leg == null) throw new ArgumentNullException(nameof(leg));
+            var episode = _stopOutEpisode;
+            if (episode == null)
             {
-                return null;
+                // The engine always establishes the episode through EvaluateSurvival before it
+                // force-closes anything; a missing episode is a host bug the account refuses to
+                // paper over, because the evidence would then claim a liquidation out of nowhere.
+                throw new InvalidOperationException("A forced liquidation was observed without an active Stop Out episode.");
             }
 
-            // The engine calls this immediately after the observation of the same quote and only
-            // while SurvivalObservable is true, so the equity and margin values below are current
-            // for that quote; a skipped executable mark stops the run instead (the account keeps
-            // its last observable values only for presentation and the skipped-mark count).
-            _stopOut = new MarginStopOut(
-                reason,
-                quote.Time,
+            // The account state before the close is the state of the last observation (the
+            // engine has not observed anything since); the state after the close is recomputed
+            // from the surviving inventory at the same triggering quote.
+            var before = CaptureState();
+            var raw = basket != null && basket.OpenPositions > 0
+                ? BasketEconomics.RawProfit(basket, quote, _parameters)
+                : (decimal?)null;
+            Observe(quote, basket, realizedProfit, raw);
+            var after = CaptureState();
+
+            episode.Add(new ForcedLiquidationRecord(leg, before, after));
+            _forcedLiquidations++;
+
+            if (basket == null || basket.OpenPositions == 0)
+            {
+                _stopOutEpisodes.Add(episode.ToRecord(StopOutEpisodeOutcome.AllPositionsLiquidated, quote.Time));
+                _stopOutEpisode = null;
+            }
+        }
+
+        /// <summary>The account state of the last observation, as recorded with a forced close.</summary>
+        private LiquidationAccountState CaptureState()
+        {
+            return new LiquidationAccountState(
                 _balance,
                 _floatingProfit,
                 _equity,
                 _currentUsedMargin,
-                _currentFreeMargin ?? _equity - _currentUsedMargin,
-                marginLevel,
+                _currentFreeMargin,
+                _currentMarginLevelPercent,
                 _openPositions);
-            return _stopOut;
+        }
+
+        /// <summary>The trigger state of a Stop Out condition, in the same shape forced-close records use.</summary>
+        private static LiquidationAccountState CaptureState(MarginStopOut stopOut)
+        {
+            return new LiquidationAccountState(
+                stopOut.Balance,
+                stopOut.FloatingProfit,
+                stopOut.Equity,
+                stopOut.UsedMargin,
+                stopOut.FreeMargin,
+                stopOut.MarginLevelPercent,
+                stopOut.OpenPositions);
+        }
+
+        /// <summary>
+        /// One Stop Out episode being recorded: the trigger state, the ordered forced closes and the
+        /// last observed account state. It is sealed exactly once, either when the margin is
+        /// restored, when every position has been removed, or never (an unresolved end-of-run
+        /// episode is exposed with a null outcome by <see cref="StopOutEpisodes"/>).
+        /// </summary>
+        private sealed class StopOutEpisodeBuilder
+        {
+            private readonly List<ForcedLiquidationRecord> _liquidations = new List<ForcedLiquidationRecord>();
+            private readonly LiquidationAccountState _atTrigger;
+            private LiquidationAccountState _afterLiquidation;
+
+            public StopOutEpisodeBuilder(int basket, MarginStopOut stopOut, long quoteSequence, in Quote quote, LiquidationAccountState atTrigger)
+            {
+                Basket = basket;
+                Reason = stopOut.Reason;
+                TriggerQuoteSequence = quoteSequence;
+                TriggerTime = quote.Time;
+                TriggerBid = quote.Bid;
+                TriggerAsk = quote.Ask;
+                _atTrigger = atTrigger;
+                _afterLiquidation = atTrigger;
+            }
+
+            public int Basket { get; }
+            public StopOutReason Reason { get; }
+            public long TriggerQuoteSequence { get; }
+            public DateTime TriggerTime { get; }
+            public decimal TriggerBid { get; }
+            public decimal TriggerAsk { get; }
+
+            public void Add(ForcedLiquidationRecord liquidation)
+            {
+                _liquidations.Add(liquidation);
+                _afterLiquidation = liquidation.After;
+            }
+
+            public StopOutEpisodeRecord ToRecord(StopOutEpisodeOutcome? outcome, DateTime? resolvedTime)
+            {
+                // A snapshot: an active episode's record must not mutate under a caller that is
+                // already holding it while forced liquidation continues.
+                return new StopOutEpisodeRecord(
+                    Basket,
+                    Reason,
+                    TriggerQuoteSequence,
+                    TriggerTime,
+                    TriggerBid,
+                    TriggerAsk,
+                    _atTrigger,
+                    _liquidations.ToArray(),
+                    outcome,
+                    resolvedTime,
+                    _afterLiquidation);
+            }
         }
 
         /// <inheritdoc />
@@ -712,6 +901,7 @@ namespace MarketLab.SingleAnchor
         {
             var facts = ComputeFacts(
                 record.LegTrace,
+                record.LiquidationTrace,
                 record.RejectionTrace,
                 activeExtrema,
                 record.Legs,
@@ -746,17 +936,22 @@ namespace MarketLab.SingleAnchor
                 facts.LargestPlacedTailLot,
                 facts.HardBreakevenInfeasibleAttempts,
                 facts.HardBreakevenInfeasibleEpisodes,
-                facts.Rejections);
+                facts.Rejections,
+                record.LiquidatedPositions,
+                record.LiquidatedRealizedProfit);
         }
 
         /// <summary>
-        /// The shared per-basket facts derived from the engine's leg and rejection traces plus
-        /// the account's path observations. The <c>fallback*</c> arguments are the final live
-        /// exposure values used as lower bounds for the maxima when no observation recorded the
-        /// basket (they cannot exceed the true maxima under the append-only ledger).
+        /// The shared per-basket facts derived from the engine's leg, forced-liquidation and
+        /// rejection traces plus the account's path observations. Liquidated legs were once opened,
+        /// so they contribute their immutable trade numbers, placed lots and tail requirements to
+        /// the historical facts exactly like surviving legs. The <c>fallback*</c> arguments are the
+        /// final live exposure values used as lower bounds for the maxima when no observation
+        /// recorded the basket (they cannot exceed the true maxima under the append-only ledger).
         /// </summary>
         private static BasketFacts ComputeFacts(
             IReadOnlyList<LegRecord> legs,
+            IReadOnlyList<LiquidatedLegRecord> liquidatedLegs,
             IReadOnlyList<EntryRejectionRecord> rejectionRows,
             ActiveBasket? activeExtrema,
             int fallbackOpenPositions,
@@ -765,6 +960,7 @@ namespace MarketLab.SingleAnchor
         {
             DateTime? firstEntryTime = legs.Count > 0 ? legs[0].Time : (DateTime?)null;
             TradeSide? firstSide = legs.Count > 0 ? legs[0].Side : (TradeSide?)null;
+            var firstTradeNumber = legs.Count > 0 ? legs[0].TradeNumber : int.MaxValue;
             var deepestTradeNumber = 0;
             decimal? maxPlaced = null;
             decimal? maxPlacedTail = null;
@@ -773,6 +969,28 @@ namespace MarketLab.SingleAnchor
             for (var i = 0; i < legs.Count; i++)
             {
                 var leg = legs[i];
+                if (leg.TradeNumber > deepestTradeNumber) deepestTradeNumber = leg.TradeNumber;
+                if (maxPlaced == null || leg.PlacedLot > maxPlaced.Value) maxPlaced = leg.PlacedLot;
+                if (leg.Regime != SizingRegime.HardBreakeven) continue;
+                if (maxPlacedTail == null || leg.PlacedLot > maxPlacedTail.Value) maxPlacedTail = leg.PlacedLot;
+                if (leg.ExactRequiredLot.HasValue && (maxExactTail == null || leg.ExactRequiredLot.Value > maxExactTail.Value))
+                {
+                    maxExactTail = leg.ExactRequiredLot;
+                }
+                if (maxNormalizedTail == null || leg.NormalizedRequiredLot > maxNormalizedTail.Value)
+                {
+                    maxNormalizedTail = leg.NormalizedRequiredLot;
+                }
+            }
+            for (var i = 0; i < liquidatedLegs.Count; i++)
+            {
+                var leg = liquidatedLegs[i];
+                if (leg.TradeNumber < firstTradeNumber)
+                {
+                    firstTradeNumber = leg.TradeNumber;
+                    firstEntryTime = leg.EntryTime;
+                    firstSide = leg.Side;
+                }
                 if (leg.TradeNumber > deepestTradeNumber) deepestTradeNumber = leg.TradeNumber;
                 if (maxPlaced == null || leg.PlacedLot > maxPlaced.Value) maxPlaced = leg.PlacedLot;
                 if (leg.Regime != SizingRegime.HardBreakeven) continue;
@@ -816,7 +1034,7 @@ namespace MarketLab.SingleAnchor
             return new BasketFacts(
                 firstEntryTime,
                 firstSide,
-                legs.Count,
+                legs.Count + liquidatedLegs.Count,
                 deepestTradeNumber,
                 deepestAttemptedTradeNumber,
                 Math.Max(fallbackOpenPositions, activeExtrema?.MaxOpenPositions ?? 0),
@@ -1018,6 +1236,11 @@ namespace MarketLab.SingleAnchor
     /// reason in <see cref="Rejections"/> and still contributes its requirement to the maxima).
     /// <see cref="FloatingObservationsSkipped"/> is the number of executable marks this basket
     /// could not observe; when it is non-zero the floating extrema may be incomplete.
+    /// <see cref="RealizedProfit"/> is the basket's whole realized result over its lifetime,
+    /// including any <see cref="LiquidatedRealizedProfit"/> already forced out by broker
+    /// liquidation; <see cref="LiquidatedPositions"/> counts the removed legs and
+    /// <see cref="CloseReason"/> is <see cref="ExitReason.BrokerLiquidation"/> when every
+    /// position was removed by the broker rather than by a strategy exit rule.
     /// </summary>
     public sealed record BasketResearchRecord(
         int Basket,
@@ -1045,7 +1268,9 @@ namespace MarketLab.SingleAnchor
         decimal? LargestPlacedTailLot,
         long HardBreakevenInfeasibleAttempts,
         long HardBreakevenInfeasibleEpisodes,
-        IReadOnlyList<ResearchRejectionCount> Rejections);
+        IReadOnlyList<ResearchRejectionCount> Rejections,
+        int LiquidatedPositions,
+        decimal LiquidatedRealizedProfit);
 
     /// <summary>
     /// The compact research state of a basket that is still open at end of data or at a
@@ -1054,7 +1279,10 @@ namespace MarketLab.SingleAnchor
     /// nothing is fabricated. It carries the same path, lot and rejection facts (including the
     /// basket's own floating extrema and its skipped-mark count) so the final unresolved
     /// basket's history is not lost. <see cref="DeepestTradeNumber"/> is the deepest placed
-    /// trade and <see cref="DeepestAttemptedTradeNumber"/> includes rejected attempts.
+    /// trade and <see cref="DeepestAttemptedTradeNumber"/> includes rejected attempts; the entry
+    /// count includes positions already removed by broker liquidation, and
+    /// <see cref="LiquidatedPositions"/>/<see cref="LiquidatedRealizedProfit"/> expose that part
+    /// of the history explicitly.
     /// </summary>
     public sealed record ActiveBasketResearch(
         int Basket,
@@ -1078,7 +1306,9 @@ namespace MarketLab.SingleAnchor
         decimal? LargestPlacedTailLot,
         long HardBreakevenInfeasibleAttempts,
         long HardBreakevenInfeasibleEpisodes,
-        IReadOnlyList<ResearchRejectionCount> Rejections);
+        IReadOnlyList<ResearchRejectionCount> Rejections,
+        int LiquidatedPositions,
+        decimal LiquidatedRealizedProfit);
 
     /// <summary>
     /// One rejection count of a closed or active basket: the distinct rejection episodes and the

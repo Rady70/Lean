@@ -637,12 +637,26 @@ values itself and refuses another symbol, security type or point value (margin
 mode requires `XAUUSD`, `Cfd` and 100 per lot), so the account contract cannot
 silently vary. On the same research account it adds `researchMargin`
 (current/extreme used and free margin, margin level, Margin Call and
-InsufficientMargin counts, terminal `stopOut`) and two explicit rejection
-reasons (`MarginCall`, `InsufficientMargin`); a fill that immediately stops the
-account out is terminal on the same quote, a terminal stop-out stops the run as
-an `AccountStopOut` failure without simulating broker liquidation, and a quote
-whose executable mark cannot be computed stops the run as an `AccountSurvival`
-failure instead of certifying survival from a stale state. Margin disabled is the pre-PR-3 strategy path exactly: identical
+InsufficientMargin counts, and the Stop Out episodes with every forced
+liquidation) and two explicit rejection reasons (`MarginCall`,
+`InsufficientMargin`); **Phase B broker-forced liquidation** supersedes the
+historical terminal Stop Out behavior: reaching the 20% Stop Out condition
+force-closes the least-profitable open position first (equal profits tie on the
+higher immutable trade number) at the executable market side of the triggering
+quote, realizes its P/L, revalues the surviving inventory and continues until
+the account is restored or no positions remain, after which historical
+processing continues; a basket whose positions were all liquidated ends through
+the `BrokerLiquidation` reason rather than a strategy exit, and a quote whose
+executable mark cannot be computed still stops the run as an `AccountSurvival`
+failure instead of certifying survival from a stale state. A forced close the
+executor cannot fill stops the run as a `BrokerLiquidation` failure. The
+historical pre-liquidation characterization remains the Phase A record in
+[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md), with its `AccountStopOut`
+result shape unchanged; the Phase B behavior, its evidence fields, its
+deterministic tests and the bounded local March 2020 qualification are recorded
+in section 14 of
+[SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md).
+Margin disabled is the pre-PR-3 strategy path exactly: identical
 counters, legs, rejection episodes/reasons/parity digests, closes, realized P/L
 and final basket state, with strategy-path parity and the rejection-free
 fixture's projection hash recorded in the implementation note section 10; the

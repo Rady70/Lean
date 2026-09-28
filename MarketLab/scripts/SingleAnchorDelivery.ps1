@@ -57,7 +57,7 @@ function Assert-BaselineDelivery($Results, $Manifest, $Identity, [string]$DataFo
     if ($Results.completed -isnot [bool]) { throw 'The strategy completed flag must be present and boolean.' }
     $terminal = $null -ne $Results.failure
     if ($Results.completed -eq $terminal) { throw 'The strategy completed flag contradicts its failure record.' }
-    if ($terminal -and $Results.failure.Kind -cne 'AccountStopOut') { throw 'Only AccountStopOut is an approved terminal result.' }
+    if ($terminal -and $Results.failure.Kind -cne 'AccountStopOut') { throw "Only AccountStopOut is an approved terminal result for the frozen pre-liquidation baseline (got '$($Results.failure.Kind)')." }
     if ($Results.algorithmTimeZone -cne 'UTC' -or $Results.quoteTimeZone -cne 'UTC') { throw 'The baseline algorithm and quote clocks must both be UTC.' }
     $start = ConvertTo-BaselineUtc $Identity.startDate
     $end = (ConvertTo-BaselineUtc $Identity.endDate).AddDays(1).AddTicks(-1)
@@ -106,9 +106,16 @@ function Assert-BaselineDelivery($Results, $Manifest, $Identity, [string]$DataFo
     }
     if ($total -ne $count) { throw 'Partition quote counts do not sum to the processed count.' }
     if (-not $terminal) {
+        # The Phase B broker-liquidation model does not persist a terminal StopOut record; an
+        # older pre-liquidation result carries one. Both shapes are accepted for a completed run,
+        # but a record whose model says the run stopped must not be certified as a completion.
+        $stopOut = $null
+        if ($null -ne $Results.researchMargin -and $Results.researchMargin.PSObject.Properties.Name -contains 'StopOut') {
+            $stopOut = $Results.researchMargin.StopOut
+        }
         if ($count -ne [long]$Identity.continuousHistoryQuoteCount -or
             $delivered.semantic_digest -cne $Identity.continuousHistorySemanticDigest -or
-            $last -ne (ConvertTo-BaselineUtc $Identity.continuousHistoryLastQuoteUtc) -or $null -ne $Results.researchMargin.StopOut) {
+            $last -ne (ConvertTo-BaselineUtc $Identity.continuousHistoryLastQuoteUtc) -or $null -ne $stopOut) {
             throw 'Normal completion does not match the qualified full population or has a stop-out record.'
         }
     } else {

@@ -106,6 +106,43 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
+        /// Executable close price of one position at the triggering quote under the configured
+        /// execution model: a BUY closes at the Bid less slippage, a SELL at the Ask plus slippage.
+        /// This is the correct market side the deterministic broker liquidation must use.
+        /// </summary>
+        public static decimal ExecutableLegClosePrice(TradeSide side, in Quote quote, SingleAnchorParameters parameters)
+        {
+            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
+            return side == TradeSide.Buy ? quote.Bid - parameters.Slippage : quote.Ask + parameters.Slippage;
+        }
+
+        /// <summary>
+        /// Executable P/L of one position closed at <paramref name="closePrice"/>: the price move
+        /// from its actual entry, valued at the configured point value, less the round-trip
+        /// commission on its own volume. This is the position's value used by the broker's
+        /// least-profitable-first liquidation ordering and by each forced close's realized P/L;
+        /// summing it over every open leg reproduces the account's executable floating mark
+        /// (raw profit less the per-lot cost on the gross volume).
+        /// </summary>
+        public static decimal ExecutableLegProfit(BasketLeg leg, decimal closePrice, SingleAnchorParameters parameters)
+        {
+            if (leg == null) throw new ArgumentNullException(nameof(leg));
+            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
+            var priceMove = leg.Side == TradeSide.Buy ? closePrice - leg.EntryPrice : leg.EntryPrice - closePrice;
+            return priceMove * leg.Lots * parameters.PointValuePerLot - parameters.CommissionPerLot * leg.Lots;
+        }
+
+        /// <summary>
+        /// Executable P/L of one position at a quote: a BUY valued at the Bid less slippage, a
+        /// SELL at the Ask plus slippage, each less its own round-trip commission. Used by the
+        /// deterministic liquidation ordering.
+        /// </summary>
+        public static decimal ExecutableLegProfit(BasketLeg leg, in Quote quote, SingleAnchorParameters parameters)
+        {
+            return ExecutableLegProfit(leg, ExecutableLegClosePrice(leg.Side, quote, parameters), parameters);
+        }
+
+        /// <summary>
         /// Executable profit of the whole basket closed at the given per-side prices: price P/L
         /// less the round-trip commission on the gross volume. Used for the projection at a hard
         /// target (section 7), for the realized result of a close and for the executable

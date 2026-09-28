@@ -19,7 +19,14 @@ namespace MarketLab.SingleAnchor
         FixedTakeProfit,
 
         /// <summary>Basket trailing profit (section 13).</summary>
-        Trailing
+        Trailing,
+
+        /// <summary>
+        /// The basket ended because deterministic broker liquidation removed every remaining open
+        /// position during a Stop Out episode (Phase B). This is not a strategy exit: no strategy
+        /// exit rule fired, and the realized result is the sum of the individual forced closes.
+        /// </summary>
+        BrokerLiquidation
     }
 
     /// <summary>
@@ -32,6 +39,14 @@ namespace MarketLab.SingleAnchor
     /// A request to close every leg of the basket.
     /// </summary>
     public sealed record CloseOrder(Basket Basket, ExitReason Reason, Quote Quote);
+
+    /// <summary>
+    /// A request to close exactly one open position of the basket because the broker is
+    /// force-liquidating the account during a Stop Out episode. Unlike <see cref="CloseOrder"/>
+    /// this is not a strategy exit decision: the engine selects the position deterministically and
+    /// the executor must close it at the executable market side of the triggering quote.
+    /// </summary>
+    public sealed record LegCloseOrder(Basket Basket, BasketLeg Leg, StopOutReason Reason, Quote Quote);
 
     /// <summary>
     /// Result of an entry request: the whole requested volume filled at one price, or nothing.
@@ -70,12 +85,29 @@ namespace MarketLab.SingleAnchor
         }
     }
 
+    /// <summary>Result of a forced single-position close during broker liquidation.</summary>
+    public readonly record struct LegCloseExecution(bool Succeeded, decimal ClosePrice, string? Message)
+    {
+        /// <summary>The position was closed at <paramref name="closePrice"/>.</summary>
+        public static LegCloseExecution Closed(decimal closePrice)
+        {
+            return new LegCloseExecution(true, closePrice, null);
+        }
+
+        /// <summary>Nothing was executed; the account state is not established and the run must stop.</summary>
+        public static LegCloseExecution Failure(string message)
+        {
+            return new LegCloseExecution(false, 0m, message);
+        }
+    }
+
     /// <summary>
     /// The host's side of execution. The engine decides; the executor fills. The contract is
     /// all-or-nothing and immediate: an entry fills its whole volume at one price or fails, a
-    /// close closes every leg or fails. Partial or deferred fills are not part of this contract;
-    /// a broker-style executor that needs them is a separate, later qualification. Implementations
-    /// do not throw for ordinary rejections; they return a failure the engine surfaces.
+    /// close closes every leg or fails, a forced close closes exactly one requested position or
+    /// fails. Partial or deferred fills are not part of this contract; a broker-style executor
+    /// that needs them is a separate, later qualification. Implementations do not throw for
+    /// ordinary rejections; they return a failure the engine surfaces.
     /// </summary>
     public interface IBasketExecutor
     {
@@ -84,6 +116,13 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>Closes every leg of the basket.</summary>
         CloseExecution CloseBasket(CloseOrder order);
+
+        /// <summary>
+        /// Force-closes exactly one open position during deterministic broker liquidation, at the
+        /// executable market side of the triggering quote (a BUY at the Bid less slippage, a SELL
+        /// at the Ask plus slippage under the configured model).
+        /// </summary>
+        LegCloseExecution ClosePosition(LegCloseOrder order);
     }
 
     /// <summary>
@@ -115,6 +154,14 @@ namespace MarketLab.SingleAnchor
             if (order == null) throw new ArgumentNullException(nameof(order));
             var (buyClose, sellClose) = BasketEconomics.ExecutableClosePrices(order.Quote, _parameters);
             return CloseExecution.Closed(buyClose, sellClose);
+        }
+
+        /// <inheritdoc />
+        public LegCloseExecution ClosePosition(LegCloseOrder order)
+        {
+            if (order == null) throw new ArgumentNullException(nameof(order));
+            if (order.Leg == null) throw new ArgumentNullException(nameof(order), "The forced close needs the position to close.");
+            return LegCloseExecution.Closed(BasketEconomics.ExecutableLegClosePrice(order.Leg.Side, order.Quote, _parameters));
         }
     }
 
@@ -370,8 +417,8 @@ namespace MarketLab.SingleAnchor
     /// quote because the configured execution economics make a needed executable close price
     /// non-positive. The frozen survival order requires a current executable valuation on every
     /// quote; continuing on the last observable state would silently certify an account that may
-    /// already be terminally stopped out. This is a run-ending condition like the stop-out and
-    /// data-quality faults, not a stop-out itself; the last observable account state and the
+    /// already be in Stop Out and need liquidation. This is a run-ending condition like the
+    /// data-quality faults, not a Stop Out itself; the last observable account state and the
     /// skipped-mark count remain in the results.
     /// </summary>
     public sealed class AccountSurvivalException : SingleAnchorRunException
@@ -400,13 +447,10 @@ namespace MarketLab.SingleAnchor
     }
 
     /// <summary>
-    /// Thrown by the engine when the PR 3 research account reaches terminal stop-out. Stop-out is
-    /// evaluated before any strategy action that could rescue the account on the same quote and
-    /// again on the post-fill state of an entry, and it is a run-ending condition like the
-    /// strategy-invariant and data-quality faults: the intact SingleAnchor path did not survive,
-    /// the engine refuses every further quote, and no broker ticket-liquidation sequence is
-    /// simulated. The terminal account state is recorded by the account
-    /// (<c>researchMargin.stopOut</c>).
+    /// Thrown by the engine when the PR 3 research account reaches terminal stop-out. This is the
+    /// historical pre-liquidation model's run-ending condition: it is no longer raised by the
+    /// Phase B broker-liquidation engine (which force-closes positions deterministically instead),
+    /// and it is retained for the frozen pre-liquidation baseline contract and its evidence.
     /// </summary>
     public sealed class AccountStopOutException : SingleAnchorRunException
     {
@@ -430,6 +474,34 @@ namespace MarketLab.SingleAnchor
         public override SingleAnchorRunException AsRefusal()
         {
             return new AccountStopOutException(Reason, Quote, "The engine is faulted and accepts no further quotes: " + Message);
+        }
+    }
+
+    /// <summary>
+    /// Thrown by the Phase B engine when deterministic broker liquidation cannot be executed: the
+    /// Stop Out condition is active and requires force-closing an open position, but the executor
+    /// did not fill the forced close (or reported a non-positive close price). The account state
+    /// after the failed liquidation is not established, so the run stops instead of continuing
+    /// with an unknown inventory; the affected Stop Out episode stays in the account evidence.
+    /// </summary>
+    public sealed class BrokerLiquidationException : SingleAnchorRunException
+    {
+        /// <summary>Creates the exception.</summary>
+        public BrokerLiquidationException(Quote quote, string message)
+            : base(quote, message)
+        {
+        }
+
+        /// <inheritdoc />
+        public override string Kind => "BrokerLiquidation";
+
+        /// <inheritdoc />
+        public override string Condition => "ForcedCloseFailed";
+
+        /// <inheritdoc />
+        public override SingleAnchorRunException AsRefusal()
+        {
+            return new BrokerLiquidationException(Quote, "The engine is faulted and accepts no further quotes: " + Message);
         }
     }
 
@@ -1135,7 +1207,10 @@ namespace MarketLab.SingleAnchor
     /// (specification section 15: an open basket is marked to market, not closed). Anchor source,
     /// geometry, state, legs and rejections are always present; the profit figures are null
     /// without legs, and <paramref name="ExecutableProfit"/> is also null when the configured
-    /// slippage makes a needed executable close price non-positive at the quote.
+    /// slippage makes a needed executable close price non-positive at the quote. A partially
+    /// liquidated basket reports its surviving legs plus the immutable
+    /// <paramref name="LiquidationTrace"/>, <paramref name="LiquidatedPositions"/> and
+    /// <paramref name="LiquidatedRealizedProfit"/> of the positions the broker already force-closed.
     /// </summary>
     public sealed record BasketSnapshot(
         int Sequence,
@@ -1163,6 +1238,10 @@ namespace MarketLab.SingleAnchor
         decimal? ExecutableProfit,
         decimal? StepMoney,
         IReadOnlyList<LegRecord> LegTrace,
+        IReadOnlyList<LiquidatedLegRecord> LiquidationTrace,
+        int LiquidatedPositions,
+        decimal LiquidatedRealizedProfit,
+        int HistoricalEntries,
         IReadOnlyList<EntryRejectionRecord> RejectionTrace,
         SkippedFirstEntryRecord? SkippedFirstEntryTrace);
 
@@ -1216,6 +1295,23 @@ namespace MarketLab.SingleAnchor
     /// of closing every leg under the configured model, and the leg, rejection and skipped
     /// first-entry traces.
     /// </summary>
+    /// <remarks>
+    /// A basket can lose positions to deterministic broker liquidation while the rest stays open.
+    /// <see cref="RealizedProfit"/> is then the basket's whole realized result over its lifetime:
+    /// the forced closes' realized P/L (<see cref="LiquidatedRealizedProfit"/>, already applied to
+    /// the balance when they happened) plus the final close of the surviving legs. The
+    /// <see cref="LiquidationTrace"/> preserves the removed legs' immutable identities; a basket
+    /// whose positions were all liquidated closes with <see cref="ExitReason.BrokerLiquidation"/>.
+    /// <see cref="Commission"/> is the round-trip commission of every leg the basket ever opened
+    /// (surviving plus liquidated), and <see cref="BuyClosePrice"/>/<see cref="SellClosePrice"/>
+    /// are the executable prices of the final close (the triggering quote's per-side prices for a
+    /// broker liquidation). For <see cref="ExitReason.BrokerLiquidation"/> the decision quantities
+    /// <see cref="RawProfit"/>, <see cref="ExitProfit"/> and <see cref="Threshold"/> are not
+    /// applicable and are zero: no strategy exit rule fired, and the realized figures are the
+    /// forced closes' sum. <see cref="Legs"/>/<see cref="BuyLots"/>/<see cref="SellLots"/>/
+    /// <see cref="GrossLots"/>/<see cref="NetLots"/> describe the surviving inventory at the final
+    /// close (zero for a fully liquidated basket).
+    /// </remarks>
     public sealed record BasketCloseRecord(
         int Sequence,
         AnchorRecord AnchorEvent,
@@ -1239,6 +1335,10 @@ namespace MarketLab.SingleAnchor
         decimal SellClosePrice,
         decimal Commission,
         decimal RealizedProfit,
+        decimal LiquidatedRealizedProfit,
+        int LiquidatedPositions,
+        int HistoricalEntries,
+        IReadOnlyList<LiquidatedLegRecord> LiquidationTrace,
         IReadOnlyList<LegRecord> LegTrace,
         IReadOnlyList<EntryRejectionRecord> RejectionTrace,
         SkippedFirstEntryRecord? SkippedFirstEntryTrace);
@@ -1277,6 +1377,26 @@ namespace MarketLab.SingleAnchor
 
     /// <summary>The executor could not close the basket; it stays open and the exit is re-evaluated on the next quote.</summary>
     public sealed record BasketCloseFailedEvent(Basket Basket, ExitReason Reason, Quote Quote, string Message);
+
+    /// <summary>
+    /// The account entered a Stop Out condition on this quote and deterministic broker liquidation
+    /// begins before any strategy action that could rescue the account on the same quote.
+    /// </summary>
+    public sealed record StopOutTriggeredEvent(Basket Basket, MarginStopOut StopOut, Quote Quote);
+
+    /// <summary>
+    /// One open position was force-closed by deterministic broker liquidation. The record carries
+    /// the immutable leg identity, the executable close and realized P/L, the liquidation ordinal
+    /// within the episode and the account state before and after the close.
+    /// </summary>
+    public sealed record ForcedLiquidationEvent(Basket Basket, LiquidatedLegRecord Record, Quote Quote);
+
+    /// <summary>
+    /// Every remaining position was removed by deterministic broker liquidation: the basket ended
+    /// through <see cref="ExitReason.BrokerLiquidation"/>, not through a strategy exit. The record's
+    /// realized profit is the sum of the forced closes and its trace holds every removed leg.
+    /// </summary>
+    public sealed record BasketLiquidatedEvent(Basket Basket, BasketCloseRecord Record, Quote Quote);
 
     /// <summary>Null-safe event invocation.</summary>
     internal static class EventExtensions
