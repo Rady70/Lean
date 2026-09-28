@@ -1389,9 +1389,10 @@ failed-data policy),
 [scripts/Get-SingleAnchorBaselineInvocation.ps1](scripts/Get-SingleAnchorBaselineInvocation.ps1),
 which refuses an unpinned contract, and recorded in the human-auditable
 contract. No strategy behavior,
-account/margin contract, data or qualification semantics changed, the first
-untouched full-history strategy baseline was not run and parameter
-optimization has not started.
+account/margin contract, data or qualification semantics changed. At the time
+of the PR #15 freeze work the first untouched full-history strategy baseline
+had not yet been run; it was subsequently executed and preserved as recorded
+in section 13. Parameter optimization has not started.
 
 
 ## 12. Pre-baseline audit corrections (2026-09-28)

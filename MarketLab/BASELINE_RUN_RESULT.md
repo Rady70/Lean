@@ -234,9 +234,10 @@ fabricated, and no closing transaction exists in this record.
 
 The basket is a normal first four arithmetic trades (0.10/0.20/0.30/0.40 lots)
 followed by 32 hard-BE tail entries. Each hard-BE tail entry is sized so the
-basket reaches approximately zero P/L if price travels to the hard-BE
-boundary; until that boundary is reached the growing inventory floats a loss,
-and the account must finance it. During the March 2020 crash the required
+basket reaches approximately zero P/L **under the configured execution model**
+(target spread 0.50, zero slippage and commission) if price travels to the
+hard-BE boundary; until that boundary is reached the growing inventory floats a
+loss, and the account must finance it. During the March 2020 crash the required
 tail inventory grew to 7.24 lots on one entry and 62.76 gross lots in total,
 and the pre-liquidation floating loss exceeded the account's surviving equity
 before the boundary was reached.

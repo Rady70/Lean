@@ -739,6 +739,21 @@ is a defect to fix, not an expected cost to accept.
 
 ### PR 3 -- target-account margin survival
 
+**Status note (2026-09-28):** sections 3.16-3.20 below describe the historical
+and currently implemented **pre-liquidation** contract. The frozen first
+full-history baseline was produced under exactly this contract and is preserved
+as historical evidence in
+[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). In this contract a Stop Out is
+terminal *for this research model* because the model does not simulate
+broker-forced liquidation. That no-liquidation restriction is intentionally
+superseded by the separately approved Phase B correction: broker-forced
+liquidation is to be implemented in a separate, later change (not in the
+baseline-result PR), after which post-Stop-Out survival can be determined.
+Until Phase B lands, the code still behaves exactly as sections 3.16-3.20
+describe, so they remain the accurate description of the current
+implementation; the Phase B change defines its own separately identified
+contract and must not modify the frozen baseline contract.
+
 Goal: answer whether the configured account could finance and survive the
 strategy path. This is a MarketLab research layer, not LEAN portfolio/margin.
 

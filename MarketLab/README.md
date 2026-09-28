@@ -599,7 +599,8 @@ These corrections are merged through
 [PR #16](https://github.com/Rady70/Lean/pull/16) (reviewed head
 `906d7e091c60fddaef177ebfc33fc4625b4bede0`, merge commit
 `32c6cafadcec38cd9b73908ba3553992b454fca5`). Build and preflight receipts
-must name the exact clean checkout revision used for the future baseline.
+must name the exact clean checkout revision used for the subsequently executed
+baseline (recorded in [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md)).
 The decision register is resolved (`unresolvedDecisionCount: 0`) and bound to
 the contract. The first untouched full-history baseline was run and qualified
 on 2026-09-28 as a historical record of the pre-broker-liquidation Stop Out
