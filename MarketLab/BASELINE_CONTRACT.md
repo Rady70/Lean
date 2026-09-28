@@ -6,7 +6,7 @@ untouched continuous full-history SingleAnchor strategy baseline.
 ```text
 baseline configuration freeze:            complete and merged through PR #15
 pre-baseline audit corrections:           complete and merged through PR #16
-first untouched full-history baseline:    NOT RUN
+first untouched full-history baseline:    complete  -  one qualified run (2026-09-28, BASELINE_RUN_RESULT.md)
 parameter optimization:                   NOT STARTED
 ```
 
@@ -172,7 +172,11 @@ second account or position ledger is introduced and no EUR conversion exists.
 The corrected procedure requires the reviewed and merged correction commit.
 Set `$ReviewedCommit` to that explicitly approved full 40-character SHA; do
 not populate it automatically from the current HEAD. The first full-history
-baseline remains unrun and requires separate authorization.
+baseline was executed exactly once on 2026-09-28 from reviewed commit
+`5c1649d741ba2ec0a113c2c47255dbac637b5465` under explicit authorization; its
+qualified result is recorded in
+[`BASELINE_RUN_RESULT.md`](BASELINE_RUN_RESULT.md). Any further authoritative
+run requires separate authorization.
 
 Run these preparation commands in order, from the repository root:
 

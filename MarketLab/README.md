@@ -34,6 +34,7 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `config\baseline-contract.json` | canonical machine-readable frozen baseline configuration (the single source of truth for the first untouched baseline's effective values) |
 | `config\baseline-decision-audit.json` | resolved decision register: every baseline field's class, value and authority, bound to the frozen contract |
 | `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` | the PR #14 baseline-decision audit, updated: all eight former class-D blockers resolved and the freeze recorded |
+| `BASELINE_RUN_RESULT.md` | the qualified first untouched full-history baseline result: run identity, evidence-chain hashes, results and limitations |
 | `scripts\Get-SingleAnchorBaselineInvocation.ps1` | reports the baseline contract identity and renders the exact frozen run invocation from the contract |
 | `scripts\Build-SingleAnchorBaseline.ps1` | rebuilds an explicitly reviewed clean revision and records the source, contract and complete runtime dependency identity |
 | `scripts\Test-SingleAnchorBaselineFailedData.ps1` | classifies every failed data request of a baseline run against the frozen contract and the qualified continuous tree |
@@ -597,8 +598,10 @@ These corrections are merged through
 `32c6cafadcec38cd9b73908ba3553992b454fca5`). Build and preflight receipts
 must name the exact clean checkout revision used for the future baseline.
 The decision register is resolved (`unresolvedDecisionCount: 0`) and bound to
-the contract. The first untouched full-history strategy baseline has **not**
-been run and parameter optimization has **not** started. The continuous
+the contract. The first untouched full-history strategy baseline has been run
+once (2026-09-28) and qualified; it ended through the modeled `AccountStopOut`
+and is recorded in [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). Parameter
+optimization has **not** started. The continuous
 composition and its replay re-verification are implemented and merged through
 GitHub PR #13. **PR 2** (C# research account and bounded analytics) is implemented
 and merged (GitHub PR #9):
@@ -647,7 +650,10 @@ contract is
 human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), the
 resolved decision audit is
 [BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md),
-and the first untouched full-history baseline has not been run yet.
+and the first untouched full-history baseline has been run once and qualified
+(it ended through the modeled `AccountStopOut`;
+[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md)). Parameter optimization has
+not started.
 
 ## 10. When required data is missing
 

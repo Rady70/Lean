@@ -176,9 +176,11 @@ section 6:
   is rendered by `scripts/Get-SingleAnchorBaselineInvocation.ps1` and recorded
   in `BASELINE_CONTRACT.md`.
 
-The first untouched full-history baseline was **not** run by the freeze and
-parameter optimization has **not** started; the next roadmap step is the single
-authoritative baseline run under the reviewed and merged contract.
+The first untouched full-history baseline was **not** run by the freeze; it was
+subsequently executed once on 2026-09-28 from the finalized reviewed revision
+and qualified (it ended through the approved modeled `AccountStopOut`; see
+[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md)). Parameter optimization has
+**not** started; the post-baseline prerequisites are section 8.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
@@ -1189,7 +1191,8 @@ This phase is complete only when:
    baseline configuration (including that composed folder and the qualified
    source-derived session map) is frozen;
 8. one untouched full-history baseline run is completed and audited before
-   parameter optimization begins.
+   parameter optimization begins (completed 2026-09-28; see
+   [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md)).
 
 Until those gates pass, historical output is engineering/qualification evidence,
 not proof of strategy edge or an optimized parameter set.

@@ -1321,8 +1321,9 @@ boundaries and per-partition digests, and the redundant complete 90-folder
 native representations were retired
 (`tools/historical-data/README.md` section 10). The milestone is implemented
 and merged through GitHub PR #13. The baseline configuration freeze is complete and merged through GitHub PR #15
-(section 11); the next roadmap step is the single first untouched full-history
-baseline run under the frozen contract.
+(section 11); the single first untouched full-history baseline run under the
+frozen contract is complete and qualified (section 13,
+[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md)).
 
 Evidence used for the frozen research contract: the user-supplied MT5 XAUUSD
 symbol specification (XMGlobal-MT5 8, Ultra Low Standard), XM's published Gold
@@ -1465,3 +1466,39 @@ revision after documentation bookkeeping. The local receipts in
 the validated checkout revision. Rebuild and repeat preflight whenever the
 selected revision or runtime changes. The full-history run remains separately
 authorized. No upstream source, historical data or hosted CI is changed.
+
+## 13. First untouched full-history baseline (2026-09-28): complete
+
+One authoritative run of the frozen baseline was executed from the finalized
+`master` revision `5c1649d741ba2ec0a113c2c47255dbac637b5465` under contract
+`0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a` with the
+rendered section 4 invocation. The source-bound Release build receipt, the
+contract/register verification, the 2,332-partition qualified-tree preflight
+and the exact `-DryRun` all passed before launch; the helper then wrote the
+pre-run invocation evidence, pinned the .NET 10.0.12 runtime and re-hashed the
+launcher/strategy/framework dependency set in the post-run outcome evidence.
+The mandatory failed-data classification returned EXPECTED with 66/66 failed
+requests accounted for (65 expected source-absent calendar days plus the one
+enumerated auxiliary benchmark-hour file; 341 source-absent days after the
+terminated horizon recorded as never requested), 0 unexpected categories,
+0 engine `ERROR::` lines and 1 expected terminal-exception line.
+
+The run processed 51,304,749 quotes over 383 day partitions
+(`2019-01-01T23:00:07.151Z` .. `2020-03-23T12:06:26.292Z`, 16.3% of the frozen
+period) and ended through the approved PR #3 terminal path `AccountStopOut`
+(`MarginLevel`) at 2020-03-23 12:06:26.292 UTC: margin level
+17.229779578062128554190460520% (below the 20% Stop Out), equity 199.50100 USD,
+balance 25,519.92800 USD, floating -25,320.42700 USD, 36 open positions in the
+single unresolved basket. Realized P/L was +5,519.92800 USD with zero balance
+drawdown; 276 baskets were anchored (275 closed: 205 at depth 1, 37 at 2, 21 at
+3, 3 at 4, 9 deeper; one open at depth 36), hard-BE activated in 10 baskets
+(no infeasible sizing episodes, 0 rejected entries), maximum gross exposure was
+62.76 lots and the minimum margin level was the stop-out value.
+
+The full result, the evidence-chain SHA-256 values and the limitations are
+recorded in [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). No strategy,
+contract, margin, account, execution or data semantics changed for or by the
+run; the 413,750,130-row qualification was not replayed. The baseline is now
+run once and qualified and requires independent review; parameter optimization
+has not started and remains gated by the post-baseline prerequisites of the
+implementation plan section 8.
