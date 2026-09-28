@@ -44,6 +44,7 @@ namespace MarketLab.SingleAnchor.Tests
             "fillForward",
             "dataTimeZone",
             "exchangeTimeZone",
+            "algorithmTimeZone",
             "sessionMapPath",
             "sessionMapSha256",
             "marketHoursDatabaseSha256",
@@ -242,6 +243,8 @@ namespace MarketLab.SingleAnchor.Tests
             "BaselineContract",
             "BaselineRegister",
             "ExpectedTerminalException",
+            "ReviewedCommit",
+            "BuildReceipt",
             "DryRun"
         };
 
@@ -404,6 +407,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(RequiredBool(fields["fillForward"], "value"), Is.False);
             Assert.That(RequiredText(fields["dataTimeZone"], "value"), Is.EqualTo("UTC"));
             Assert.That(RequiredText(fields["exchangeTimeZone"], "value"), Is.EqualTo("UTC"));
+            Assert.That(RequiredText(fields["algorithmTimeZone"], "value"), Is.EqualTo("UTC"));
             Assert.That(RequiredDecimal(fields["tradingAvailabilityBufferMinutes"], "value"), Is.EqualTo(5m));
             Assert.That(RequiredText(fields["leanBacktestingConfig"], "value"), Is.EqualTo("MarketLab/config/backtesting.json"));
             Assert.That(

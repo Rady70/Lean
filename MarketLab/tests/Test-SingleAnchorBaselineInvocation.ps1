@@ -47,9 +47,10 @@ $realRegister = Join-Path $marketLabRoot 'config\baseline-decision-audit.json'
 $root = Join-Path $env:TEMP ("marketlab-baseline-invocation-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 
-function Invoke-Reporter([string]$Contract, [string]$Register) {
+function Invoke-Reporter([string]$Contract, [string]$Register, [string]$ReviewedCommit) {
     $arguments = @('-NoProfile', '-File', $reporter, '-Json', '-Contract', $Contract)
     if ($Register) { $arguments += @('-Register', $Register) }
+    if ($ReviewedCommit) { $arguments += @('-ReviewedCommit', $ReviewedCommit) }
     # Windows PowerShell 5.1 wraps a native process's stderr as an error record; the
     # reporter's expected refusals write there, so relax the preference for the call.
     $previousPreference = $ErrorActionPreference
@@ -77,6 +78,11 @@ try {
     Check 'run command carries -RunEvidence' ($happy.Report.runCommand -match '-RunEvidence')
     Check 'run command carries -AllowMissingData' ($happy.Report.runCommand -match '-AllowMissingData')
     Check 'run command does not carry -AllowEngineErrors' (-not ($happy.Report.runCommand -match '-AllowEngineErrors'))
+    Check 'template requires explicit reviewed commit and build receipt' ($happy.Report.runCommand.Contains('-ReviewedCommit $ReviewedCommit -BuildReceipt'))
+    $bound = Invoke-Reporter $realContract $realRegister ('a' * 40)
+    Check 'explicit full reviewed SHA renders intact' ($bound.Code -eq 0 -and $bound.Report.runCommand.Contains('-ReviewedCommit ' + ('a' * 40)))
+    $invalidCommit = Invoke-Reporter $realContract $realRegister 'HEAD'
+    Check 'implicit or symbolic reviewed revision is refused' ($invalidCommit.Code -eq 2)
 
     Write-Host 'Tampered register pin'
     $register = [System.IO.File]::ReadAllText($realRegister) | ConvertFrom-Json
@@ -102,6 +108,7 @@ try {
 }
 finally {
     if (Test-Path -LiteralPath $root) {
+        if (-not [IO.Path]::GetFullPath($root).StartsWith([IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\marketlab-baseline-invocation-', [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe fixture cleanup path.' }
         Remove-Item -LiteralPath $root -Recurse -Force
     }
 }

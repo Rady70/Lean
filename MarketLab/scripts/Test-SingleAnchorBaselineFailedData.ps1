@@ -85,6 +85,22 @@ Exit codes:
 .PARAMETER RunDirectory
 The run directory produced by run-backtest.ps1 (contains failed-data-requests-*.txt, data-monitor-report-*.json, marketlab-run-invocation.json, marketlab-run-outcome.json and storage\single-anchor\results.json). Required unless -Preflight is used.
 
+.PARAMETER ReviewedCommit
+The explicitly reviewed full commit SHA. Required for authoritative preflight;
+post-run verification also checks it against the run's recorded reviewed SHA.
+
+.PARAMETER BuildReceipt
+Successful receipt produced by Build-SingleAnchorBaseline.ps1. Authoritative
+preflight validates its source, contract and complete runtime dependency set.
+
+.PARAMETER CheckOnly
+With -Preflight, return the preflight JSON in memory and write no record. Used
+by the helper's mandatory launch check, including DryRun.
+
+.PARAMETER DotnetPath
+The dotnet executable selected by the helper. Defaults to the first dotnet on PATH.
+It must match the successful build receipt.
+
 .PARAMETER Preflight
 Run only the pre-run verification stage (contract/register pin, clean Git checkout, qualified-tree identity) against the planned run configuration and write the preflight record; no run directory is read. The authoritative baseline procedure runs this before run-backtest.ps1 so no pre-run-knowable drift can consume the one-off run.
 
@@ -118,12 +134,18 @@ param(
     [string]$Evidence,
     [string]$DataFolder,
     [switch]$Preflight,
+    [switch]$CheckOnly,
+    [string]$ReviewedCommit,
+    [string]$BuildReceipt,
+    [string]$DotnetPath,
     [switch]$AllowNonAuthoritativeOverride,
     [string]$OutputPath
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'SingleAnchorBaseline.ps1')
+. (Join-Path $PSScriptRoot 'SingleAnchorDelivery.ps1')
 
 $script:ExitExpected = 0
 $script:ExitInvalid = 1
@@ -187,7 +209,7 @@ function Get-FileSha256([string]$Path) {
 # exit 2. The classifier must never leave an unclassified run without a written reason.
 function Fail-Preflight([string]$Message, [string]$RecordPath, [bool]$Authoritative) {
     Write-ErrorLine $Message
-    if ($RecordPath) {
+    if ($RecordPath -and -not $CheckOnly) {
         $record = [ordered]@{}
         $record['contract'] = 'marketlab-single-anchor-baseline-failed-data-classification-v1'
         $record['generatedUtc'] = [System.DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -236,6 +258,9 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
 }
 $outputFullPath = [System.IO.Path]::GetFullPath($OutputPath)
 $authoritative = -not $AllowNonAuthoritativeOverride
+$baselineRepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+if ($CheckOnly -and -not $Preflight) { throw '-CheckOnly is only supported with -Preflight.' }
+if (-not $BuildReceipt) { $BuildReceipt = Join-Path $baselineRepoRoot 'MarketLab\output\baseline-build.json' }
 
 # --- Contract, register pin and tracked evidence --------------------------------
 if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) {
@@ -290,6 +315,9 @@ catch {
 try {
     $dataIdentity = Get-RequiredProperty $contractData 'qualifiedDataIdentity'
     $policy = Get-RequiredProperty $contractData 'failedDataRequestPolicy'
+    if ($authoritative -and $evidencePath -ne [IO.Path]::GetFullPath((Join-Path $baselineRepoRoot $dataIdentity.evidence))) {
+        throw 'Authoritative qualification must use the contract-named tracked evidence file.'
+    }
     if (-not [string]::IsNullOrWhiteSpace($DataFolder) -and -not $AllowNonAuthoritativeOverride) {
         Fail-Preflight 'the data folder must not be overridden for an authoritative classification; pass -AllowNonAuthoritativeOverride only for synthetic tests.' $outputFullPath $authoritative
     }
@@ -315,8 +343,8 @@ try {
     $orderedMonthDigestChainSha256 = [string](Get-RequiredProperty $dataIdentity 'orderedMonthDigestChainSha256')
     $monthCount = [int](Get-RequiredProperty $dataIdentity 'continuousHistoryMonthCount')
     $quoteCount = [long](Get-RequiredProperty $dataIdentity 'continuousHistoryQuoteCount')
-    $firstCanonicalUtc = [string](Get-RequiredProperty $dataIdentity 'continuousHistoryFirstQuoteUtc')
-    $lastCanonicalUtc = [string](Get-RequiredProperty $dataIdentity 'continuousHistoryLastQuoteUtc')
+    $firstCanonicalUtc = ConvertTo-BaselineUtc (Get-RequiredProperty $dataIdentity 'continuousHistoryFirstQuoteUtc')
+    $lastCanonicalUtc = ConvertTo-BaselineUtc (Get-RequiredProperty $dataIdentity 'continuousHistoryLastQuoteUtc')
     $knownAuxiliary = @(Get-RequiredProperty $policy 'knownAuxiliaryRequestPaths')
     $expectedCategories = @(Get-RequiredProperty $policy 'expectedCategories')
 }
@@ -367,8 +395,8 @@ try {
         sessionMapPath = ([string](Get-RequiredProperty $manifestSessionMap 'relative_path') -eq $sessionMapRelative)
         windowStart = ([string](Get-PropertyOrNull (Get-RequiredProperty $manifestComposition 'lean_run_window') 'start_date') -eq $startText)
         windowEnd = ([string](Get-PropertyOrNull (Get-RequiredProperty $manifestComposition 'lean_run_window') 'end_date') -eq $endText)
-        firstCanonicalUtc = ([string](Get-RequiredProperty $manifestComposition 'first_canonical_utc') -eq $firstCanonicalUtc)
-        lastCanonicalUtc = ([string](Get-RequiredProperty $manifestComposition 'last_canonical_utc') -eq $lastCanonicalUtc)
+        firstCanonicalUtc = ((ConvertTo-BaselineUtc (Get-RequiredProperty $manifestComposition 'first_canonical_utc')) -eq $firstCanonicalUtc)
+        lastCanonicalUtc = ((ConvertTo-BaselineUtc (Get-RequiredProperty $manifestComposition 'last_canonical_utc')) -eq $lastCanonicalUtc)
         acceptedRowCount = ([long](Get-RequiredProperty $manifestCounts 'accepted_row_count') -eq $quoteCount)
         convertedRowCount = ([long](Get-RequiredProperty $manifestCounts 'converted_row_count') -eq $quoteCount)
         rejectedRows = ([long](Get-RequiredProperty $manifestCounts 'rejected_row_count') -eq 0L)
@@ -401,7 +429,12 @@ if (-not (Test-Path -LiteralPath $qualificationRecordPath -PathType Leaf)) {
     Fail-Preflight "the qualified tree's replay qualification record '$qualificationRecordPath' does not exist; the composition manifest cannot be anchored." $outputFullPath $authoritative
 }
 $manifestFileSha256 = Get-FileSha256 $manifestPath
+$qualificationRecordSha256 = Get-FileSha256 $qualificationRecordPath
 try {
+    $expectedRecordSha256 = [string](Get-RequiredProperty (Get-RequiredProperty $evidenceData 'replay') 'record_sha256')
+    if ($expectedRecordSha256 -cnotmatch '^[0-9a-f]{64}$' -or $qualificationRecordSha256 -cne $expectedRecordSha256) {
+        throw 'The qualification record does not match the tracked replay.record_sha256 anchor.'
+    }
     $qualificationRecord = [System.IO.File]::ReadAllText($qualificationRecordPath) | ConvertFrom-Json
     $recordContract = Get-RequiredProperty $qualificationRecord 'contract'
     $recordContinuous = Get-RequiredProperty $qualificationRecord 'continuous'
@@ -541,6 +574,21 @@ while ($day -le $endDate) {
 if ($Preflight) {
     $preflightRepositoryHead = $null
     $preflightRepositoryDirty = $null
+    $preflightBuild = $null
+    if ($authoritative) {
+        try {
+            if (-not $DotnetPath) { $DotnetPath = (Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
+            $frozenHost = $contractData.runHost
+            $frozenPairs = @($contractData.parameters | ForEach-Object { $_.name + ':' + $_.value }) -join ','
+            Assert-BaselineLaunch $contractData $baselineRepoRoot $frozenHost.buildConfiguration `
+                (Join-Path $baselineRepoRoot $frozenHost.leanConfig) $frozenHost.algorithmTypeName $frozenHost.algorithmLanguage `
+                (Join-Path $baselineRepoRoot $frozenHost.algorithmLocation) $resolvedDataFolder $frozenPairs `
+                $true $false 'MarketLab.SingleAnchor.AccountStopOutException'
+            $preflightBuild = Assert-BaselineBuild $BuildReceipt $baselineRepoRoot $ReviewedCommit $DotnetPath $contractSha256
+        } catch {
+            Fail-Preflight $_.Exception.Message $outputFullPath $authoritative
+        }
+    }
     if ($authoritative) {
         $preflightRepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
         try {
@@ -580,6 +628,10 @@ if ($Preflight) {
     $preflightRecord['compositionManifest'] = $manifestPath
     $preflightRecord['compositionManifestSha256'] = $manifestFileSha256
     $preflightRecord['qualificationRecord'] = $qualificationRecordPath
+    $preflightRecord['qualificationRecordSha256'] = $qualificationRecordSha256
+    $preflightRecord['reviewedCommit'] = $ReviewedCommit
+    $preflightRecord['buildReceiptSha256'] = if ($preflightBuild) { Get-FileSha256 $BuildReceipt } else { $null }
+    $preflightRecord['launchInputsVerified'] = $null -ne $preflightBuild
     $preflightRecord['verifiedPartitionCount'] = $verifiedPartitionCount
     $preflightRecord['sessionMapSha256'] = $sessionMapSha256
     $preflightRecord['marketHoursDatabaseSha256'] = $marketHoursSha256
@@ -588,6 +640,10 @@ if ($Preflight) {
     $preflightRecord['orderedMonthDigestChainSha256'] = $orderedMonthDigestChainSha256
     $preflightRecord['expectedSourceAbsentDayCount'] = $expectedAbsentDays.Count
     $preflightRecord['qualification'] = 'PREFLIGHT-PASS'
+    if ($CheckOnly) {
+        $preflightRecord | ConvertTo-Json -Depth 6
+        exit $script:ExitExpected
+    }
     [System.IO.File]::WriteAllText($outputFullPath, ($preflightRecord | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
     Write-InfoLine "baseline contract SHA-256:        $contractSha256"
     Write-InfoLine "authoritative:                    $authoritative"
@@ -829,6 +885,40 @@ if ($invocationTerminalException -ne 'MarketLab.SingleAnchor.AccountStopOutExcep
     Fail-Preflight "the run's pre-run evidence declares expected terminal exception '$invocationTerminalException', not the frozen 'MarketLab.SingleAnchor.AccountStopOutException'." $outputFullPath $authoritative
 }
 
+$verifiedBuild = $null
+if ($authoritative) {
+    try {
+        $runReviewedCommit = [string](Get-RequiredProperty $invocation 'reviewedCommit')
+        if ($ReviewedCommit -and $ReviewedCommit -cne $runReviewedCommit) { throw 'The requested reviewed commit differs from the run.' }
+        if ($repositoryHead -cne $runReviewedCommit) { throw 'The run HEAD differs from the approved revision.' }
+        $runBuildPath = Join-Path $runPath 'baseline-build.json'
+        $runPreflightPath = Join-Path $runPath 'baseline-preflight.json'
+        if ((Get-FileSha256 $runBuildPath) -cne (Get-RequiredProperty $invocation 'buildReceiptSha256') -or
+            (Get-FileSha256 $runPreflightPath) -cne (Get-RequiredProperty $invocation 'preflightSha256')) {
+            throw 'The run build/preflight evidence is missing or differs from its invocation binding.'
+        }
+        $verifiedBuild = Assert-BaselineBuild $runBuildPath $baselineRepoRoot $runReviewedCommit $invocation.dotnet $contractSha256
+        $runPreflight = [IO.File]::ReadAllText($runPreflightPath) | ConvertFrom-Json
+        if ($runPreflight.authoritative -ne $true -or $runPreflight.qualification -cne 'PREFLIGHT-PASS' -or
+            $runPreflight.reviewedCommit -cne $runReviewedCommit -or $runPreflight.baselineContractSha256 -cne $contractSha256 -or
+            $runPreflight.buildReceiptSha256 -cne $invocation.buildReceiptSha256 -or $runPreflight.launchInputsVerified -ne $true -or
+            $runPreflight.compositionManifestSha256 -cne $manifestFileSha256 -or $runPreflight.qualificationRecordSha256 -cne $qualificationRecordSha256) {
+            throw 'The mandatory preflight is not bound to this run, build, contract and qualified tree.'
+        }
+        if ($results.runtimeVersion -cne $verifiedBuild.runtime.version -or
+            ([IO.Path]::GetFullPath($results.runtimeDirectory)).TrimEnd('\', '/') -ne ([IO.Path]::GetFullPath($verifiedBuild.runtime.directory)).TrimEnd('\', '/')) {
+            throw 'The host did not execute under the pinned .NET runtime.'
+        }
+        $expectedPrefix = @('exec', '--fx-version', $verifiedBuild.runtime.version, '--roll-forward', 'Disable')
+        if ((@($invocation.commandLine | Select-Object -First 5) -join '|') -cne ($expectedPrefix -join '|')) {
+            throw 'The run did not pin .NET runtime resolution on the launcher command line.'
+        }
+    } catch { Fail-Preflight $_.Exception.Message $outputFullPath $authoritative }
+}
+try {
+    $deliveryVerification = Assert-BaselineDelivery $results $manifestData $dataIdentity $resolvedDataFolder
+} catch { Fail-Preflight ("Strategy delivery verification failed: " + $_.Exception.Message) $outputFullPath $authoritative }
+
 # --- Data-monitor reconciliation and approved termination -----------------------
 $monitorFiles = @(Get-ChildItem -LiteralPath $runPath -Filter 'data-monitor-report-*.json' -File -ErrorAction SilentlyContinue)
 if ($monitorFiles.Count -ne 1) {
@@ -858,7 +948,7 @@ if ($runTerminated) {
     $parsedFailureTime = [System.DateTime]::MinValue
     if ($null -ne $failureTime) {
         try {
-            $parsedFailureTime = [System.DateTime]::Parse([string]$failureTime, $invariant)
+            $parsedFailureTime = ConvertTo-BaselineUtc $failureTime
         }
         catch {
             $parsedFailureTime = [System.DateTime]::MinValue
@@ -913,6 +1003,17 @@ try {
 }
 catch {
     Fail-Preflight "the run outcome evidence is incomplete: $($_.Exception.Message)" $outputFullPath $authoritative
+}
+if ($authoritative) {
+    try {
+        $afterArtifacts = Get-RequiredProperty $outcome 'baselineArtifactsAfter'
+        $afterDictionary = [ordered]@{}
+        foreach ($property in $afterArtifacts.PSObject.Properties) { $afterDictionary[$property.Name] = $property.Value }
+        Assert-BaselineArtifactEquality $verifiedBuild.artifacts $afterDictionary
+        if ((Get-RequiredProperty $outcome 'strategyResultsSha256') -cne (Get-FileSha256 $resultsPath)) {
+            throw 'The strategy results differ from the helper outcome evidence.'
+        }
+    } catch { Fail-Preflight $_.Exception.Message $outputFullPath $authoritative }
 }
 if ($outcomeContract -ne 'marketlab-run-outcome-evidence-v1') {
     Fail-Preflight "the run outcome contract '$outcomeContract' is not 'marketlab-run-outcome-evidence-v1'." $outputFullPath $authoritative
@@ -1121,6 +1222,8 @@ $record['baselineContractSha256'] = $contractSha256
 $record['registerPin'] = $registerPin
 $record['runDirectory'] = $runPath
 $record['resultsFile'] = $resultsPath
+$record['resultsSha256'] = Get-FileSha256 $resultsPath
+$record['deliveryVerification'] = $deliveryVerification
 $record['invocationEvidenceFile'] = $invocationEvidencePath
 $record['invocationEvidenceVerified'] = $true
 $record['preRunContractSha256'] = $preRunContractSha256
@@ -1146,6 +1249,7 @@ $record['dataFolderSource'] = $dataFolderSource
 $record['compositionManifest'] = $manifestPath
 $record['compositionManifestSha256'] = $manifestFileSha256
 $record['qualificationRecord'] = $qualificationRecordPath
+$record['qualificationRecordSha256'] = $qualificationRecordSha256
 $record['verifiedPartitionCount'] = $verifiedPartitionCount
 $record['sessionMapSha256'] = $sessionMapSha256
 $record['marketHoursDatabaseSha256'] = $marketHoursSha256

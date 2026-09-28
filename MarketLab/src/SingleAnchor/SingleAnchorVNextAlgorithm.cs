@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
@@ -60,7 +61,7 @@ namespace MarketLab.SingleAnchor
     /// A strategy invariant
     /// failure (<see cref="StrategyInvariantException"/>), a data-quality failure
     /// (<see cref="DataQualityException"/>), a session-map coverage mismatch
-    /// (<see cref="SessionMapException"/>) or — with the PR 3 margin layer enabled — terminal
+    /// (<see cref="SessionMapException"/>) or â€” with the PR 3 margin layer enabled â€” terminal
     /// account stop-out (<see cref="AccountStopOutException"/>) or an account that cannot be
     /// revalued on a quote (<see cref="AccountSurvivalException"/>) writes the results with the
     /// failure recorded and then stops the run as a LEAN runtime error. The results also carry the hard-BE verification
@@ -127,6 +128,7 @@ namespace MarketLab.SingleAnchor
         private SingleAnchorResearchAccount? _researchAccount;
         private SessionMapRunInfo? _sessionMapInfo;
         private readonly QuoteTickFeed _feed = new QuoteTickFeed();
+        private QuoteDelivery _delivery = null!;
 
         /// <summary>The strategy engine (exposed for inspection after a run).</summary>
         public SingleAnchorEngine Engine => _engine;
@@ -134,8 +136,7 @@ namespace MarketLab.SingleAnchor
         /// <inheritdoc />
         public override void Initialize()
         {
-            SetStartDate(ParameterParsing.ParseDate(_startDate, "single-anchor-start-date"));
-            SetEndDate(ParameterParsing.ParseDate(_endDate, "single-anchor-end-date"));
+            ConfigureRunWindow();
             SetCash(_cash);
 
             Security security;
@@ -152,6 +153,8 @@ namespace MarketLab.SingleAnchor
                 throw new ArgumentException($"single-anchor-security-type must be Cfd or Forex (got '{_securityType}').");
             }
             _symbol = security.Symbol;
+            var subscription = security.Subscriptions.First();
+            _delivery = new QuoteDelivery(subscription.ExchangeTimeZone, subscription.DataTimeZone);
             // Benchmark the traded symbol itself so the run needs no unrelated (SPY) data.
             SetBenchmark(_symbol);
 
@@ -323,6 +326,14 @@ namespace MarketLab.SingleAnchor
             return null;
         }
 
+        // The same production path is exercised by the host window regression test.
+        internal void ConfigureRunWindow()
+        {
+            SetTimeZone(TimeZones.Utc);
+            SetStartDate(ParameterParsing.ParseDate(_startDate, "single-anchor-start-date"));
+            SetEndDate(ParameterParsing.ParseDate(_endDate, "single-anchor-end-date"));
+        }
+
         private static string FormatUtc(DateTime value)
         {
             return value.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
@@ -358,7 +369,7 @@ namespace MarketLab.SingleAnchor
             }
             try
             {
-                _feed.Feed(ticks, _engine);
+                _feed.Feed(ticks, _engine, _delivery.Add);
             }
             catch (SingleAnchorRunException failure)
             {
@@ -434,6 +445,12 @@ namespace MarketLab.SingleAnchor
             var results = new Dictionary<string, object?>
             {
                 ["completed"] = failure == null,
+                ["algorithmTimeZone"] = TimeZone.Id,
+                ["startUtc"] = StartDate.ConvertToUtc(TimeZone),
+                ["endUtc"] = EndDate.ConvertToUtc(TimeZone),
+                ["runtimeVersion"] = Environment.Version.ToString(),
+                ["runtimeDirectory"] = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(),
+                ["delivered"] = _delivery.Snapshot(),
                 ["failure"] = failure,
                 ["hardBreakevenVerification"] = _engine.HardBreakevenStatus,
                 ["symbol"] = _symbol.Value,
