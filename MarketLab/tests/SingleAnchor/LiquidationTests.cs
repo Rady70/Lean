@@ -671,6 +671,98 @@ namespace MarketLab.SingleAnchor.Tests
                 Is.EqualTo(JsonSerializer.Serialize(plain.Engine.ClosedBaskets, HostLike)));
         }
 
+        [Test]
+        public void TotalLiquidationCanForceCloseAProfitablePosition()
+        {
+            // A forced close can realize a profit: at 1900/1900.2 the three-leg basket is in Stop
+            // Out (equity 6 over 80.8 used at balance 3210). Closing BUY 0.30 (-3600) and BUY 0.10
+            // (-1200) still leaves the margin level below 20%, so the last, now-profitable SELL
+            // 0.20 must also be force-closed: +1596. The lifetime accounting carries the positive
+            // close symmetrically and the flat account ends at 6.
+            var h = NewPartialLiquidationHarness(3210m, exits: false);
+            h.Feed(1900m, 1900.2m);
+
+            Assert.That(h.Engine.Fault, Is.Null);
+            Assert.That(h.Engine.ForcedLiquidations, Is.EqualTo(3));
+            Assert.That(h.Engine.BasketsLiquidated, Is.EqualTo(1));
+            Assert.That(h.Engine.BasketsClosed, Is.EqualTo(0));
+            Assert.That(h.Engine.RealizedProfit, Is.EqualTo(-3204m), "-3600 - 1200 + 1596");
+            Assert.That(h.Engine.Basket, Is.Null);
+
+            var record = h.Engine.ClosedBaskets[0];
+            Assert.That(record.Reason, Is.EqualTo(ExitReason.BrokerLiquidation));
+            Assert.That(record.LiquidationTrace[0].TradeNumber, Is.EqualTo(3));
+            Assert.That(record.LiquidationTrace[0].RealizedProfit, Is.EqualTo(-3600m));
+            Assert.That(record.LiquidationTrace[1].TradeNumber, Is.EqualTo(1));
+            Assert.That(record.LiquidationTrace[1].RealizedProfit, Is.EqualTo(-1200m));
+            Assert.That(record.LiquidationTrace[2].TradeNumber, Is.EqualTo(2), "the last candidate is the profitable SELL");
+            Assert.That(record.LiquidationTrace[2].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(record.LiquidationTrace[2].Ordinal, Is.EqualTo(3));
+            Assert.That(record.LiquidationTrace[2].ClosePrice, Is.EqualTo(1900.2m));
+            Assert.That(record.LiquidationTrace[2].RealizedProfit, Is.EqualTo(1596m), "a forced close can realize a profit");
+            Assert.That(record.LiquidatedRealizedProfit, Is.EqualTo(-3204m));
+            Assert.That(record.RealizedProfit, Is.EqualTo(-3204m));
+
+            var episode = h.ResearchAccount!.MarginSummary!.StopOutEpisodes[0];
+            Assert.That(episode.Outcome, Is.EqualTo(StopOutEpisodeOutcome.AllPositionsLiquidated));
+            Assert.That(episode.Liquidations, Has.Count.EqualTo(3));
+            Assert.That(episode.Liquidations[2].Leg.RealizedProfit, Is.EqualTo(1596m));
+            Assert.That(episode.Liquidations[2].Before.Equity, Is.EqualTo(6m), "still in Stop Out before the profitable close");
+            Assert.That(episode.Liquidations[2].After.Balance, Is.EqualTo(6m));
+            Assert.That(episode.AfterLiquidation.Balance, Is.EqualTo(6m));
+            Assert.That(episode.AfterLiquidation.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.ResearchAccount.Balance, Is.EqualTo(6m));
+            Assert.That(h.ResearchAccount.Equity, Is.EqualTo(6m));
+            Assert.That(h.ResearchAccount.FloatingProfit, Is.EqualTo(0m));
+        }
+
+        [Test]
+        public void AProfitableForcedCloseFeedsTheSurvivingBasketLifetimeEconomics()
+        {
+            // The same four-leg ladder at the crash quote (0.10 base lot), with a scripted guard
+            // forcing three closes: BUY 3 (-3600), BUY 1 (-1200), then the profitable SELL 2
+            // (+1596). The surviving SELL 4 keeps the basket open, and its lifetime economics must
+            // include the positive forced close: -3204 + 3192 = -12, not the survivor-only +3192.
+            var parameters = Harness.NoExits() with { BaseLot = 0.10m };
+            var executor = new SyntheticExecutor(parameters);
+            var guard = new StubRiskGuard();
+            var engine = new SingleAnchorEngine(parameters, executor, null, null, guard);
+            engine.OnQuote(new Quote(Harness.T0, 1999.9m, 2000.1m));
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(1), 2019.8m, 2020m));
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(2), 1980m, 1980.2m));
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(3), 2019.8m, 2020m));
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(4), 1980m, 1980.2m));
+            var basket = engine.Basket!;
+            var forced = new List<LiquidatedLegRecord>();
+            engine.ForcedLiquidation += e => forced.Add(e.Record);
+
+            guard.NextStopOut = new MarginStopOut(StopOutReason.MarginLevel, Harness.T0.AddSeconds(5), 0m, 0m, 0.6m, 3.96m, -3.36m, 15.1515m, 4);
+            guard.StopOutLimit = 3;
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(5), 1900m, 1900.2m));
+
+            Assert.That(engine.ForcedLiquidations, Is.EqualTo(3));
+            Assert.That(forced, Has.Count.EqualTo(3));
+            Assert.That(forced[0].TradeNumber, Is.EqualTo(3));
+            Assert.That(forced[0].RealizedProfit, Is.EqualTo(-3600m));
+            Assert.That(forced[1].TradeNumber, Is.EqualTo(1));
+            Assert.That(forced[1].RealizedProfit, Is.EqualTo(-1200m));
+            Assert.That(forced[2].TradeNumber, Is.EqualTo(2), "the profitable SELL is the least profitable of the survivors");
+            Assert.That(forced[2].Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(forced[2].ClosePrice, Is.EqualTo(1900.2m), "a SELL is force-closed at the trigger Ask");
+            Assert.That(forced[2].RealizedProfit, Is.EqualTo(1596m), "a forced close can realize a profit");
+            Assert.That(engine.RealizedProfit, Is.EqualTo(-3204m), "-3600 - 1200 + 1596");
+            Assert.That(engine.BasketsLiquidated, Is.EqualTo(0), "one survivor remains");
+            Assert.That(basket.OpenPositions, Is.EqualTo(1));
+            Assert.That(basket.LiquidatedPositions, Is.EqualTo(3));
+            Assert.That(basket.LiquidatedRealizedProfit, Is.EqualTo(-3204m), "the positive forced close is accumulated");
+            Assert.That(basket.SellLots, Is.EqualTo(0.40m));
+            var snapshot = engine.MarkToMarket(engine.LastProcessedQuote!.Value)!;
+            Assert.That(snapshot.RawProfit, Is.EqualTo(-12m), "the lifetime raw profit includes the positive forced close");
+            Assert.That(snapshot.ExitProfit, Is.EqualTo(-12m));
+            Assert.That(snapshot.ExecutableProfit, Is.EqualTo(-12m));
+            Assert.That(snapshot.LiquidatedRealizedProfit, Is.EqualTo(-3204m));
+        }
+
         private static List<Quote> DeterministicStream()
         {
             var quotes = new List<Quote>();

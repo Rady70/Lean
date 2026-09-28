@@ -1590,10 +1590,13 @@ survivor mark is the account's view, and they never double count. A forced loss
 therefore cannot silently disappear from the surviving basket's exit or sizing
 decisions, and a forced profit cannot silently inflate them. For a basket that
 never liquidated the lifetime basis equals the survivor-only value exactly, so
-runs that never reach Stop Out are unchanged. Because this strategy's entries
-occur at the two fixed boundaries, the least-profitable leg at any quote is
-non-positive, so a forced close realizes a loss in practice; the basis is
-symmetric and would carry a forced profit without modification if one occurred.
+the strategy path and economics of a run that never reaches Stop Out are
+unchanged (the serialized result still differs by the documented revision
+fields, such as `modelRevision` and the new liquidation fields). A forced close
+can realize a **profit** as well as a loss: once earlier closes have removed the
+losing side while the Stop Out condition persists, the last remaining position
+may be profitable and is still force-closed. The lifetime basis carries such a
+positive realized P/L symmetrically, and the tests cover both signs.
 
 **Ordering and tie rule.** "Least profitable" is the position's executable
 close value at the triggering quote: the price move from its own entry valued
@@ -1690,7 +1693,7 @@ evidence chain are separate later work.
 
 ### 14.4 Focused deterministic tests
 
-`MarketLab\tests\SingleAnchor\LiquidationTests.cs` adds 16 tests over the
+`MarketLab\tests\SingleAnchor\LiquidationTests.cs` adds 18 tests over the
 required matrix: a one-force-close restoration with surviving legs (including
 per-close account/basket inventory agreement and the lifetime snapshot values);
 a partial liquidation whose forced loss keeps the apparently profitable
@@ -1707,7 +1710,10 @@ loss (survivor-only basis would place 0.03 lots, the lifetime basis 0.05);
 forced-close execution failure as a terminal `BrokerLiquidation` fault with an
 unresolved episode, including a failure after a successful forced close;
 trailing-state preservation across a forced close with a continuous lifetime
-trailing series that later drives the exit; the event stream; hard-BE
+trailing series that later drives the exit; a profitable forced close reached
+after the losing legs are removed while Stop Out persists, both as total
+liquidation and with a surviving basket whose lifetime economics must carry the
+positive realized P/L; the event stream; hard-BE
 state and trade numbering across a partial liquidation; and a no-Stop-Out stream
 whose closed baskets and realized result are identical with and without the
 margin layer. Existing tests that described the historical
@@ -1718,7 +1724,7 @@ execution failure.
 
 Local suite (Windows, .NET SDK 10.0.401, runtime 10.0.12, 2026-09-28):
 `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`
-reports **295 passed, 0 failed, 0 skipped** (279 before Phase B). The relevant
+reports **297 passed, 0 failed, 0 skipped** (279 before Phase B). The relevant
 PowerShell and native suites were re-run and pass: backtesting helper 150/150,
 baseline failed-data classifier 97/97, baseline launch/build guards 26/26,
 baseline invocation reporter 12/12, trading-availability end-to-end 12/12, and
