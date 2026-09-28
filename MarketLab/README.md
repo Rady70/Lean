@@ -34,7 +34,8 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `config\baseline-contract.json` | canonical machine-readable frozen baseline configuration (the single source of truth for the first untouched baseline's effective values) |
 | `config\baseline-decision-audit.json` | resolved decision register: every baseline field's class, value and authority, bound to the frozen contract |
 | `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` | the PR #14 baseline-decision audit, updated: all eight former class-D blockers resolved and the freeze recorded |
-| `BASELINE_RUN_RESULT.md` | the qualified first untouched full-history baseline result: run identity, evidence-chain hashes, results and limitations |
+| `BASELINE_RUN_RESULT.md` | the retained first full-history baseline run as historical evidence of the pre-broker-liquidation Stop Out model: run identity, results, limitations and next steps |
+| `evidence\20260928-first-full-history-baseline\` | the committed compact first-baseline evidence (build/preflight receipts, invocation/outcome, classifier record, strategy results, data-monitor and failed-request evidence) with a SHA-256 manifest |
 | `scripts\Get-SingleAnchorBaselineInvocation.ps1` | reports the baseline contract identity and renders the exact frozen run invocation from the contract |
 | `scripts\Build-SingleAnchorBaseline.ps1` | rebuilds an explicitly reviewed clean revision and records the source, contract and complete runtime dependency identity |
 | `scripts\Test-SingleAnchorBaselineFailedData.ps1` | classifies every failed data request of a baseline run against the frozen contract and the qualified continuous tree |
@@ -570,8 +571,10 @@ The eight class-D decisions it exposed were then explicitly approved and the
 baseline configuration freeze is **complete and merged through GitHub PR #15** (reviewed head `3c8a431d089d3ae7027c39e0a3e6fc373e74114c`, merge commit `78b455372ccf6d83c9805d6b99551b357dbd17ae`): the canonical immutable
 configuration is
 [`config/baseline-contract.json`](config/baseline-contract.json) (human-auditable
-rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)), baseline contract
-identity (LF-normalized SHA-256)
+rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)); the original
+pre-correction PR #15 baseline contract identity (LF-normalized SHA-256) was
+`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`, and the
+current identity after the PR #16 corrections below is
 `0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a`. The
 contract freezes `StepPercent = 0.25`, `BaseLot = 0.10`,
 `InitialBalance = 20,000 USD`, `ProjectedSpread = 0.50` (an approved baseline
@@ -598,10 +601,13 @@ These corrections are merged through
 `32c6cafadcec38cd9b73908ba3553992b454fca5`). Build and preflight receipts
 must name the exact clean checkout revision used for the future baseline.
 The decision register is resolved (`unresolvedDecisionCount: 0`) and bound to
-the contract. The first untouched full-history strategy baseline has been run
-once (2026-09-28) and qualified; it ended through the modeled `AccountStopOut`
-and is recorded in [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). Parameter
-optimization has **not** started. The continuous
+the contract. The first untouched full-history baseline was run and qualified
+on 2026-09-28 as a historical record of the pre-broker-liquidation Stop Out
+model: the frozen strategy reached Stop Out territory and the model records
+that trigger state without simulating liquidation
+([BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md); committed compact evidence
+in [`evidence\20260928-first-full-history-baseline\manifest.json`](evidence/20260928-first-full-history-baseline/manifest.json)).
+Parameter optimization has **not** started. The continuous
 composition and its replay re-verification are implemented and merged through
 GitHub PR #13. **PR 2** (C# research account and bounded analytics) is implemented
 and merged (GitHub PR #9):
@@ -650,9 +656,12 @@ contract is
 human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), the
 resolved decision audit is
 [BASELINE_CONFIGURATION_FREEZE_AUDIT.md](BASELINE_CONFIGURATION_FREEZE_AUDIT.md),
-and the first untouched full-history baseline has been run once and qualified
-(it ended through the modeled `AccountStopOut`;
-[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md)). Parameter optimization has
+and the first untouched full-history baseline was run and qualified on
+2026-09-28 as a historical record of the pre-broker-liquidation Stop Out model
+(the frozen strategy reached Stop Out territory; broker-forced liquidation was
+not simulated, so the recorded open positions and floating loss are
+pre-liquidation observations) -
+[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). Parameter optimization has
 not started.
 
 ## 10. When required data is missing

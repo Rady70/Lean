@@ -128,8 +128,11 @@ section 6:
 
 - the canonical, complete, machine-readable configuration is
   `config/baseline-contract.json`, with the human-auditable rendering
-  `BASELINE_CONTRACT.md`; baseline contract identity (LF-normalized SHA-256)
-  `d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`;
+  `BASELINE_CONTRACT.md`; the original PR #15 baseline contract identity
+  (LF-normalized SHA-256) was
+  `d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`, and the
+  current identity after the PR #16 corrections is
+  `0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a`;
 - the approved values include the qualified data identity
   (XAUUSD/dukascopy/Cfd; the continuous folder at
   `E:\MarketLab\data\lean\xauusd-dukascopy` with its 90 months, 2,332
@@ -177,10 +180,14 @@ section 6:
   in `BASELINE_CONTRACT.md`.
 
 The first untouched full-history baseline was **not** run by the freeze; it was
-subsequently executed once on 2026-09-28 from the finalized reviewed revision
-and qualified (it ended through the approved modeled `AccountStopOut`; see
-[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md)). Parameter optimization has
-**not** started; the post-baseline prerequisites are section 8.
+subsequently run and qualified on 2026-09-28 from the finalized reviewed
+revision as historical evidence of the pre-liquidation Stop Out model (the
+frozen strategy reached Stop Out territory; broker-forced liquidation was not
+simulated, so the recorded open positions and floating loss are pre-liquidation
+observations, not a final broker-account state). See
+[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). Parameter optimization has
+**not** started; the post-baseline prerequisites are section 8, after any
+broker-liquidation correction.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
@@ -1191,8 +1198,10 @@ This phase is complete only when:
    baseline configuration (including that composed folder and the qualified
    source-derived session map) is frozen;
 8. one untouched full-history baseline run is completed and audited before
-   parameter optimization begins (completed 2026-09-28; see
-   [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md)).
+   parameter optimization begins (the historical pre-liquidation run is
+   recorded in [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md); the
+   broker-liquidation correction and any post-correction determination are
+   separate later work).
 
 Until those gates pass, historical output is engineering/qualification evidence,
 not proof of strategy edge or an optimized parameter set.
