@@ -127,6 +127,10 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(snapshot.LiquidatedRealizedProfit, Is.EqualTo(-3600m));
             Assert.That(snapshot.LiquidationTrace, Has.Count.EqualTo(1));
             Assert.That(snapshot.NextTradeNumber, Is.EqualTo(4));
+            Assert.That(snapshot.RawProfit, Is.EqualTo(-3204m), "the decision economics are lifetime: -3600 forced plus +396 survivors");
+            Assert.That(snapshot.ExitProfit, Is.EqualTo(-3204m));
+            Assert.That(snapshot.ExecutableProfit, Is.EqualTo(-3204m));
+            Assert.That(account.FloatingProfit, Is.EqualTo(396m), "the account floating mark stays survivor-only");
 
             var active = account.SnapshotActiveBasket(basket)!;
             Assert.That(active.EntryCount, Is.EqualTo(3), "the liquidated leg stays in the historical entry count");
@@ -136,43 +140,71 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void PartialLiquidationKeepsItsRealizedLossAndTheStrategyClosesTheSurvivors()
+        public void PartialLiquidationKeepsTheForcedLossInTheBasketDecisionEconomics()
         {
+            // The forced close of trade 3 realizes -3600, while the two survivors are worth +396 at
+            // the crash quote. The approved contract requires the surviving basket's decision
+            // economics to keep the forced loss: the lifetime exit profit is -3204, so the
+            // apparently profitable survivor set must NOT trigger the escape. Only when the
+            // survivors' value clears the whole forced loss does the strategy close.
             var h = NewPartialLiquidationHarness(3215m, exits: true);
 
             h.Feed(1900m, 1900.2m);
 
             Assert.That(h.Engine.ForcedLiquidations, Is.EqualTo(1));
             Assert.That(h.Engine.BasketsLiquidated, Is.EqualTo(0));
-            Assert.That(h.Engine.BasketsClosed, Is.EqualTo(1), "after restoration the escape rule closes the surviving basket on the same quote");
-            Assert.That(h.Engine.RealizedProfit, Is.EqualTo(-3204m), "the forced -3600 is not discarded; the survivors realize +396");
+            Assert.That(h.Engine.BasketsClosed, Is.EqualTo(0), "survivor-only profit must not trigger an escape");
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(2), "the surviving basket stays open");
+            Assert.That(h.Engine.RealizedProfit, Is.EqualTo(-3600m));
+            Assert.That(h.ResearchAccount!.Balance, Is.EqualTo(-385m));
+            var episode = h.ResearchAccount.MarginSummary!.StopOutEpisodes[0];
+            Assert.That(episode.Outcome, Is.EqualTo(StopOutEpisodeOutcome.MarginRestored));
 
+            var crash = h.Engine.LastProcessedQuote!.Value;
+            var crashSnapshot = h.Engine.MarkToMarket(crash)!;
+            Assert.That(crashSnapshot.RawProfit, Is.EqualTo(-3204m), "-3600 forced plus +396 survivors");
+            Assert.That(crashSnapshot.ExitProfit, Is.EqualTo(-3204m));
+            Assert.That(crashSnapshot.ExecutableProfit, Is.EqualTo(-3204m));
+
+            // A later quote in the same band keeps the basket open on the lifetime basis: the
+            // account stays above Stop Out but inside Margin Call, so the next SELL is blocked and
+            // nothing changes the lifetime profit.
+            h.Feed(1900m, 1900.2m);
+            Assert.That(h.Engine.BasketsClosed, Is.EqualTo(0));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(2));
+            Assert.That(h.Engine.MarkToMarket(h.Engine.LastProcessedQuote!.Value)!.ExitProfit, Is.EqualTo(-3204m));
+
+            // A deep adverse-gold quote makes the survivors worth +3696: the lifetime economics
+            // clear the escape threshold and the strategy closes the surviving basket normally.
+            h.Feed(1570m, 1570.2m);
+
+            Assert.That(h.Engine.BasketsClosed, Is.EqualTo(1));
+            Assert.That(h.Engine.RealizedProfit, Is.EqualTo(96m), "-3600 forced plus +3696 survivors");
             var record = h.Engine.ClosedBaskets[0];
             Assert.That(record.Reason, Is.EqualTo(ExitReason.Escape));
-            Assert.That(record.Legs, Is.EqualTo(2), "the close record describes the survivors that the strategy closed");
+            Assert.That(record.RawProfit, Is.EqualTo(96m), "the closing record uses the same lifetime basis");
+            Assert.That(record.ExitProfit, Is.EqualTo(96m));
+            Assert.That(record.LiquidatedRealizedProfit, Is.EqualTo(-3600m));
+            Assert.That(record.RealizedProfit, Is.EqualTo(96m));
             Assert.That(record.HistoricalEntries, Is.EqualTo(3));
             Assert.That(record.LiquidatedPositions, Is.EqualTo(1));
-            Assert.That(record.LiquidatedRealizedProfit, Is.EqualTo(-3600m));
-            Assert.That(record.RealizedProfit, Is.EqualTo(-3204m), "the basket's whole realized result includes the forced closes");
-            Assert.That(record.LiquidationTrace[0].TradeNumber, Is.EqualTo(3));
-            Assert.That(h.ResearchAccount!.Balance, Is.EqualTo(3215m - 3204m));
 
             var research = h.ResearchAccount.BasketRecords[0];
             Assert.That(research.CloseReason, Is.EqualTo(ExitReason.Escape));
-            Assert.That(research.EntryCount, Is.EqualTo(3));
-            Assert.That(research.DeepestTradeNumber, Is.EqualTo(3));
-            Assert.That(research.LiquidatedPositions, Is.EqualTo(1));
+            Assert.That(research.RealizedProfit, Is.EqualTo(96m));
             Assert.That(research.LiquidatedRealizedProfit, Is.EqualTo(-3600m));
-            Assert.That(research.RealizedProfit, Is.EqualTo(-3204m));
+            Assert.That(h.ResearchAccount.Balance, Is.EqualTo(3215m - 3600m + 3696m));
         }
 
         [Test]
         public void NonZeroCommissionIsChargedOncePerForcedClose()
         {
             // Same three-leg partial liquidation with a 5-per-lot round-trip commission. The forced
-            // close of trade 3 realizes (1900 - 2020) * 0.30 * 100 - 5 * 0.30 = -3601.5, the forced
-            // record's commission is 1.5, the surviving escape close realizes 396 - 1.5 = 394.5,
-            // and the basket's lifetime realized result is -3207 (no double charge, no loss).
+            // close of trade 3 realizes (1900 - 2020) * 0.30 * 100 - 5 * 0.30 = -3601.5, and the
+            // forced record's commission is 1.5. The lifetime exit profit at the crash quote is
+            // -3601.5 + 396 = -3205.5, so the escape waits until the survivors clear the forced
+            // loss; the eventual close realizes 3696 - 1.5 = 3694.5 and the basket's lifetime
+            // realized result is 93 (no double charge, no loss).
             var parameters = Harness.Defaults() with { BaseLot = 0.10m, CommissionPerLot = 5m };
             var h = new Harness(parameters, null, 3215m, Harness.MarginDefaults());
             h.Anchor();
@@ -182,6 +214,9 @@ namespace MarketLab.SingleAnchor.Tests
 
             h.Feed(1900m, 1900.2m);
 
+            Assert.That(h.Engine.BasketsClosed, Is.EqualTo(0), "the forced loss blocks the survivor-only escape");
+            Assert.That(h.Engine.ForcedLiquidations, Is.EqualTo(1));
+            Assert.That(h.Engine.MarkToMarket(h.Engine.LastProcessedQuote!.Value)!.ExitProfit, Is.EqualTo(-3205.5m));
             var episode = h.ResearchAccount!.MarginSummary!.StopOutEpisodes[0];
             Assert.That(episode.Outcome, Is.EqualTo(StopOutEpisodeOutcome.MarginRestored));
             Assert.That(episode.Liquidations[0].Leg.TradeNumber, Is.EqualTo(3));
@@ -190,14 +225,18 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(episode.Liquidations[0].After.Balance, Is.EqualTo(3215m - 3601.5m));
             Assert.That(episode.Liquidations[0].After.Equity, Is.EqualTo(8m), "3215 - 3207: the surviving floating mark carries its own commission");
             Assert.That(episode.Liquidations[0].After.FloatingProfit, Is.EqualTo(394.5m));
+            Assert.That(episode.Liquidations[0].After.MarginLevelPercent, Is.EqualTo(8m / 39.6m * 100m));
+
+            h.Feed(1570m, 1570.2m);
 
             var record = h.Engine.ClosedBaskets[0];
             Assert.That(record.Reason, Is.EqualTo(ExitReason.Escape));
+            Assert.That(record.RawProfit, Is.EqualTo(94.5m), "lifetime raw at the closing quote");
             Assert.That(record.Commission, Is.EqualTo(3m), "the surviving 0.30 lots plus the forced 0.30 lots, each charged once");
             Assert.That(record.LiquidatedRealizedProfit, Is.EqualTo(-3601.5m));
-            Assert.That(record.RealizedProfit, Is.EqualTo(-3207m));
-            Assert.That(h.Engine.RealizedProfit, Is.EqualTo(-3207m));
-            Assert.That(h.ResearchAccount.Balance, Is.EqualTo(8m));
+            Assert.That(record.RealizedProfit, Is.EqualTo(93m));
+            Assert.That(h.Engine.RealizedProfit, Is.EqualTo(93m));
+            Assert.That(h.ResearchAccount.Balance, Is.EqualTo(3308m));
         }
 
         [Test]
@@ -242,6 +281,54 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
+        public void HardBreakevenSizingAfterPartialLiquidationUsesTheLifetimeLoss()
+        {
+            // Two losing legs are force-closed at a mild dip (above the lower boundary, so the same
+            // quote does not trigger the next entry): BUY 3 realizes -90 and SELL 4 realizes -40.8.
+            // The next entry is the hard-BE tail (trade 5). Its requirement must recover the
+            // lifetime loss plus the survivors' projection: existing = -130.8 + (-149.96) = -280.76,
+            // so the tail is 0.05 lots. A survivor-only basis would have placed 0.03.
+            var parameters = Harness.NoExits();
+            var executor = new SyntheticExecutor(parameters);
+            var guard = new StubRiskGuard();
+            var engine = new SingleAnchorEngine(parameters, executor, null, null, guard);
+            engine.OnQuote(new Quote(Harness.T0, 1999.9m, 2000.1m));                    // anchor 2000
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(1), 2019.8m, 2020m));        // BUY 1: 0.01 @ 2020
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(2), 1980m, 1980.2m));        // SELL 2: 0.02 @ 1980
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(3), 2019.8m, 2020m));        // BUY 3: 0.03 @ 2020
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(4), 1980m, 1980.2m));        // SELL 4: 0.04 @ 1980
+            var basket = engine.Basket!;
+
+            guard.NextStopOut = new MarginStopOut(StopOutReason.MarginLevel, Harness.T0.AddSeconds(5), 0m, 0m, 0.6m, 3.96m, -3.36m, 15.1515m, 4);
+            guard.StopOutLimit = 2;
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(5), 1990m, 1990.2m));        // closes BUY 3 (-90) then SELL 4 (-40.8)
+
+            Assert.That(engine.ForcedLiquidations, Is.EqualTo(2));
+            Assert.That(engine.RealizedProfit, Is.EqualTo(-130.8m));
+            Assert.That(basket.LiquidatedPositions, Is.EqualTo(2));
+            Assert.That(basket.NextTradeNumber, Is.EqualTo(5));
+            Assert.That(executor.LegCloses[0].Leg.TradeNumber, Is.EqualTo(3));
+            Assert.That(executor.LegCloses[1].Leg.TradeNumber, Is.EqualTo(4));
+            var target = TargetPrices.ForUpperRecovery(basket.UpperTarget, parameters.ProjectedSpread!.Value);
+            Assert.That(BasketEconomics.ProjectedExistingProfit(basket, target, parameters), Is.EqualTo(-149.96m), "survivor-only projection");
+            Assert.That(BasketEconomics.LifetimeProjectedExistingProfit(basket, target, parameters), Is.EqualTo(-280.76m), "lifetime projection includes the forced loss");
+
+            EntryOpenedEvent? opened = null;
+            engine.EntryOpened += e => opened = e;
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(6), 2019.8m, 2020m));        // BUY 5, hard-BE tail
+
+            Assert.That(opened, Is.Not.Null);
+            Assert.That(opened!.Leg.TradeNumber, Is.EqualTo(5));
+            Assert.That(opened.Leg.Regime, Is.EqualTo(SizingRegime.HardBreakeven));
+            var sizing = opened.Sizing!.Value;
+            Assert.That(sizing.ExistingProfitAtTarget, Is.EqualTo(-280.76m), "the tail sizing uses the lifetime basis");
+            Assert.That(sizing.NormalizedLot, Is.EqualTo(0.05m));
+            Assert.That(sizing.ProjectedProfitAfter, Is.EqualTo(67.04m));
+            Assert.That(engine.Basket!.BuyLots, Is.EqualTo(0.06m));
+            Assert.That(engine.Basket.SellLots, Is.EqualTo(0.02m));
+        }
+
+        [Test]
         public void AFailureAfterASuccessfulForcedCloseKeepsThePartialEvidence()
         {
             // The 61.192-balance basket needs both positions closed to leave Stop Out; the second
@@ -273,11 +360,13 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void ForcedLiquidationPreservesTrailingState()
+        public void ForcedLiquidationPreservesTrailingStateAndItsEconomicSeries()
         {
-            // Trailing activates on the 1889/1889.2 quote (profit 20.8 over a 20 activation over a
-            // 40 step money). The forced close of the losing BUY 0.03 on a later quote must not
-            // reset the trailing state or the recorded peak.
+            // Trailing activates on the 1889/1889.2 quote (profit 20.8 over a 20 activation). The
+            // forced close of the losing BUY 0.03 on a later quote must not reset the trailing state
+            // and must leave the trailing profit series continuous: the removed leg's raw P/L is
+            // replaced by its realized P/L, so the lifetime profit at 1880/1880.2 is 38.8, not the
+            // survivor-only 458.8. The trailing floor then drives a later exit on that same series.
             var parameters = Harness.Defaults() with { EscapeEnabled = false, FixedTakeProfitUnits = 0m };
             var executor = new SyntheticExecutor(parameters);
             var guard = new StubRiskGuard();
@@ -307,8 +396,24 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(trailingAtClose, Is.True, "removing a leg does not reset trailing");
             Assert.That(peakAtClose, Is.EqualTo(20.8m), "the recorded peak is untouched by the forced close");
             Assert.That(engine.Basket!.TrailingActive, Is.True);
-            Assert.That(engine.Basket.PeakProfit, Is.EqualTo(458.8m), "the surviving basket keeps trailing from the recorded peak");
+            Assert.That(engine.Basket.PeakProfit, Is.EqualTo(38.8m), "the lifetime series continues: raw(1880) is 38.8, not the survivor-only 458.8");
             Assert.That(engine.Basket.NextTradeNumber, Is.EqualTo(5));
+
+            // The trailing floor after the forced close is 38.8 - 0.25 * 100 = 13.8 (the surviving
+            // inventory's sensitivity is 0.05 lots), and the lifetime profit at 1890/1890.2 is
+            // -420 + 408.8 = -11.2, so the trailing rule closes the survivors on the lifetime series.
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(7), 1890m, 1890.2m));
+
+            Assert.That(engine.BasketsClosed, Is.EqualTo(1));
+            Assert.That(engine.Basket, Is.Null);
+            var record = engine.ClosedBaskets[0];
+            Assert.That(record.Reason, Is.EqualTo(ExitReason.Trailing));
+            Assert.That(record.Threshold, Is.EqualTo(13.8m));
+            Assert.That(record.RawProfit, Is.EqualTo(-11.2m), "the closing decision and record use the lifetime series");
+            Assert.That(record.ExitProfit, Is.EqualTo(-11.2m));
+            Assert.That(record.LiquidatedRealizedProfit, Is.EqualTo(-420m));
+            Assert.That(record.RealizedProfit, Is.EqualTo(-11.2m));
+            Assert.That(engine.RealizedProfit, Is.EqualTo(-11.2m), "-420 forced plus +408.8 survivors");
         }
 
         [Test]

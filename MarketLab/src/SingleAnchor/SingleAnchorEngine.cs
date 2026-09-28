@@ -335,14 +335,16 @@ namespace MarketLab.SingleAnchor
 
             if (basket.OpenPositions > 0)
             {
-                var rawProfit = BasketEconomics.RawProfit(basket, quote, _p);
+                // The research observation receives the survivor-only raw mark: the account's
+                // floating P/L is the executable mark of the open inventory and must not include
+                // already realized P/L (the balance already carries that).
+                var survivorRawProfit = BasketEconomics.RawProfit(basket, quote, _p);
 
                 // Research observation before any exit can remove the basket (roadmap section
                 // 3.14): the incoming quote's executable valuation of the still-open basket is
                 // not lost, including on the tick that is about to close it. The raw profit the
-                // exit evaluation needs anyway is passed on, so the observer does not recompute
-                // it.
-                _research?.ObserveQuote(quote, basket, RealizedProfit, rawProfit);
+                // observer needs anyway is passed on, so the observer does not recompute it.
+                _research?.ObserveQuote(quote, basket, RealizedProfit, survivorRawProfit);
 
                 // Phase B survival order step 3: when the account is in Stop Out, deterministic
                 // broker liquidation takes precedence over any exit or entry on this quote that
@@ -361,10 +363,13 @@ namespace MarketLab.SingleAnchor
 
                 if (basket.OpenPositions > 0)
                 {
-                    // A partial liquidation changed the inventory, so the valuation the exit
-                    // evaluation uses is recomputed from the surviving legs.
-                    rawProfit = BasketEconomics.RawProfit(basket, quote, _p);
-                    var exitProfit = rawProfit - _p.CommissionBuffer;
+                    // The exit evaluation uses the basket's lifetime economics: the P/L already
+                    // realized by forced liquidation plus the surviving legs' raw profit, so a
+                    // partial liquidation does not silently improve (or worsen) the surviving
+                    // basket's decision basis. For a basket that never liquidated this equals the
+                    // raw profit exactly.
+                    var lifetimeProfit = BasketEconomics.LifetimeRawProfit(basket, quote, _p);
+                    var exitProfit = lifetimeProfit - _p.CommissionBuffer;
                     var stepMoney = BasketEconomics.StepMoney(basket, _p);
                     var (reason, threshold) = EvaluateExits(basket, exitProfit, stepMoney, quote);
                     if (reason != ExitReason.None)
@@ -373,7 +378,7 @@ namespace MarketLab.SingleAnchor
                         var execution = _executor.CloseBasket(close);
                         if (execution.Succeeded && BasketEconomics.ArePricesUsable(basket, execution.BuyClosePrice, execution.SellClosePrice, null))
                         {
-                            FinalizeClose(close, rawProfit, exitProfit, threshold, execution);
+                            FinalizeClose(close, lifetimeProfit, exitProfit, threshold, execution);
                         }
                         else
                         {
@@ -582,6 +587,11 @@ namespace MarketLab.SingleAnchor
         /// The complete state of the current basket, valued at a quote without changing anything
         /// (end-of-data mark to market, specification section 15). Null only when there is no
         /// basket or the quote is invalid; a basket without legs is returned with null profits.
+        /// The profit values are the basket's lifetime economics: the P/L already realized by
+        /// broker-forced liquidation plus the executable value of the surviving inventory. For a
+        /// basket that never liquidated they are the survivor-only values exactly. The
+        /// survivor-only floating mark of the open inventory stays on the research account as
+        /// <c>FloatingProfit</c>.
         /// </summary>
         public BasketSnapshot? MarkToMarket(in Quote quote)
         {
@@ -593,12 +603,12 @@ namespace MarketLab.SingleAnchor
             decimal? raw = null, exit = null, executable = null, stepMoney = null;
             if (basket.OpenPositions > 0)
             {
-                raw = BasketEconomics.RawProfit(basket, quote, _p);
+                raw = BasketEconomics.LifetimeRawProfit(basket, quote, _p);
                 exit = raw - _p.CommissionBuffer;
                 var (buyClose, sellClose) = BasketEconomics.ExecutableClosePrices(quote, _p);
                 if (BasketEconomics.ArePricesUsable(basket, buyClose, sellClose, null))
                 {
-                    executable = BasketEconomics.ExecutableProfit(basket, buyClose, sellClose, _p);
+                    executable = BasketEconomics.LifetimeExecutableProfit(basket, buyClose, sellClose, _p);
                 }
                 stepMoney = BasketEconomics.StepMoney(basket, _p);
             }
@@ -791,12 +801,13 @@ namespace MarketLab.SingleAnchor
             if (sizing.HasValue)
             {
                 // The hard-BE requirement is re-verified with the actual fill before the entry is
-                // published: the projected executable basket P/L at the fixed boundary must be
+                // published: the projected executable lifetime basket P/L at the fixed boundary
+                // (forced-liquidation P/L plus every surviving leg and the new one) must be
                 // non-negative after the leg. With the research executor the fill is the sizing
                 // model and this always holds; a negative value means the executor departed from
                 // the model, and continuing would be breakeven drift after hard-BE activation.
                 var tail = sizing.Value;
-                var afterFill = BasketEconomics.ProjectedExistingProfit(basket, tail.Target, _p);
+                var afterFill = BasketEconomics.LifetimeProjectedExistingProfit(basket, tail.Target, _p);
                 if (afterFill < 0m)
                 {
                     // The fault is recorded before observers are told, so the engine is faulted

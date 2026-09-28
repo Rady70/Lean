@@ -645,22 +645,32 @@ force-closes the least-profitable open position first (equal profits tie on the
 higher immutable trade number) at the executable market side of the triggering
 quote, realizes its P/L, revalues the surviving inventory and continues until
 the account is restored or no positions remain, after which historical
-processing continues; a basket whose positions were all liquidated ends through
-the `BrokerLiquidation` reason rather than a strategy exit, and a quote whose
-executable mark cannot be computed still stops the run as an `AccountSurvival`
-failure instead of certifying survival from a stale state. A forced close the
-executor cannot fill stops the run as a `BrokerLiquidation` failure. The
+processing continues; after a partial liquidation the surviving basket's exit
+rules, trailing series and hard-BE sizing use the basket's **lifetime
+economics** (already realized forced P/L plus the survivors), so a forced loss
+cannot silently disappear from later decisions while the account's floating
+mark stays survivor-only; a basket whose positions were all liquidated ends
+through the `BrokerLiquidation` reason rather than a strategy exit, and a quote
+whose executable mark cannot be computed still stops the run as an
+`AccountSurvival` failure instead of certifying survival from a stale state. A
+forced close the executor cannot fill stops the run as a `BrokerLiquidation`
+failure. Every new result names its revision (`modelRevision`,
+`stopOutModel`), so consumers never infer the model from field presence. The
 historical pre-liquidation characterization remains the Phase A record in
 [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md), with its `AccountStopOut`
-result shape unchanged; the Phase B behavior, its evidence fields, its
-deterministic tests and the bounded local March 2020 qualification are recorded
-in section 14 of
+result shape unchanged and its frozen verifier unchanged; the Phase B behavior,
+its evidence fields, its deterministic tests and the bounded local March 2020
+qualification (committed compact evidence under
+[`evidence\20260928-phase-b-march-2020\`](evidence/20260928-phase-b-march-2020/README.md))
+are recorded in section 14 of
 [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md).
 Margin disabled is the pre-PR-3 strategy path exactly: identical
 counters, legs, rejection episodes/reasons/parity digests, closes, realized P/L
 and final basket state, with strategy-path parity and the rejection-free
 fixture's projection hash recorded in the implementation note section 10; the
-added results fields are additive. The user's live account is EUR-denominated; historical EURUSD
+Phase B result fields are a documented schema revision (new liquidation and
+model-identity fields, the historical terminal `stopOut` field removed from new
+results). The user's live account is EUR-denominated; historical EURUSD
 conversion is deliberately out of scope, so the USD research result must not be
 presented as an exact reconstruction of the live EUR monetary path. The
 full-history composition is complete (section 10 of the tools README); the

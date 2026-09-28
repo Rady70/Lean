@@ -757,11 +757,14 @@ contract and must not modify the frozen baseline contract.
 **Update (2026-09-28):** Phase B has since been implemented as a separate model
 revision from LEAN `master` `9696ac9a608d7caa29b60361e23dac4863a47f59`:
 reaching the Stop Out condition now starts deterministic broker-forced
-liquidation and an operable account continues through later data. Sections
+liquidation, the surviving basket's exit/trailing/hard-BE economics include the
+P/L already realized by forced liquidation, and an operable account continues
+through later data. Sections
 3.16-3.20 remain the historical pre-liquidation contract under which the
 retained first baseline was produced; they are not the current engine behavior.
-The implemented contract, liquidation ordering and tie rule, state-consistency
-rules, result fields, tests and the bounded local March 2020 qualification are
+The implemented contract, liquidation ordering and tie rule, lifetime-economics
+rules, state-consistency rules, result fields, tests and the corrected bounded
+local March 2020 qualification are
 recorded in `SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md` section 14. The frozen
 baseline contract, its audit register, the qualified data identity and the
 Phase A evidence are unchanged.

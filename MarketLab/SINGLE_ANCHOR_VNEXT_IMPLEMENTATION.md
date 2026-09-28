@@ -450,9 +450,10 @@ own results are:
   historical pre-liquidation model (section 13) a stop-out wrote
   `failure.kind = AccountStopOut` (`failure.condition = MarginLevel` or
   `NegativeEquity`) and stopped the run; the current engine liquidates instead,
-  so new results also carry the top-level `basketsLiquidated` and
-  `forcedLiquidations` counters and the liquidation fields on
-  `closedBaskets`/`openBasket` (section 14.3). `researchMargin` is
+  so new results also carry the explicit `modelRevision`/`stopOutModel`
+  identity, the top-level `basketsLiquidated` and `forcedLiquidations`
+  counters and the liquidation fields on `closedBaskets`/`openBasket`
+  (section 14.3). `researchMargin` is
   null when margin is disabled; disabling margin leaves the strategy path and
   every strategy counter and rejection parity digest identical to the pre-PR-3
   build, with the new results fields being additive (sections 10 and 14).
@@ -954,8 +955,10 @@ and no second position registry. The `researchOpenBasket` snapshot is computed
 on demand from the live basket and the same accumulator, so an unresolved
 basket costs no retained history either. The per-quote valuation uses the
 basket's existing aggregates and `BasketEconomics` (constant time), never a
-loop over legs, and reuses the cached balance (realized profit changes only at
-a close) and cached exposure (the ledger is append-only within a basket). The
+loop over legs, and reuses the cached balance (realized profit changes at a
+close and at a forced close) and cached exposure (the ledger only grows by an
+entry and shrinks by a forced close, both of which change the observation
+state). The
 executable mark is the engine's already-computed raw basket profit less the
 configured per-lot cost of the simultaneous close
 (`slippage * point value + round-trip commission`, applied to the gross
@@ -1568,6 +1571,30 @@ positions with negative equity) now starts deterministic broker liquidation:
    `ExitReason.BrokerLiquidation` and is counted by `basketsLiquidated`, not by
    `basketsClosed`.
 
+**Lifetime economics of the surviving basket.** After a forced close the
+basket's decision economics are its **lifetime basis**: the executable P/L
+already realized by broker liquidation plus the value of the surviving
+positions. The basis is used consistently by
+
+- the Escape and fixed take-profit thresholds;
+- trailing activation, its recorded peak and its drop floor;
+- the hard-BE `PL_existing(T)` sizing and the post-fill hard-BE verification;
+- the open-basket and close records' `RawProfit`/`ExitProfit`/`ExecutableProfit`
+  values, which report the basket's lifetime economics
+  (`LiquidatedRealizedProfit` separates the already-realized part).
+
+The survivor-only executable mark is deliberately still the account's
+`FloatingProfit` (equity = balance + survivor floating), because the realized
+part already reached the balance; the lifetime basis is the strategy's view, the
+survivor mark is the account's view, and they never double count. A forced loss
+therefore cannot silently disappear from the surviving basket's exit or sizing
+decisions, and a forced profit cannot silently inflate them. For a basket that
+never liquidated the lifetime basis equals the survivor-only value exactly, so
+runs that never reach Stop Out are unchanged. Because this strategy's entries
+occur at the two fixed boundaries, the least-profitable leg at any quote is
+non-positive, so a forced close realizes a loss in practice; the basis is
+symmetric and would carry a forced profit without modification if one occurred.
+
 **Ordering and tie rule.** "Least profitable" is the position's executable
 close value at the triggering quote: the price move from its own entry valued
 at the configured point value, less the round-trip commission on its own
@@ -1593,22 +1620,31 @@ the account state before and after it and remains the same authority for
 balance, floating P/L, equity and margin. `Basket`/`BasketLeg` remain the only
 position truth.
 
-Realized P/L inside an active basket is preserved: the engine's realized total
-and the account balance receive each forced close's realized P/L when it
-happens, and a later strategy close adds only the surviving legs' executable
-result. `BasketCloseRecord.RealizedProfit` reports the basket's whole lifetime
-realized result (forced plus final), `LiquidatedRealizedProfit` the forced
-part, and `LiquidatedPositions`/`HistoricalEntries` the removed and total entry
-counts. A partially liquidated basket that later closes normally is still a
-strategy close; a fully liquidated basket is only ever the broker-liquidation
-outcome.
+Realized P/L inside an active basket is preserved and drives the surviving
+basket's economics: the engine's realized total and the account balance receive
+each forced close's realized P/L when it happens; the surviving basket's exit
+rules, trailing series and hard-BE sizing use the **lifetime basis** (forced P/L
+plus survivors, section 14.1); and a later strategy close adds only the
+surviving legs' executable result to the balance. `BasketCloseRecord.RealizedProfit`
+reports the basket's whole lifetime realized result (forced plus final),
+`LiquidatedRealizedProfit` the forced part, `RawProfit`/`ExitProfit` the
+lifetime decision basis at the close, and
+`LiquidatedPositions`/`HistoricalEntries` the removed and total entry counts. A
+partially liquidated basket that later closes normally is still a strategy
+close; a fully liquidated basket is only ever the broker-liquidation outcome.
 
 ### 14.3 Evidence
 
-New result/evidence fields, additive to the existing style:
+This is a schema **revision**, not a purely additive change: the historical
+terminal `researchMargin.stopOut` field is removed from new results because a
+Stop Out is an episode, not a terminal state, and the new fields below are
+added. Every new result also carries an explicit revision identity so a
+consumer never has to infer the model from field presence:
 
-- engine result keys: `basketsLiquidated`, `forcedLiquidations` (camelCase in
-  the host's results envelope);
+- engine result keys (camelCase in the host's results envelope):
+  `modelRevision = "marketlab-single-anchor-broker-liquidation-v1"`,
+  `stopOutModel = "BrokerLiquidation"`, `basketsLiquidated`,
+  `forcedLiquidations`;
 - `BasketCloseRecord` (`closedBaskets`): `LiquidatedRealizedProfit`,
   `LiquidatedPositions`, `HistoricalEntries`, `LiquidationTrace`;
 - `openBasket` (`BasketSnapshot`): `LiquidationTrace`, `LiquidatedPositions`,
@@ -1637,28 +1673,41 @@ and the old evidence file is unchanged. The engine still fails explicitly with
 `AccountSurvival / ExecutableMarkUnavailable` when an executable mark cannot be
 established, and a forced close the executor cannot fill fails with the new
 `BrokerLiquidation / ForcedCloseFailed` kind instead of continuing on an
-unknown inventory; the unresolved episode remains in the evidence. The
-frozen-baseline delivery/classifier tooling (`scripts\SingleAnchorDelivery.ps1`,
-`scripts\Test-SingleAnchorBaselineFailedData.ps1`) remains bound to the
-pre-liquidation result shape for the preserved Phase A evidence; the Phase D
-corrected full-history characterization and its own evidence chain are separate
-later work.
+unknown inventory; the unresolved episode remains in the evidence.
+
+The frozen-baseline verifier and the current-model verifier are deliberately
+separated. `Assert-BaselineDelivery` in `scripts\SingleAnchorDelivery.ps1` is
+unchanged and stays strictly bound to the pre-liquidation shape (it requires the
+historical `researchMargin.stopOut` and only accepts `AccountStopOut` as a
+terminal kind). The new `Assert-BrokerLiquidationDelivery` in the same script
+accepts only results whose `modelRevision`/`stopOutModel` name the Phase B
+model, requires a completed full stream, and never certifies the historical
+shape; the delivery end-to-end test exercises both and asserts that the
+historical verifier refuses a Phase B result. The frozen-baseline classifier
+(`scripts\Test-SingleAnchorBaselineFailedData.ps1`) keeps using the historical
+verifier. The Phase D corrected full-history characterization and its own
+evidence chain are separate later work.
 
 ### 14.4 Focused deterministic tests
 
-`MarketLab\tests\SingleAnchor\LiquidationTests.cs` adds 15 tests over the
+`MarketLab\tests\SingleAnchor\LiquidationTests.cs` adds 16 tests over the
 required matrix: a one-force-close restoration with surviving legs (including
-per-close account/basket inventory agreement); partial liquidation with a later
-normal strategy close that includes the prior forced loss; nonzero-commission
-forced closes charged exactly once; equal-profit tie ordering (higher trade
-number first, with a deterministic replay comparison); BUY and SELL forced-close
-sides under slippage; multiple forced closes until a scripted guard clears, with
-a later entry using the next historical trade number and side; total liquidation
+per-close account/basket inventory agreement and the lifetime snapshot values);
+a partial liquidation whose forced loss keeps the apparently profitable
+survivors below the Escape threshold until they genuinely recover it;
+nonzero-commission forced closes charged exactly once; equal-profit tie ordering
+(higher trade number first, with a deterministic replay comparison); BUY and
+SELL forced-close sides under slippage; multiple forced closes until a scripted
+guard clears, with a later entry using the next historical trade number and
+side; total liquidation
 as a broker outcome with a new basket and blocked entries for the flat negative
-account; a forced close of the hard-BE tail that keeps its sizing identity;
+account; a forced close of the hard-BE tail that keeps its sizing identity; a
+hard-BE tail sizing after a partial liquidation that must recover the forced
+loss (survivor-only basis would place 0.03 lots, the lifetime basis 0.05);
 forced-close execution failure as a terminal `BrokerLiquidation` fault with an
 unresolved episode, including a failure after a successful forced close;
-trailing-state preservation across a forced close; the event stream; hard-BE
+trailing-state preservation across a forced close with a continuous lifetime
+trailing series that later drives the exit; the event stream; hard-BE
 state and trade numbering across a partial liquidation; and a no-Stop-Out stream
 whose closed baskets and realized result are identical with and without the
 margin layer. Existing tests that described the historical
@@ -1669,16 +1718,17 @@ execution failure.
 
 Local suite (Windows, .NET SDK 10.0.401, runtime 10.0.12, 2026-09-28):
 `dotnet test MarketLab\tests\SingleAnchor\MarketLab.SingleAnchor.Tests.csproj --configuration Release`
-reports **294 passed, 0 failed, 0 skipped** (279 before Phase B). The relevant
+reports **295 passed, 0 failed, 0 skipped** (279 before Phase B). The relevant
 PowerShell and native suites were re-run and pass: backtesting helper 150/150,
 baseline failed-data classifier 97/97, baseline launch/build guards 26/26,
 baseline invocation reporter 12/12, trading-availability end-to-end 12/12, and
-the production delivery end-to-end (now asserting the liquidated outcomes)
-26/26.
+the production delivery end-to-end (now asserting the liquidated outcomes, the
+model revision identity and that the frozen verifier refuses a Phase B result)
+32/32.
 
 ### 14.5 Bounded March 2020 local qualification
 
-Method: three independent runs of the real LEAN Release host on the qualified
+Method: two independent runs of the real LEAN Release host on the qualified
 Dukascopy XAUUSD data folder `E:\MarketLab\data\lean\xauusd-dukascopy` over
 `2019-01-01` .. `2020-04-30` — the frozen start date and the former failure
 region plus five weeks of continuation — with the frozen strategy parameter
@@ -1693,49 +1743,61 @@ pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release `
   -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp `
   -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll `
   -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy `
-  -OutputRoot E:\MarketLab\phaseb-march2020 `
+  -OutputRoot E:\MarketLab\phaseb-march2020-correction `
   -Parameters "<the 30 frozen single-anchor-* values, single-anchor-end-date:2020-04-30>" `
   -AllowMissingData
 ~~~
 
-Both runs exited 0 with `completed: true` and no failure. The pre-trigger path
-reproduces the Phase A record exactly: basket #276, trigger quote sequence
-51,304,749 and time 2020-03-23T12:06:26.292Z, bid 1505.618 / ask 1506.182,
-balance 25,519.92800, floating -25,320.42700, equity 199.50100, used margin
-1,157.8848069189189189189189189, free margin
+Both runs exited 0 with `completed: true` and no failure, and produced
+**byte-identical** `results.json` (SHA-256
+`b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef`,
+1,202,916 bytes), so the whole run is deterministic, not only the liquidation
+sequence. The pre-trigger path reproduces the Phase A record exactly: basket
+#276, trigger quote sequence 51,304,749 and time 2020-03-23T12:06:26.292Z, bid
+1505.618 / ask 1506.182, balance 25,519.92800, floating -25,320.42700, equity
+199.50100, used margin 1,157.8848069189189189189189189, free margin
 -958.3838069189189189189189189, margin level
-17.229779578062128554190460520%, 36 open positions. The corrected model then
-force-closes, in order, 20 positions in the first episode and restores the
-margin (equity 199.50100, used margin 943.7993179436008676789587853, 16
-positions); three further episodes on the same basket close 8, 1 and 1
-positions; basket #276 later closes normally by Escape at
-2020-03-23T12:08:27.511Z with 6 surviving legs and a lifetime realized result
-of -25,028.97300 (including -25,051.42100 already realized by its 30 forced
-closes). Basket #279 later reaches Stop Out and is fully liquidated by the
-broker: 5 forced closes, -521.18200, `ExitReason.BrokerLiquidation`, 0
-positions. Processing continues to 2020-04-30: 55,873,930 quotes, 525 legs,
-278 strategy closes, 1 fully liquidated basket, 35 forced closes over 5
-episodes, realized -19,997.96700, final balance 2.03300.
+17.229779578062128554190460520%, 36 open positions.
 
-The least-profitable-first property held over all 35 real forced closes
+With the corrected lifetime economics, the model force-closes 30 positions over
+four episodes on basket #276 (20, 8, 1, 1), realizing -25,051.42100, and the
+survivors are evaluated against the lifetime basis rather than their own
+profit. The basket stays open while the lifetime economics are negative and
+closes normally by Escape on 2020-04-13T18:24:10.475Z at 1721.098 / 1721.212
+with 6 survivors and a lifetime realized result of **+30.65700** (the forced
+-25,051.42100 plus +25,082.07800 from the survivors, against the 22.1803125
+Escape threshold). No basket is fully liquidated in the window:
+`basketsLiquidated = 0`. Through 2020-04-30: 55,873,930 quotes, 539 legs, 278
+strategy closes, 30 forced closes over 4 episodes, realized +5,572.00500, final
+balance 25,572.00500, final equity 23,526.86200, open basket #279 with 19
+positions.
+
+The least-profitable-first property held over all 30 real forced closes
 (non-decreasing executable P/L in every episode) and the equal-profit tie rule
-was never violated. The three independent runs (the last from the final frozen
-tree) produced identical Stop Out episode and liquidated-basket evidence and
-identical realized profit. The preserved local evidence is under
-`E:\MarketLab\phaseb-march2020\` (`qualification-summary-v2.json`,
-`trigger-comparison.json`, `determinism-comparison.json`, and the run
-directories `20260928-203732-...`, `20260928-205249-...` and
-`20260928-213721-SingleAnchorVNextAlgorithm`), outside Git. This qualification
-is execution evidence only: it does not establish profitability, does not
-determine the final 2019-2026 strategy outcome and does not replace the later
-corrected full-history characterization (Phase D).
+was never violated. The compact reviewable evidence is committed under
+`MarketLab\evidence\20260928-phase-b-march-2020\` (`manifest.json` with the
+exact invocation and both `results.json` hashes, `qualification-summary.json`
+with every ordered episode and forced-close record, `run-parameters.txt` and a
+`README.md`); the full run directories stay local outside Git. This
+qualification is execution evidence only: it does not establish profitability,
+does not determine the final 2019-2026 strategy outcome and does not replace
+the later corrected full-history characterization (Phase D).
+
+The earlier Phase B qualification runs under `E:\MarketLab\phaseb-march2020\`
+were produced before the lifetime-economics correction and are **superseded**;
+they are not qualification evidence for this model. Their reported basket #276
+outcome (Escape with a lifetime result of -25,028.97300 while the survivors
+were only +22.44800) was the defect the correction fixes: the survivors' own
+profit was compared with the Escape threshold while the forced loss was
+ignored.
 
 ### 14.6 Limitations
 
 - Broker liquidation is evaluated on each delivered quote and each forced close
-  executes at that quote's configured executable price. There is no intrabar
-  sequencing, no partial fill and no liquidity model beyond the configured
-  execution economics.
+  executes at that quote's configured executable price; several positions can be
+  force-closed on the same quote as the loop re-evaluates the condition. There
+  is no intrabar sequencing, no partial fill and no liquidity model beyond the
+  configured execution economics.
 - The account contract is unchanged: one instrument (XAUUSD CFD), one currency
   (USD), fixed leverage, the frozen matched-hedge rule and zero financing.
   There is no multi-broker, multi-currency or equity-tier behavior.

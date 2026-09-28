@@ -747,8 +747,9 @@ namespace MarketLab.SingleAnchor
             _lastOpenPositions = basket?.OpenPositions ?? -1;
             _lastRealizedProfit = realizedProfit;
 
-            // Realized profit changes only when a basket closes, so the balance and its drawdown
-            // are recomputed only then; every other quote reuses the cached balance.
+            // Realized profit changes when a basket closes and when a forced close realizes P/L, so
+            // the balance and its drawdown are recomputed whenever the engine's total changes;
+            // every other quote reuses the cached balance.
             if (realizedProfit != _observedRealizedProfit)
             {
                 _observedRealizedProfit = realizedProfit;
@@ -758,9 +759,9 @@ namespace MarketLab.SingleAnchor
                 if (balanceDrawdown > _maxBalanceDrawdown) _maxBalanceDrawdown = balanceDrawdown;
             }
 
-            // Within one basket the ledger is append-only, so the exposure values can change only
-            // when the basket changes or its open-position count changes. Everything else reuses
-            // the last observed values.
+            // Within one basket the exposure values can change when the basket changes, its
+            // open-position count changes, or a forced close removes a position (which changes the
+            // count); a valuation on the same sequence and count reuses the last observed values.
             var openPositions = basket?.OpenPositions ?? 0;
             if (basket == null)
             {
@@ -947,7 +948,8 @@ namespace MarketLab.SingleAnchor
         /// so they contribute their immutable trade numbers, placed lots and tail requirements to
         /// the historical facts exactly like surviving legs. The <c>fallback*</c> arguments are the
         /// final live exposure values used as lower bounds for the maxima when no observation
-        /// recorded the basket (they cannot exceed the true maxima under the append-only ledger).
+        /// recorded the basket (they cannot exceed the true maxima: an entered leg can only raise
+        /// the exposure and a forced close is observed before the next quote).
         /// </summary>
         private static BasketFacts ComputeFacts(
             IReadOnlyList<LegRecord> legs,

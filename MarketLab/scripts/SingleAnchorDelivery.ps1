@@ -57,7 +57,7 @@ function Assert-BaselineDelivery($Results, $Manifest, $Identity, [string]$DataFo
     if ($Results.completed -isnot [bool]) { throw 'The strategy completed flag must be present and boolean.' }
     $terminal = $null -ne $Results.failure
     if ($Results.completed -eq $terminal) { throw 'The strategy completed flag contradicts its failure record.' }
-    if ($terminal -and $Results.failure.Kind -cne 'AccountStopOut') { throw "Only AccountStopOut is an approved terminal result for the frozen pre-liquidation baseline (got '$($Results.failure.Kind)')." }
+    if ($terminal -and $Results.failure.Kind -cne 'AccountStopOut') { throw 'Only AccountStopOut is an approved terminal result.' }
     if ($Results.algorithmTimeZone -cne 'UTC' -or $Results.quoteTimeZone -cne 'UTC') { throw 'The baseline algorithm and quote clocks must both be UTC.' }
     $start = ConvertTo-BaselineUtc $Identity.startDate
     $end = (ConvertTo-BaselineUtc $Identity.endDate).AddDays(1).AddTicks(-1)
@@ -106,16 +106,9 @@ function Assert-BaselineDelivery($Results, $Manifest, $Identity, [string]$DataFo
     }
     if ($total -ne $count) { throw 'Partition quote counts do not sum to the processed count.' }
     if (-not $terminal) {
-        # The Phase B broker-liquidation model does not persist a terminal StopOut record; an
-        # older pre-liquidation result carries one. Both shapes are accepted for a completed run,
-        # but a record whose model says the run stopped must not be certified as a completion.
-        $stopOut = $null
-        if ($null -ne $Results.researchMargin -and $Results.researchMargin.PSObject.Properties.Name -contains 'StopOut') {
-            $stopOut = $Results.researchMargin.StopOut
-        }
         if ($count -ne [long]$Identity.continuousHistoryQuoteCount -or
             $delivered.semantic_digest -cne $Identity.continuousHistorySemanticDigest -or
-            $last -ne (ConvertTo-BaselineUtc $Identity.continuousHistoryLastQuoteUtc) -or $null -ne $stopOut) {
+            $last -ne (ConvertTo-BaselineUtc $Identity.continuousHistoryLastQuoteUtc) -or $null -ne $Results.researchMargin.StopOut) {
             throw 'Normal completion does not match the qualified full population or has a stop-out record.'
         }
     } else {
@@ -131,4 +124,63 @@ function Assert-BaselineDelivery($Results, $Manifest, $Identity, [string]$DataFo
         if (-not $validReason) { throw 'The terminal state does not satisfy the frozen stop-out rule.' }
     }
     return [pscustomobject]@{ mode = $(if ($terminal) { 'qualified-prefix' } else { 'qualified-full-stream' }); quoteCount = $count; partitions = $actualDays.Count; terminalDayPrefixRead = $partial }
+}
+
+function Assert-BrokerLiquidationDelivery($Results, $Manifest, $Identity, [string]$DataFolder) {
+    # Current-model (Phase B) delivery verification. Deliberately separate from the frozen
+    # pre-liquidation Assert-BaselineDelivery above, so the historical verifier stays strictly
+    # bound to the AccountStopOut result shape and the two model revisions are never conflated.
+    # The identifier check is explicit: a result must name its broker model.
+    if ($null -eq $Results.modelRevision -or $Results.modelRevision -cne 'marketlab-single-anchor-broker-liquidation-v1') {
+        throw "Not a Phase B broker-liquidation result: modelRevision is '$($Results.modelRevision)'."
+    }
+    if ($Results.stopOutModel -cne 'BrokerLiquidation') {
+        throw "Not a Phase B broker-liquidation result: stopOutModel is '$($Results.stopOutModel)'."
+    }
+    if ($Results.completed -ne $true -or $null -ne $Results.failure) {
+        throw 'A Phase B qualification run must complete without a terminal failure.'
+    }
+    if ($Results.algorithmTimeZone -cne 'UTC' -or $Results.quoteTimeZone -cne 'UTC') { throw 'The qualification algorithm and quote clocks must both be UTC.' }
+    $start = ConvertTo-BaselineUtc $Identity.startDate
+    $end = (ConvertTo-BaselineUtc $Identity.endDate).AddDays(1).AddTicks(-1)
+    if ((ConvertTo-BaselineUtc $Results.startUtc) -ne $start -or (ConvertTo-BaselineUtc $Results.endUtc) -ne $end) {
+        throw 'The effective production UTC subscription window differs from the requested window.'
+    }
+    $delivered = $Results.delivered
+    foreach ($value in @($Results.quoteTicksProcessed, $Results.quoteOnlyQuotes, $Results.strategyEligibleQuotes, $Results.nonQuoteTicksUnused, $delivered.quote_count)) {
+        if ([string]$value -cnotmatch '^\d+$') { throw 'Delivery counters must be non-negative integers.' }
+    }
+    $count = [long]$delivered.quote_count
+    if ($count -lt 1 -or $count -ne [long]$Results.quoteTicksProcessed -or
+        $count -ne ([long]$Results.quoteOnlyQuotes + [long]$Results.strategyEligibleQuotes) -or $Results.nonQuoteTicksUnused -ne 0) {
+        throw 'The strategy/delivery/availability counters do not describe one complete quote stream.'
+    }
+    if ($delivered.semantic_digest -cnotmatch '^sha256:[0-9a-f]{64}$') { throw 'The delivered stream has no valid semantic digest.' }
+    if ((ConvertTo-BaselineUtc $delivered.first_canonical_utc) -ne (ConvertTo-BaselineUtc $Identity.continuousHistoryFirstQuoteUtc)) { throw 'The first processed quote differs from the qualified first quote.' }
+    $last = ConvertTo-BaselineUtc $delivered.last_canonical_utc
+    if ($last -lt (ConvertTo-BaselineUtc $delivered.first_canonical_utc) -or $last -gt (ConvertTo-BaselineUtc $Identity.continuousHistoryLastQuoteUtc)) {
+        throw 'The last processed quote is outside qualified coverage.'
+    }
+    Assert-BaselineQuoteEqual $delivered.last_quote $Results.lastProcessedQuote
+    if ((ConvertTo-BaselineUtc $delivered.last_quote.Time) -ne $last) { throw 'The delivered final timestamp contradicts its last quote.' }
+    $expectedDays = @($Manifest.semantic.per_partition.PSObject.Properties.Name | Sort-Object)
+    $actualDays = @($delivered.per_partition.PSObject.Properties.Name | Sort-Object)
+    if (($expectedDays -join ',') -cne ($actualDays -join ',')) { throw 'The delivered partition set is not the qualified full stream.' }
+    [long]$total = 0
+    foreach ($day in $actualDays) {
+        $expected = $Manifest.semantic.per_partition.$day
+        $actual = $delivered.per_partition.$day
+        if ([string]$actual.quote_count -cnotmatch '^[1-9]\d*$') { throw "Invalid delivered partition count: $day" }
+        $total += [long]$actual.quote_count
+        if ([long]$actual.quote_count -ne [long]$expected.accepted_row_count -or $actual.semantic_digest -cne $expected.semantic_digest) {
+            throw "Delivered count/digest differs from the qualified partition: $day"
+        }
+    }
+    if ($total -ne $count) { throw 'Partition quote counts do not sum to the processed count.' }
+    if ($count -ne [long]$Identity.continuousHistoryQuoteCount -or
+        $delivered.semantic_digest -cne $Identity.continuousHistorySemanticDigest -or
+        $last -ne (ConvertTo-BaselineUtc $Identity.continuousHistoryLastQuoteUtc)) {
+        throw 'A Phase B qualification run must deliver the full qualified stream.'
+    }
+    return [pscustomobject]@{ mode = 'phase-b-full-stream'; quoteCount = $count; partitions = $actualDays.Count }
 }

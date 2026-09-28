@@ -1207,10 +1207,15 @@ namespace MarketLab.SingleAnchor
     /// (specification section 15: an open basket is marked to market, not closed). Anchor source,
     /// geometry, state, legs and rejections are always present; the profit figures are null
     /// without legs, and <paramref name="ExecutableProfit"/> is also null when the configured
-    /// slippage makes a needed executable close price non-positive at the quote. A partially
-    /// liquidated basket reports its surviving legs plus the immutable
+    /// slippage makes a needed executable close price non-positive at the quote. The profit
+    /// figures are the basket's lifetime economics: <paramref name="LiquidatedRealizedProfit"/>
+    /// (already realized by broker liquidation) plus the executable/raw value of the surviving
+    /// inventory. For a basket that never liquidated they are the survivor-only values exactly.
+    /// A partially liquidated basket also reports its surviving legs plus the immutable
     /// <paramref name="LiquidationTrace"/>, <paramref name="LiquidatedPositions"/> and
-    /// <paramref name="LiquidatedRealizedProfit"/> of the positions the broker already force-closed.
+    /// <paramref name="LiquidatedRealizedProfit"/> of the positions the broker already
+    /// force-closed; the survivor-only floating mark stays on the research account as
+    /// <c>FloatingProfit</c>.
     /// </summary>
     public sealed record BasketSnapshot(
         int Sequence,
@@ -1299,7 +1304,10 @@ namespace MarketLab.SingleAnchor
     /// A basket can lose positions to deterministic broker liquidation while the rest stays open.
     /// <see cref="RealizedProfit"/> is then the basket's whole realized result over its lifetime:
     /// the forced closes' realized P/L (<see cref="LiquidatedRealizedProfit"/>, already applied to
-    /// the balance when they happened) plus the final close of the surviving legs. The
+    /// the balance when they happened) plus the final close of the surviving legs.
+    /// <see cref="RawProfit"/> and <see cref="ExitProfit"/> are the basket's lifetime decision
+    /// basis at the closing quote: the forced P/L already realized plus the surviving legs' raw
+    /// profit (for a basket that never liquidated they are the survivor-only values exactly). The
     /// <see cref="LiquidationTrace"/> preserves the removed legs' immutable identities; a basket
     /// whose positions were all liquidated closes with <see cref="ExitReason.BrokerLiquidation"/>.
     /// <see cref="Commission"/> is the round-trip commission of every leg the basket ever opened
@@ -1386,8 +1394,10 @@ namespace MarketLab.SingleAnchor
 
     /// <summary>
     /// One open position was force-closed by deterministic broker liquidation. The record carries
-    /// the immutable leg identity, the executable close and realized P/L, the liquidation ordinal
-    /// within the episode and the account state before and after the close.
+    /// the immutable leg identity, the executable close price, the realized P/L, the liquidation
+    /// ordinal within the episode and the forcing reason. The account state before and after the
+    /// close is carried by the research account's <c>ForcedLiquidationRecord</c>, which wraps this
+    /// record; the engine event itself does not own account state.
     /// </summary>
     public sealed record ForcedLiquidationEvent(Basket Basket, LiquidatedLegRecord Record, Quote Quote);
 

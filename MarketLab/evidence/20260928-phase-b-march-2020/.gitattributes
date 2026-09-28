@@ -1,0 +1,4 @@
+# Keep the qualification evidence byte-exact: the recorded hashes in manifest.json
+# are over these committed bytes, and the repository-wide `* text=auto` rule must
+# not normalize them.
+* -text

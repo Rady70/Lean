@@ -87,6 +87,20 @@ namespace MarketLab.SingleAnchor
         /// <summary>Object-store key of the strategy's results file.</summary>
         public const string ResultsKey = "single-anchor/results.json";
 
+        /// <summary>
+        /// Persisted identity of this build's broker-model revision: the Phase B broker-forced
+        /// Stop Out liquidation model. The frozen pre-liquidation model's historical result files
+        /// do not carry this key; a new result always does, so consumers never have to infer the
+        /// model from field presence.
+        /// </summary>
+        public const string ModelRevision = "marketlab-single-anchor-broker-liquidation-v1";
+
+        /// <summary>
+        /// Persisted name of the Stop Out model: deterministic broker-forced liquidation with
+        /// continued processing, not a terminal fault.
+        /// </summary>
+        public const string StopOutModel = "BrokerLiquidation";
+
         // ---- Host / instrument ----
         [Parameter("single-anchor-symbol")] private string _ticker = "XAUUSD";
         [Parameter("single-anchor-market")] private string _market = Market.Oanda;
@@ -466,6 +480,8 @@ namespace MarketLab.SingleAnchor
             var results = new Dictionary<string, object?>
             {
                 ["completed"] = failure == null,
+                ["modelRevision"] = ModelRevision,
+                ["stopOutModel"] = StopOutModel,
                 ["algorithmTimeZone"] = TimeZone.Id,
                 ["startUtc"] = StartDate.ConvertToUtc(TimeZone),
                 ["endUtc"] = EndDate.ConvertToUtc(TimeZone),

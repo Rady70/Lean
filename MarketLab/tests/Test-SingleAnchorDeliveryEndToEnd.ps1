@@ -69,12 +69,17 @@ try {
         $run = @(Get-ChildItem -LiteralPath $out -Directory)
         Check ($run.Count -eq 1) 'Exactly one synthetic run directory is required'
         $result = [IO.File]::ReadAllText((Join-Path $run[0].FullName 'storage\single-anchor\results.json')) | ConvertFrom-Json
-        $verified = Assert-BaselineDelivery $result $manifest $identity $data
+        $verified = Assert-BrokerLiquidationDelivery $result $manifest $identity $data
+        $historicalVerifierRefused = $false
+        try { Assert-BaselineDelivery $result $manifest $identity $data | Out-Null } catch { $historicalVerifierRefused = $true }
+        Check $historicalVerifierRefused 'The frozen pre-liquidation verifier must refuse a Phase B result'
+        Check ($result.modelRevision -ceq 'marketlab-single-anchor-broker-liquidation-v1') 'The result must name its broker model revision'
+        Check ($result.stopOutModel -ceq 'BrokerLiquidation') 'The result must name its Stop Out model'
         Check ($result.algorithmTimeZone -ceq 'UTC') 'Production Initialize must use UTC'
         Check ($result.completed -eq $true) 'The broker-liquidation model completes both fixtures'
         Check ($null -eq $result.failure) 'A Stop Out trigger is not a run failure under the Phase B model'
         Check ($result.runtimeVersion -match '^10\.\d+\.\d+$') 'Production host must report its runtime'
-        Check ($verified.mode -eq 'qualified-full-stream' -and $verified.quoteCount -eq 3) 'Both fixtures deliver the full three-quote stream'
+        Check ($verified.mode -eq 'phase-b-full-stream' -and $verified.quoteCount -eq 3) 'Both fixtures deliver the full three-quote stream'
         if ($terminal) {
             Check ($result.forcedLiquidations -eq 1) 'The post-fill Stop Out force-closes one position'
             Check ($result.basketsLiquidated -eq 1) 'The only position ends through broker liquidation'
