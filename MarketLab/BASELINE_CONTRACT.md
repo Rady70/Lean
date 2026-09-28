@@ -9,10 +9,15 @@ first untouched full-history baseline:    NOT RUN
 parameter optimization:                   NOT STARTED
 ```
 
+The pre-baseline audit correction updates the operational contract and its
+identity below. All 30 PR #15 parameter values and the qualified data identity
+are preserved. The corrected source/procedure must be reviewed and merged
+before building an authoritative receipt and authorizing the future run.
+
 - Canonical machine-readable configuration:
   [`config/baseline-contract.json`](config/baseline-contract.json)
 - Baseline contract identity (SHA-256):
-  `d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`
+  `0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a`
 - Canonicalization: the identity is the SHA-256 of the contract file's UTF-8
   text content with CRLF normalized to LF, lower-case hex. It is deliberately
   not stored in the contract file itself; it is recorded in
@@ -45,6 +50,7 @@ never modify this file or be presented as the frozen baseline.
 | fill forward | `false` |
 | data time zone | `UTC` |
 | exchange time zone | `UTC` |
+| algorithm time zone | `UTC` (explicit production host setting) |
 | continuous data folder | `E:\MarketLab\data\lean\xauusd-dukascopy` |
 | start date | `2019-01-01` |
 | end date | `2026-06-30` |
@@ -158,53 +164,45 @@ second account or position ledger is introduced and no EUR conversion exists.
 
 ## 4. Exact future baseline invocation
 
-The full-history baseline is launched exactly once, after this contract is
-reviewed and merged, from the merged freeze commit:
+The corrected procedure requires the reviewed and merged correction commit.
+Set `$ReviewedCommit` to that explicitly approved full 40-character SHA; do
+not populate it automatically from the current HEAD. The first full-history
+baseline remains unrun and requires separate authorization.
+
+Run these preparation commands in order, from the repository root:
 
 ```powershell
-pwsh -File MarketLab\scripts\build.ps1
-dotnet build MarketLab\src\SingleAnchor\MarketLab.SingleAnchor.csproj --configuration Release
-
-pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release -Config MarketLab/config/backtesting.json -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy -Parameters "single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,single-anchor-security-type:Cfd,single-anchor-start-date:2019-01-01,single-anchor-end-date:2026-06-30,single-anchor-cash:20000,single-anchor-session-map:marketlab-sessions/xauusd-sessions.json,single-anchor-step-percent:0.25,single-anchor-base-lot:0.10,single-anchor-normal-trade-count:4,single-anchor-hard-be-ceiling-percent:4.478,single-anchor-escape-enabled:true,single-anchor-escape-profit-units:0.05,single-anchor-escape-minimum-open-positions:2,single-anchor-fixed-tp-units:0,single-anchor-trailing-enabled:true,single-anchor-trailing-activation-units:0.50,single-anchor-trailing-drop-units:0.25,single-anchor-commission-buffer:0,single-anchor-point-value-per-lot:100,single-anchor-volume-step:0.01,single-anchor-minimum-volume:0.01,single-anchor-maximum-volume:50,single-anchor-commission-per-lot:0,single-anchor-slippage:0,single-anchor-projected-spread:0.50,single-anchor-buy-swap-per-lot-per-day:0,single-anchor-sell-swap-per-lot-per-day:0,single-anchor-research-account:true,single-anchor-margin-enabled:true" -AllowMissingData -RunEvidence -BaselineContract MarketLab\config\baseline-contract.json -BaselineRegister MarketLab\config\baseline-decision-audit.json -ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException
+$ReviewedCommit = '<explicitly reviewed and approved full commit SHA>'
+pwsh -File MarketLab\scripts\Build-SingleAnchorBaseline.ps1 -ReviewedCommit $ReviewedCommit
+if ($LASTEXITCODE -ne 0) { throw 'Baseline build failed' }
+pwsh -File MarketLab\scripts\Get-SingleAnchorBaselineInvocation.ps1 -ReviewedCommit $ReviewedCommit
+if ($LASTEXITCODE -ne 0) { throw 'Baseline contract verification failed' }
+pwsh -File MarketLab\scripts\Test-SingleAnchorBaselineFailedData.ps1 -Preflight -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\output\baseline-build.json -OutputPath MarketLab\output\baseline-preflight.json
+if ($LASTEXITCODE -ne 0) { throw 'Baseline preflight failed' }
 ```
 
-`-AllowEngineErrors` is deliberately absent. `-RunEvidence` plus
-`-BaselineContract`/`-BaselineRegister` make the helper write
-`marketlab-run-invocation.json` inside the run directory **before** LEAN is
-launched: the resolved inputs (paths, parameter pairs, allow flags and launcher
-argv, plus the config and algorithm hashes), this contract's path and SHA-256,
-the register pin (verified equal before launch), the Git HEAD and dirty state,
-and the qualified runtime binary hashes. After the run the helper writes
-`marketlab-run-outcome.json` (LEAN exit code, final helper exit code, whether
-the engine-error check ran and its count, the data-monitor result and whether
-the runtime binaries changed). The invocation is evidence, not a
-reconstruction. The helper can print the same resolved invocation with
-`-DryRun` (configuration-only validation; it launches nothing).
+The build wrapper requires a clean checkout at that SHA, invalidates any old
+receipt before rebuilding, and checks both non-incremental Release builds.
+Its receipt binds the source commit/tree and contract to the complete launcher,
+strategy, .NET framework and host dependency file set, including Queues and
+NodaTime. The runtime is selected once and launched with `--fx-version` and
+`--roll-forward Disable`. Failed or interrupted builds cannot reuse an old
+receipt. These are local provenance checks, not a hermetic or signed build.
 
-Before launching, report the contract identity and re-render the invocation
-from the canonical contract:
+Only after preparation passes and a baseline run is authorized, use:
 
 ```powershell
-pwsh -File MarketLab\scripts\Get-SingleAnchorBaselineInvocation.ps1
+pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release -Config MarketLab/config/backtesting.json -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy -Parameters "single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,single-anchor-security-type:Cfd,single-anchor-start-date:2019-01-01,single-anchor-end-date:2026-06-30,single-anchor-cash:20000,single-anchor-session-map:marketlab-sessions/xauusd-sessions.json,single-anchor-step-percent:0.25,single-anchor-base-lot:0.10,single-anchor-normal-trade-count:4,single-anchor-hard-be-ceiling-percent:4.478,single-anchor-escape-enabled:true,single-anchor-escape-profit-units:0.05,single-anchor-escape-minimum-open-positions:2,single-anchor-fixed-tp-units:0,single-anchor-trailing-enabled:true,single-anchor-trailing-activation-units:0.50,single-anchor-trailing-drop-units:0.25,single-anchor-commission-buffer:0,single-anchor-point-value-per-lot:100,single-anchor-volume-step:0.01,single-anchor-minimum-volume:0.01,single-anchor-maximum-volume:50,single-anchor-commission-per-lot:0,single-anchor-slippage:0,single-anchor-projected-spread:0.50,single-anchor-buy-swap-per-lot-per-day:0,single-anchor-sell-swap-per-lot-per-day:0,single-anchor-research-account:true,single-anchor-margin-enabled:true" -AllowMissingData -RunEvidence -BaselineContract MarketLab\config\baseline-contract.json -BaselineRegister MarketLab\config\baseline-decision-audit.json -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\output\baseline-build.json -ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException
 ```
 
-The reporter refuses (exit 2) to render the invocation when the contract
-file's computed SHA-256 does not equal the decision register's
-`frozenBaselineContractSha256`, so an accidentally edited local contract
-cannot be advertised as the frozen baseline.
-
-Then run the authoritative preflight; it must print PASS (exit 0) before the
-baseline is launched:
-
-```powershell
-pwsh -File MarketLab\scripts\Test-SingleAnchorBaselineFailedData.ps1 -Preflight -Contract MarketLab\config\baseline-contract.json -Register MarketLab\config\baseline-decision-audit.json -OutputPath MarketLab\output\baseline-preflight.json
-```
-
-The preflight verifies, before LEAN starts, the contract/register pin, the
-clean Git checkout and the complete qualified-tree identity (composition
-manifest, qualification-record anchor, all 2,332 partition hashes and the
-auxiliary database/session-map hashes). Pre-run-knowable drift therefore
-cannot consume the one-off full-history run.
+The helper compares its actual resolved parameters, configuration, algorithm,
+data folder and allow flags with the contract **before LEAN starts**. It then
+runs the authoritative preflight itself; a missing receipt, changed dependency,
+wrong reviewed commit or data-tree failure prevents launch. `-DryRun` performs
+these same checks but starts no LEAN process and writes no run directory.
+The build and preflight receipts are copied into each run directory and bound
+by hashes in `marketlab-run-invocation.json`. After execution the helper hashes
+the dependencies again and binds the results file in `marketlab-run-outcome.json`.
 
 ## 5. Failed-data-request classification
 
@@ -217,7 +215,7 @@ pwsh -File MarketLab\scripts\Test-SingleAnchorBaselineFailedData.ps1 -RunDirecto
 ```
 
 The same script's `-Preflight` mode proves the pre-run half of this chain
-(contract/register pin, clean checkout, qualified tree) before the baseline is
+(contract/register pin, reviewed-source build, exact runtime dependencies, qualified tree) before the baseline is
 launched; only result-dependent checks remain here after the run.
 
 Before classifying, the classifier proves the chain around the run:
@@ -229,9 +227,9 @@ Before classifying, the classifier proves the chain around the run:
    canonical contract and pin, and its resolved build configuration, config
    file and hash, algorithm location and hash, data folder, exact parameter
    pairs and allow flags equal the contract's;
-3. the pre-run evidence records a clean working tree (Git HEAD present,
-   `repositoryDirty: false`) and the exact qualified Release runtime binary
-   set, whose files still hash to the recorded values;
+3. the pre-run evidence and successful build receipt name the explicit reviewed
+   commit and clean source tree, the pinned .NET runtime, and the complete
+   Release dependency file set, whose files still hash to the recorded values;
 4. the post-run `marketlab-run-outcome.json` is bound to the pre-run file by
    its SHA-256 and must show the approved outcome; the engine-error audit runs
    for every run and separates only the declared terminal exception:
@@ -249,7 +247,9 @@ Before classifying, the classifier proves the chain around the run:
    against the contract, and the manifest file itself is anchored to the
    replay qualification record (`continuous-qualification-record.json`:
    `overall_qualification = PASS` and `continuous.composition_sha256` equal to
-   the actual manifest hash);
+   the actual manifest hash); the raw qualification-record SHA-256 must also
+   equal the immutable tracked evidence field `replay.record_sha256`, so changing
+   both local JSON files coherently cannot replace the qualified identity;
 6. the engine's single `data-monitor-report-*.json` failed-request count equals
    the total number of failed-request lines, so every failed request is
    accounted for (occurrences are counted; distinct paths carry the
@@ -260,7 +260,13 @@ Before classifying, the classifier proves the chain around the run:
    run-ending condition (strategy invariant, hard-BE verification, data-quality
    or session-map failure, account-survival failure, runtime error) is refused
    as a controlled failure and can never receive failed-data qualification
-   EXPECTED.
+   EXPECTED. Completion must also be consistent with the failure record. The
+   effective algorithm clock/window is UTC. A completed run must match every
+   qualified partition and the full count/global digest and final UTC quote.
+   A stop-out must match every preceding partition and the exact delivered
+   prefix of its terminal partition, including its final Bid/Ask and terminal
+   research-account state. Only that partial day is read for prefix verification;
+   the history is not replayed.
 
 The classifier preserves the strong distinction between:
 
@@ -289,27 +295,21 @@ qualified data tree and checks the actual run.
 
 ## 6. Baseline identity and run evidence
 
-The run directory persists three evidence files that bind it to this contract:
-the pre-run `marketlab-run-invocation.json` written by
-`run-backtest.ps1 -RunEvidence -BaselineContract ... -BaselineRegister ... -ExpectedTerminalException ...`
-(the actual resolved invocation, the contract identity verified against the
-register pin before launch, the Git HEAD/dirty state and the qualified runtime
-binary hashes), the post-run `marketlab-run-outcome.json` (the helper's own
-verdict, the always-run engine-error audit and the runtime re-hash), and the
-classifier's
-`baseline-failed-data-classification.json` (the verified contract identity,
-invocation, runtime, tree and manifest-to-qualification-record anchor). The
-classifier's `-Preflight` record (`MarketLab\output\baseline-preflight.json`
-by default) additionally proves the same identity and tree checks passed
-before the run. The
-classifier only issues qualification EXPECTED when all of these agree and the
-run ended in the approved shape. The run audit additionally records the full
-effective parameter block from `storage\single-anchor\results.json` and the
-session-map/data provenance block. Together these prove which frozen contract
-launched the run, which qualified tree it read and how it ended. The operator's
-shell history is outside the repository's control and remains part of the run
-audit narrative; the persisted pre-run evidence makes the effective invocation
-and identity independently checkable.
+Each authoritative run retains `baseline-build.json`, `baseline-preflight.json`,
+`marketlab-run-invocation.json`, `marketlab-run-outcome.json`, the classification
+record, and `storage/single-anchor/results.json`. The invocation hashes the
+copied receipts; the outcome hashes the invocation and strategy results. The
+classifier verifies this chain, the explicit reviewed commit and source tree,
+all runtime dependencies, the tracked qualification anchor and the actual
+processed quote population before issuing EXPECTED.
+
+The strategy records `completed`, `algorithmTimeZone`, `startUtc`, `endUtc`,
+`runtimeVersion`, `runtimeDirectory` and `delivered`. Delivery evidence uses the
+same exact-decimal semantic format as qualification: global/per-partition
+counts and SHA-256, first/last UTC timestamps, and the final quote. It includes
+the processed terminal quote and excludes any later ticks in the same slice.
+Evidence size grows with partition count, not quote count. Session boundary
+logic remains based on America/New_York; only the algorithm run window is UTC.
 
 ## 7. Relationship to later optimization and sensitivity runs
 

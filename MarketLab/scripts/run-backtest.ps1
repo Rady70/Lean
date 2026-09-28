@@ -177,6 +177,15 @@ name are counted separately as the expected terminal exception, so every other
 engine ERROR:: line still counts as an unrelated engine error. The value is
 recorded in the evidence so the classifier can check it.
 
+.PARAMETER ReviewedCommit
+With the baseline contract: explicitly reviewed full Git SHA. A clean checkout
+at exactly this commit and a successful source-bound build receipt are required.
+
+.PARAMETER BuildReceipt
+Receipt from Build-SingleAnchorBaseline.ps1. Default: MarketLab\output\baseline-build.json.
+The baseline helper verifies every dependency, compares the actual invocation
+with the frozen contract and automatically repeats the qualified-tree preflight.
+
 .PARAMETER DryRun
 Validate everything, print the resolved paths and the exact command line, create
 nothing and exit 0. (For Python, validation includes the pandas probe, which
@@ -229,11 +238,14 @@ param(
     [string]$BaselineContract,
     [string]$BaselineRegister,
     [string]$ExpectedTerminalException,
+    [string]$ReviewedCommit,
+    [string]$BuildReceipt,
     [switch]$DryRun
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'SingleAnchorBaseline.ps1')
 # The launcher's exit code is read from $LASTEXITCODE and propagated by this
 # script; never let PowerShell 7.4+ turn a non-zero native exit into an exception.
 $PSNativeCommandUseErrorActionPreference = $false
@@ -867,6 +879,8 @@ $baselineRegisterPin = $null
 $runtimeBinaryHashes = [ordered]@{}
 $repositoryHead = $null
 $repositoryDirty = $null
+$baselineBuild = $null
+$baselinePreflight = $null
 if ($RunEvidence) {
     # Repository state: captured in pre-flight so a dirty working tree or a
     # missing Git HEAD stops the run before LEAN launches.
@@ -938,6 +952,17 @@ if ($RunEvidence) {
         if ($null -ne $baselineContractSha256 -and $null -ne $baselineRegisterPin -and $baselineContractSha256 -ne $baselineRegisterPin) {
             $problems.Add("Baseline contract hash $baselineContractSha256 does not match the register pin $baselineRegisterPin; refusing to launch the frozen baseline with an unpinned contract.")
         }
+        if ($null -ne $baselineContractSha256) {
+            try {
+                $frozenBaseline = [IO.File]::ReadAllText($baselineContractPathResolved) | ConvertFrom-Json
+                Assert-BaselineLaunch $frozenBaseline $leanRootPath $Configuration $configPath $AlgorithmTypeName `
+                    $AlgorithmLanguage $algorithmLocationPath $dataFolderPath ($parameterPairs -join ',') `
+                    ([bool]$AllowMissingData) ([bool]$AllowEngineErrors) $ExpectedTerminalException
+                if (-not $BuildReceipt) { $BuildReceipt = Join-Path $leanRootPath 'MarketLab\output\baseline-build.json' }
+                $BuildReceipt = [IO.Path]::GetFullPath($BuildReceipt)
+                $baselineBuild = Assert-BaselineBuild $BuildReceipt $leanRootPath $ReviewedCommit $dotnet $baselineContractSha256
+            } catch { $problems.Add($_.Exception.Message) }
+        }
     }
 }
 elseif (-not [string]::IsNullOrWhiteSpace($BaselineContract) -or -not [string]::IsNullOrWhiteSpace($BaselineRegister)) {
@@ -948,6 +973,30 @@ if ($problems.Count -gt 0) {
     foreach ($problem in $problems) { Write-ErrorLine $problem }
     Write-ErrorLine "Pre-flight validation failed with $($problems.Count) problem(s); LEAN was not launched. Exit code $script:ExitPreflight."
     exit $script:ExitPreflight
+}
+
+# An authoritative launch always rechecks the qualified tree and the same build immediately
+# before launch. -CheckOnly returns the receipt in memory, preserving DryRun's no-write contract.
+if ($null -ne $baselineBuild) {
+    $checkArguments = @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'Test-SingleAnchorBaselineFailedData.ps1'),
+        '-Preflight', '-CheckOnly', '-Contract', $baselineContractPathResolved, '-Register', $baselineRegisterPathResolved,
+        '-ReviewedCommit', $ReviewedCommit, '-BuildReceipt', $BuildReceipt, '-DotnetPath', $dotnet)
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $checkOutput = @(& pwsh @checkArguments 2>&1)
+        $checkExit = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldPreference }
+    if ($checkExit -ne 0) {
+        Write-ErrorLine ("Mandatory baseline preflight failed; LEAN was not launched. " + ($checkOutput -join "`n"))
+        exit $script:ExitPreflight
+    }
+    try { $baselinePreflight = ($checkOutput -join "`n") | ConvertFrom-Json }
+    catch { Write-ErrorLine 'Mandatory preflight returned no valid receipt.'; exit $script:ExitPreflight }
+    if ($baselinePreflight.qualification -ne 'PREFLIGHT-PASS' -or $baselinePreflight.authoritative -ne $true) {
+        Write-ErrorLine 'Mandatory preflight did not authorize this baseline.'
+        exit $script:ExitPreflight
+    }
 }
 
 # ----------------------------------------------------------------------------
@@ -982,6 +1031,9 @@ $launcherArgs = @(
 )
 if ($parameterPairs.Count -gt 0) {
     $launcherArgs += @('--parameters', ($parameterPairs -join ','))
+}
+if ($null -ne $baselineBuild) {
+    $launcherArgs = @('exec', '--fx-version', $baselineBuild.runtime.version, '--roll-forward', 'Disable') + $launcherArgs
 }
 $commandLine = Format-CommandLine $dotnet $launcherArgs
 
@@ -1032,6 +1084,10 @@ if ($RunEvidence) {
     $invocationEvidencePath = Join-Path $runDir 'marketlab-run-invocation.json'
     try {
         $evidenceParameters = @($parameterPairs)
+        if ($null -ne $baselineBuild) {
+            [IO.File]::WriteAllText((Join-Path $runDir 'baseline-build.json'), [IO.File]::ReadAllText($BuildReceipt), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $runDir 'baseline-preflight.json'), ($baselinePreflight | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        }
         $invocationEvidence = [ordered]@{
             contract = 'marketlab-run-invocation-evidence-v1'
             generatedUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -1064,6 +1120,9 @@ if ($RunEvidence) {
             runtimeBinariesRoot = $launcherDir
             runtimeBinaries = $runtimeBinaryHashes
             expectedTerminalException = $ExpectedTerminalException
+            reviewedCommit = $ReviewedCommit
+            buildReceiptSha256 = if ($baselineBuild) { Get-Sha256Hex (Join-Path $runDir 'baseline-build.json') } else { $null }
+            preflightSha256 = if ($baselinePreflight) { Get-Sha256Hex (Join-Path $runDir 'baseline-preflight.json') } else { $null }
         }
         [System.IO.File]::WriteAllText($invocationEvidencePath, ($invocationEvidence | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
         Write-Info "  run evidence:     $invocationEvidencePath"
@@ -1296,6 +1355,12 @@ if ($RunEvidence) {
                 $runtimeBinariesUnchanged = $false
             }
         }
+        $baselineArtifactsAfter = $null
+        if ($null -ne $baselineBuild) {
+            $baselineArtifactsAfter = Get-BaselineArtifacts $leanRootPath $dotnet $baselineBuild.runtime
+            try { Assert-BaselineArtifactEquality $baselineBuild.artifacts $baselineArtifactsAfter }
+            catch { $runtimeBinariesUnchanged = $false }
+        }
         $outcome = [ordered]@{
             contract = 'marketlab-run-outcome-evidence-v1'
             generatedUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -1314,6 +1379,10 @@ if ($RunEvidence) {
             totalDataRequestCount = $total
             runtimeBinariesAfter = $runtimeBinariesAfter
             runtimeBinariesUnchanged = $runtimeBinariesUnchanged
+            baselineArtifactsAfter = $baselineArtifactsAfter
+            strategyResultsSha256 = if (Test-Path -LiteralPath (Join-Path $runDir 'storage\single-anchor\results.json') -PathType Leaf) {
+                Get-Sha256Hex (Join-Path $runDir 'storage\single-anchor\results.json')
+            } else { $null }
         }
         [System.IO.File]::WriteAllText($outcomePath, ($outcome | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
         Write-Info "  run outcome:      $outcomePath"

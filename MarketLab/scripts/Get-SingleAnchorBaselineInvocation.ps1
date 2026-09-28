@@ -30,6 +30,11 @@ does not equal the register's frozenBaselineContractSha256.
 Emit the identity, the parameters string and the run command as one JSON object instead
 of the human-readable report.
 
+.PARAMETER ReviewedCommit
+Optional explicitly approved full commit SHA to substitute into the command.
+Without it, the command contains the literal $ReviewedCommit variable; the run
+helper still requires a valid explicit value and a matching successful build receipt.
+
 .EXAMPLE
 pwsh -File MarketLab\scripts\Get-SingleAnchorBaselineInvocation.ps1
 Prints the baseline contract identity and the exact invocation.
@@ -42,6 +47,7 @@ Prints the same report as machine-readable JSON.
 param(
     [string]$Contract,
     [string]$Register,
+    [string]$ReviewedCommit,
     [switch]$Json
 )
 
@@ -156,6 +162,7 @@ $renderedCommand = "pwsh -File MarketLab\scripts\run-backtest.ps1" `
     + " -AllowMissingData -RunEvidence" `
     + " -BaselineContract MarketLab\config\baseline-contract.json" `
     + " -BaselineRegister MarketLab\config\baseline-decision-audit.json" `
+    + ' -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\output\baseline-build.json' `
     + " -ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException"
 
 $recordedCommand = Get-JsonProperty $runProcedure 'exactRunCommand'
@@ -201,6 +208,13 @@ if ($registerPin -ne $contractSha256) {
 }
 
 $postRunAudit = Get-JsonProperty $runProcedure 'postRunAuditCommand'
+if ($ReviewedCommit) {
+    if ($ReviewedCommit -cnotmatch '^[0-9a-f]{40}$') {
+        Write-ErrorLine '-ReviewedCommit must be the explicitly approved full Git commit SHA.'
+        exit $script:ExitPreflight
+    }
+    $renderedCommand = $renderedCommand.Replace('$ReviewedCommit', $ReviewedCommit)
+}
 
 if ($Json) {
     $report = [ordered]@{

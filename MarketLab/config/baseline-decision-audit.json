@@ -7,7 +7,7 @@
   "baselineConfigurationFrozen": true,
   "unresolvedDecisionCount": 0,
   "frozenBaselineContract": "config/baseline-contract.json",
-  "frozenBaselineContractSha256": "d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e",
+  "frozenBaselineContractSha256": "0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a",
   "classification": {
     "A": "explicitly approved/frozen by the authoritative project contract",
     "B": "explicitly defined strategy default that is valid for the authoritative baseline",
@@ -84,6 +84,13 @@
       "value": "UTC",
       "runParameter": null,
       "source": "tools/historical-data/README.md sections 4, 9-10; continuous-history-evidence.json identity"
+    },
+    {
+      "field": "algorithmTimeZone",
+      "class": "A",
+      "value": "UTC",
+      "runParameter": null,
+      "source": "Authorized pre-baseline audit correction (2026-09-28): production Initialize explicitly selects UTC so the frozen dates match the qualified UTC window; DeliveryAndHostWindowTests.cs verifies the production host and LEAN calendar enumeration."
     },
     {
       "field": "sessionMapPath",

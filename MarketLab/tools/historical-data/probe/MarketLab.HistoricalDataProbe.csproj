@@ -1,7 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <!--
     MarketLab-owned LEAN replay probe for PR 1 historical-data qualification. It is a separate
-    assembly so normal SingleAnchor runs keep the lightweight per-tick path; it is selected only
+    assembly for qualification-only checks; production SingleAnchor now also records delivery
+    digests using the same semantic format. This probe is selected only
     with -AlgorithmLocation MarketLab\tools\historical-data\probe\bin\Release\MarketLab.HistoricalDataProbe.dll
     -AlgorithmTypeName SingleAnchorReplayProbeAlgorithm. Built outside QuantConnect.Lean.sln; it
     references only the unchanged upstream Algorithm and Common projects and modifies no upstream

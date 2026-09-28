@@ -1353,8 +1353,9 @@ and the helper failed-data-request policy) were then explicitly approved and
 the freeze is **complete and merged through GitHub PR #15** (reviewed head `3c8a431d089d3ae7027c39e0a3e6fc373e74114c`, merge commit `78b455372ccf6d83c9805d6b99551b357dbd17ae`): the canonical, complete, immutable configuration is
 [config/baseline-contract.json](config/baseline-contract.json) with its
 human-auditable rendering in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md), and
-baseline contract identity (LF-normalized SHA-256)
-`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`. The
+the original PR #15 contract identity (LF-normalized SHA-256) was
+`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`.
+The current corrected identity and procedure are in section 12 below. The
 approved values are StepPercent 0.25, BaseLot 0.10, InitialBalance 20,000 USD,
 ProjectedSpread 0.50 (a fixed hard-BE projection assumption, not an empirical
 optimum), Slippage 0 and CommissionBuffer 0 (explicit baseline decisions even
@@ -1368,30 +1369,10 @@ were not promoted as the authority; where an approved value happens to equal a
 former fixture/default value, the register records that the authority is the
 approved baseline decision.
 
-The authoritative run is procedurally bound to the contract: before LEAN is
-launched the classifier's `-Preflight` stage verifies the contract/register
-pin, the clean Git checkout and the complete qualified-tree identity; then the
-helper is launched with
-`-RunEvidence -BaselineContract ... -BaselineRegister ... -ExpectedTerminalException ...`,
-which refuses a dirty tree or an unpinned contract and persists the contract
-identity, the actual resolved invocation, the Git HEAD/clean state and the
-qualified runtime binary hashes (`marketlab-run-invocation.json`) before LEAN
-launches, and its own post-run verdict (`marketlab-run-outcome.json`:
-LEAN/helper exit codes, the always-run engine-error audit with only the
-declared terminal exception separated, data-monitor result, runtime re-hash)
-after it; the classifier refuses to qualify a run without the evidence or
-with a different resolved invocation, identity, repository state or runtime,
-or with an unrelated engine `ERROR::` line even on the `AccountStopOut`
-terminal path. The classifier additionally verifies
-that the continuous tree still matches its composition manifest (all 2,332
-partition hashes, the partition name set, the per-day semantic map and the
-market-hours/symbol-properties/session-map hashes  -  without replaying the
-413,750,130 rows), that the manifest file is anchored to the replay
-qualification record (`continuous-qualification-record.json`, PASS with the
-manifest hash), and that the engine's data-monitor failed-request count equals
-the failed-request lines; a completed run must have a clean helper outcome
-(no engine `ERROR::` lines) and only the intended `AccountStopOut` terminal
-outcome may end a run early.
+The current authoritative procedure is [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)
+section 4. The audit correction in section 12 strengthens the original freeze's
+preflight, build provenance, qualification anchor and delivery checks; the
+original PR #15 checks alone are insufficient for the first baseline.
 
 The Windows-local checks are
 [tests/SingleAnchor/BaselineDecisionAuditTests.cs](tests/SingleAnchor/BaselineDecisionAuditTests.cs)
@@ -1410,3 +1391,68 @@ contract. No strategy behavior,
 account/margin contract, data or qualification semantics changed, the first
 untouched full-history strategy baseline was not run and parameter
 optimization has not started.
+
+
+## 12. Pre-baseline audit corrections (2026-09-28)
+
+Five identified issues are corrected within MarketLab-owned paths. The
+operational contract identity is now
+`0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a`.
+All 30 frozen parameters, the complete qualified data identity and the margin
+contract were compared with revision
+`887a338b3b9ede0d125be12aac19709d498a51b0` and remain unchanged.
+
+- `SingleAnchorVNextAlgorithm` explicitly sets UTC before its dates. The
+  effective window is January 1, 2019 00:00 UTC through the final tick of
+  June 30, 2026, without a July 1 native request. Source-session settlement
+  logic still uses America/New_York.
+- The baseline helper compares actual resolved launch inputs against the
+  contract before LEAN starts and automatically runs authoritative preflight.
+  DryRun performs the same validation without creating a run directory.
+- The local replay qualification record must hash to the tracked
+  `continuous-history-evidence.json` field `replay.record_sha256`. Its
+  manifest hash and all native ZIP/auxiliary hashes then bind the local tree.
+- `Build-SingleAnchorBaseline.ps1` requires the explicitly reviewed clean
+  commit, invalidates any older receipt before rebuilding, checks both Release
+  rebuild exit codes and records source/contract/runtime provenance. The
+  full launcher, strategy, framework and host dependency manifest includes
+  Queues and NodaTime. The run pins the exact .NET version and checks hashes
+  again after execution. The receipt is local provenance, not a signed or
+  hermetic supply-chain attestation.
+- Production results include the effective UTC window, runtime identity,
+  completion flag and delivery evidence. Canonical semantic serialization is
+  shared with qualification. Counts/digests cover every processed quote,
+  including a terminal quote and excluding later same-slice ticks. A completed
+  run must match the entire qualified population. Stop-out prefix proof uses
+  complete preceding partition digests and, when needed, only the terminal
+  day's native prefix; it does not replay the full history. Completion,
+  counters, final quote and terminal research account must agree.
+
+Delivery tracking retains one digest per partition and two active digest
+states, adding bounded per-quote serialization/hashing work. Full-history
+runtime impact has not been measured; the first full-history baseline remains
+unrun, and the 413,750,130-row qualification was not replayed.
+
+Validation used Windows, .NET SDK 10.0.401 and runtime 10.0.12:
+
+| Validation | Result |
+|---|---|
+| Release strategy and launcher builds | PASS; existing upstream warnings remain |
+| SingleAnchor NUnit suite | 279/279 |
+| Historical-data probe NUnit suite (shared semantic format) | 32/32 |
+| Baseline classifier synthetic mutations | 97/97 |
+| Launch/build guard checks (including actual changed-StepPercent DryRun refusal and injected failed build) | 26/26 |
+| Invocation reporter checks | 12/12 |
+| General backtesting helper checks | 150/150 |
+| Native production host, normal completion and AccountStopOut on three synthetic UTC quotes | 14/14 |
+| Existing native session-map availability regression on five synthetic quotes | 12/12 |
+
+The tiny native fixtures verify production Initialize, the final UTC quote,
+absence of a July 1 request and the exact terminal prefix. The source/build
+guard tests use injected identities/process failures where a clean reviewed
+commit is required. Ordinary local builds are development validation. After
+merge, finalization rebuilds the clean merged revision with
+`Build-SingleAnchorBaseline.ps1`, verifies the full qualified tree with
+`-Preflight`, and checks the exact helper invocation with `-DryRun`. Those
+local receipts identify the revision that is ready for a separately authorized
+full-history run. No upstream source, historical data or hosted CI is changed.

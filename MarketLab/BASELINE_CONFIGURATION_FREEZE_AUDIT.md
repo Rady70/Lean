@@ -34,7 +34,7 @@ This document records the baseline-decision audit required before the first
 authoritative continuous full-history SingleAnchor run. It classifies every
 baseline-relevant value into the project's four audit classes, binds the
 approved portion to the already-qualified data identity, and records how each
-decision was approved. The machine-readable register inventories 65 baseline
+decision was approved. The machine-readable register inventories 66 baseline
 fields (57 class A, 8 class B, 0 class D after the freeze) plus the
 fixture/example values (class C).
 
@@ -44,7 +44,7 @@ The freeze is complete and was merged through GitHub PR #15 (reviewed head
 configuration is
 [`config/baseline-contract.json`](config/baseline-contract.json) with contract
 identity (LF-normalized SHA-256)
-`d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`; the
+`0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a`; the
 human-auditable contract is [`BASELINE_CONTRACT.md`](BASELINE_CONTRACT.md).
 The machine-readable decision register at
 [`config/baseline-decision-audit.json`](config/baseline-decision-audit.json)
@@ -130,6 +130,7 @@ class A (section 10).
 | end date | `2026-06-30` | `single-anchor-end-date` | plan sections 5-6; evidence `lean_run_window` |
 | resolution | `Tick` (`fillForward: false`) | host implementation | `SingleAnchorVNextAlgorithm.AddCfd`; README section 9 |
 | data/exchange time zone | `UTC` / `UTC` | derived identity | tools README sections 4, 9-10; evidence identity |
+| algorithm time zone | `UTC` | authorized pre-baseline correction | production Initialize; DeliveryAndHostWindowTests |
 | session map | `marketlab-sessions/xauusd-sessions.json`, SHA-256 `33fa8fa3...34949` | `single-anchor-session-map` | plan sections 5-6; evidence |
 | market-hours DB | SHA-256 `325a7abc...2518e` | carried by the data folder | tools README section 9; evidence |
 | symbol-properties DB | SHA-256 `7d52262f...7d5ed` | carried by the data folder | tools README section 9; evidence |
@@ -444,11 +445,12 @@ accounted for:
   `-DryRun`) cannot change the strategy configuration, and the engine/binary
   identity is covered by the run-evidence requirements above.
 - Run-evidence requirements for the eventual authoritative run: the run must be
-  launched from the reviewed and merged freeze commit only after the
-  classifier's `-Preflight` stage has passed, and must persist that preflight
+  launched from the explicitly reviewed and merged correction commit only after
+  a successful source-bound build receipt and the classifier's `-Preflight`
+  stage have passed, and must persist that preflight
   record alongside the run directory evidence: the pre-run invocation evidence
   written by
-  `run-backtest.ps1 -RunEvidence -BaselineContract ... -BaselineRegister ... -ExpectedTerminalException ...`
+  `run-backtest.ps1 -RunEvidence -BaselineContract ... -BaselineRegister ... -ReviewedCommit ... -BuildReceipt ... -ExpectedTerminalException ...`
   (resolved absolute inputs, exact parameter pairs, allow flags, launcher argv,
   the config/algorithm hashes, the contract SHA-256 and register pin verified
   equal, the Git HEAD and dirty state, and the qualified runtime binary
@@ -459,7 +461,11 @@ accounted for:
   to the contract identity, the verified tree and its replay qualification
   record. The run audit additionally records the full parameter block (already
   written into `storage\single-anchor\results.json`) and the session-map/data
-  provenance block. These are evidence requirements, not values to freeze.
+  provenance and delivered-stream blocks. The helper now checks the actual
+  invocation and repeats preflight automatically. The complete dependency
+  manifest, copied build/preflight receipts and tracked replay-record hash are
+  required; see BASELINE_CONTRACT.md section 4. These are evidence requirements,
+  not strategy parameter values.
 - Helper post-run policy: engine `ERROR::` lines fail the run (exit 4) and
   `-AllowEngineErrors` must not be used for the authoritative baseline
   (class A field `allowEngineErrors = false`). The failed-data-request policy
@@ -619,7 +625,7 @@ contract exists:
 ```text
 baseline configuration frozen: yes
 baseline contract:             MarketLab/config/baseline-contract.json
-baseline contract SHA-256:     d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e
+baseline contract SHA-256:     0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a
 first untouched full-history strategy baseline: NOT RUN
 parameter optimization:        NOT STARTED
 ```
@@ -650,3 +656,16 @@ upstream LEAN change:                                    no
 .github or hosted CI change:                             no
 historical/native data committed to Git:                 no
 ```
+
+
+## Pre-baseline audit corrections (2026-09-28)
+
+The original PR #15 freeze history above is retained. The current run procedure
+is [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md) section 4. The audit corrections
+add the omitted UTC algorithm clock (66 inventoried fields), actual-argument
+validation before launch, mandatory source/build/runtime preflight, the tracked
+`replay.record_sha256` anchor, and full-stream or exact stop-out-prefix delivery
+verification. No frozen parameter, strategy/account/margin rule or historical
+observation changes. A successful build receipt must name the explicitly
+reviewed correction commit; the old seven-DLL stability check alone is no
+longer sufficient. These changes do not run the baseline or authorize it.

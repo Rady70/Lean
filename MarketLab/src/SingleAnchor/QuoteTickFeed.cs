@@ -22,7 +22,7 @@ namespace MarketLab.SingleAnchor
         public long NonQuoteTicks { get; private set; }
 
         /// <summary>Feeds the ticks of one slice, in the order LEAN delivered them.</summary>
-        public void Feed(IReadOnlyList<Tick> ticks, SingleAnchorEngine engine)
+        public void Feed(IReadOnlyList<Tick> ticks, SingleAnchorEngine engine, Action<Quote>? processedQuote = null)
         {
             if (ticks == null) throw new ArgumentNullException(nameof(ticks));
             if (engine == null) throw new ArgumentNullException(nameof(engine));
@@ -35,7 +35,18 @@ namespace MarketLab.SingleAnchor
                     NonQuoteTicks++;
                     continue;
                 }
-                engine.OnQuote(new Quote(tick.Time, tick.BidPrice, tick.AskPrice));
+                var quote = new Quote(tick.Time, tick.BidPrice, tick.AskPrice);
+                var before = engine.QuotesProcessed;
+                try
+                {
+                    engine.OnQuote(quote);
+                }
+                finally
+                {
+                    // A terminal survival quote is processed too. Do not include later ticks
+                    // from its slice, or a quote rejected before the engine accepted it.
+                    if (engine.QuotesProcessed != before) processedQuote?.Invoke(quote);
+                }
             }
         }
     }

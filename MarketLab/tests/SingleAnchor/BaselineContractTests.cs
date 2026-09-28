@@ -210,6 +210,7 @@ namespace MarketLab.SingleAnchor.Tests
                 + " -Parameters \"" + rendered + "\""
                 + " -AllowMissingData -RunEvidence"
                 + " -BaselineContract MarketLab\\config\\baseline-contract.json -BaselineRegister MarketLab\\config\\baseline-decision-audit.json"
+                + " -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\\output\\baseline-build.json"
                 + " -ExpectedTerminalException MarketLab.SingleAnchor.AccountStopOutException";
 
             var runProcedure = root.GetProperty("runProcedure");
@@ -305,6 +306,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(RequiredText(fixedBehaviour, "description"), Is.Not.Empty);
             Assert.That(RequiredText(fixedBehaviour, "dataResolution"), Is.EqualTo("Tick"));
             Assert.That(fixedBehaviour.GetProperty("fillForward").GetBoolean(), Is.False);
+            Assert.That(RequiredText(fixedBehaviour, "algorithmTimeZone"), Is.EqualTo("UTC"));
             Assert.That(fixedBehaviour.GetProperty("quoteOnlyBufferMinutes").GetInt32(), Is.EqualTo(5));
             Assert.That(RequiredText(fixedBehaviour, "sessionJunctionTimeZone"), Is.EqualTo("America/New_York"));
             Assert.That(RequiredText(fixedBehaviour, "sessionJunctionWindow"), Does.Contain("17:00:00"));
