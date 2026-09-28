@@ -5,14 +5,19 @@ untouched continuous full-history SingleAnchor strategy baseline.
 
 ```text
 baseline configuration freeze:            complete and merged through PR #15
+pre-baseline audit corrections:           complete and merged through PR #16
 first untouched full-history baseline:    NOT RUN
 parameter optimization:                   NOT STARTED
 ```
 
-The pre-baseline audit correction updates the operational contract and its
-identity below. All 30 PR #15 parameter values and the qualified data identity
-are preserved. The corrected source/procedure must be reviewed and merged
-before building an authoritative receipt and authorizing the future run.
+The pre-baseline audit corrections are merged through
+[PR #16](https://github.com/Rady70/Lean/pull/16), reviewed head
+`906d7e091c60fddaef177ebfc33fc4625b4bede0`, merge commit
+`32c6cafadcec38cd9b73908ba3553992b454fca5` (2026-09-28). They update the
+operational contract and its identity below. All 30 PR #15 parameter values,
+the qualified data identity and the margin contract are preserved. Build an
+authoritative receipt for the exact clean revision selected for the future
+run, following section 4; a change of revision requires a fresh receipt.
 
 - Canonical machine-readable configuration:
   [`config/baseline-contract.json`](config/baseline-contract.json)

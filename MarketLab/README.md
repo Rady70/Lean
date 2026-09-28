@@ -35,6 +35,7 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `config\baseline-decision-audit.json` | resolved decision register: every baseline field's class, value and authority, bound to the frozen contract |
 | `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` | the PR #14 baseline-decision audit, updated: all eight former class-D blockers resolved and the freeze recorded |
 | `scripts\Get-SingleAnchorBaselineInvocation.ps1` | reports the baseline contract identity and renders the exact frozen run invocation from the contract |
+| `scripts\Build-SingleAnchorBaseline.ps1` | rebuilds an explicitly reviewed clean revision and records the source, contract and complete runtime dependency identity |
 | `scripts\Test-SingleAnchorBaselineFailedData.ps1` | classifies every failed data request of a baseline run against the frozen contract and the qualified continuous tree |
 | `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
@@ -590,7 +591,11 @@ runs authoritative preflight before starting LEAN. Build/preflight receipts,
 all launcher/strategy/framework dependency hashes, the exact .NET runtime,
 and post-run delivery evidence are persisted and checked by the classifier.
 A dirty checkout cannot produce an authoritative build receipt or launch.
-These corrections must be reviewed and merged before the future baseline.
+These corrections are merged through
+[PR #16](https://github.com/Rady70/Lean/pull/16) (reviewed head
+`906d7e091c60fddaef177ebfc33fc4625b4bede0`, merge commit
+`32c6cafadcec38cd9b73908ba3553992b454fca5`). Build and preflight receipts
+must name the exact clean checkout revision used for the future baseline.
 The decision register is resolved (`unresolvedDecisionCount: 0`) and bound to
 the contract. The first untouched full-history strategy baseline has **not**
 been run and parameter optimization has **not** started. The continuous

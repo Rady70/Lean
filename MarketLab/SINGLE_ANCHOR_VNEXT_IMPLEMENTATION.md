@@ -1395,6 +1395,10 @@ optimization has not started.
 
 ## 12. Pre-baseline audit corrections (2026-09-28)
 
+Merged through [PR #16](https://github.com/Rady70/Lean/pull/16): reviewed head
+`906d7e091c60fddaef177ebfc33fc4625b4bede0`, merge commit
+`32c6cafadcec38cd9b73908ba3553992b454fca5` at 2026-09-28T12:30:01Z.
+
 Five identified issues are corrected within MarketLab-owned paths. The
 operational contract identity is now
 `0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a`.
@@ -1450,9 +1454,14 @@ Validation used Windows, .NET SDK 10.0.401 and runtime 10.0.12:
 The tiny native fixtures verify production Initialize, the final UTC quote,
 absence of a July 1 request and the exact terminal prefix. The source/build
 guard tests use injected identities/process failures where a clean reviewed
-commit is required. Ordinary local builds are development validation. After
-merge, finalization rebuilds the clean merged revision with
-`Build-SingleAnchorBaseline.ps1`, verifies the full qualified tree with
-`-Preflight`, and checks the exact helper invocation with `-DryRun`. Those
-local receipts identify the revision that is ready for a separately authorized
-full-history run. No upstream source, historical data or hosted CI is changed.
+commit is required. Ordinary local builds are development validation. The
+clean reviewed head above additionally passed `Build-SingleAnchorBaseline.ps1`,
+authoritative `-Preflight` with all 2,332 native partitions hash-verified, and
+the exact helper invocation with `-DryRun` (LEAN was not launched).
+
+Finalization repeats that build/preflight/DryRun sequence on the clean merged
+revision after documentation bookkeeping. The local receipts in
+`MarketLab/output/baseline-build.json` and `baseline-preflight.json` identify
+the validated checkout revision. Rebuild and repeat preflight whenever the
+selected revision or runtime changes. The full-history run remains separately
+authorized. No upstream source, historical data or hosted CI is changed.

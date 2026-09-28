@@ -18,14 +18,20 @@ Finalization records:
 - PR #15 completed the freeze: reviewed head
   `3c8a431d089d3ae7027c39e0a3e6fc373e74114c`, merged into `master` as
   `78b455372ccf6d83c9805d6b99551b357dbd17ae` (merge commit).
+- [PR #16](https://github.com/Rady70/Lean/pull/16) completed the five
+  pre-baseline audit corrections on 2026-09-28: reviewed head
+  `906d7e091c60fddaef177ebfc33fc4625b4bede0`, merged into `master` as
+  `32c6cafadcec38cd9b73908ba3553992b454fca5`. The correction record below
+  describes the current operational contract.
 
-Project state after the freeze:
+Current project state:
 
 ```text
 continuous historical-data qualification: complete
 continuous native-history composition/replay qualification: complete (PR #13)
 baseline configuration decision audit: complete and merged through PR #14
 baseline configuration freeze: complete and merged through PR #15 (reviewed head 3c8a431d089d3ae7027c39e0a3e6fc373e74114c, merge commit 78b455372ccf6d83c9805d6b99551b357dbd17ae)
+pre-baseline audit corrections: complete and merged through PR #16
 first untouched full-history strategy baseline: NOT RUN
 parameter optimization: NOT STARTED
 ```
@@ -667,5 +673,5 @@ validation before launch, mandatory source/build/runtime preflight, the tracked
 `replay.record_sha256` anchor, and full-stream or exact stop-out-prefix delivery
 verification. No frozen parameter, strategy/account/margin rule or historical
 observation changes. A successful build receipt must name the explicitly
-reviewed correction commit; the old seven-DLL stability check alone is no
+reviewed clean checkout revision; the old seven-DLL stability check alone is no
 longer sufficient. These changes do not run the baseline or authorize it.
