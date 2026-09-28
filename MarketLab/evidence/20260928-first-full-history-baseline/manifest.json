@@ -1,0 +1,124 @@
+{
+  "contract": "marketlab-baseline-run-evidence-v1",
+  "role": "Phase A historical evidence of the pre-broker-liquidation Stop Out model: the frozen PR #3 model recorded Stop Out territory; broker-forced liquidation was not simulated",
+  "runDateUtc": "2026-09-28",
+  "reviewedCommit": "5c1649d741ba2ec0a113c2c47255dbac637b5465",
+  "baselineContract": "MarketLab/config/baseline-contract.json",
+  "baselineContractSha256": "0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a",
+  "sourceRunDirectory": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm",
+  "artifacts": [
+    {
+      "path": "baseline-build.json",
+      "sha256": "241b644cd9100b97980fb8d85b215dcbf57728acb6db55dd0648e4933c09cdfa",
+      "bytes": 52169,
+      "origin": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm/baseline-build.json",
+      "role": "source-bound Release build receipt for the reviewed commit"
+    },
+    {
+      "path": "baseline-preflight.json",
+      "sha256": "1832112b181d713c751e13022644f36b43b16ce369a6bd86afbbaacd380fe5a4",
+      "bytes": 1781,
+      "origin": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm/baseline-preflight.json",
+      "role": "authoritative preflight receipt (contract, clean checkout, qualified tree)"
+    },
+    {
+      "path": "marketlab-run-invocation.json",
+      "sha256": "36609b1e453e0e5a3520b5dda5202e71806439bcf796a6d2ccaf0ce9f6cde1ad",
+      "bytes": 7252,
+      "origin": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm/marketlab-run-invocation.json",
+      "role": "pre-run invocation evidence (resolved inputs, contract pin, runtime hashes)"
+    },
+    {
+      "path": "marketlab-run-outcome.json",
+      "sha256": "521c103811d72e8b8a8a426162e90b8e7f372fda815e54bd6d7350acc22947d7",
+      "bytes": 52877,
+      "origin": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm/marketlab-run-outcome.json",
+      "role": "post-run outcome evidence (exit codes, engine-error audit, runtime re-hash)"
+    },
+    {
+      "path": "baseline-failed-data-classification.json",
+      "sha256": "e08ee2ec41fe075f44894f4c65508611d46366ed30a25529890985255d660e5c",
+      "bytes": 14884,
+      "origin": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm/baseline-failed-data-classification.json",
+      "role": "failed-data classification record (EXPECTED, invalidCount 0)"
+    },
+    {
+      "path": "strategy-results.json",
+      "sha256": "8962043b29084ef4405de1c1df7a19fb669d0ec84e6c3b8ddcb76a159df1ef0b",
+      "bytes": 1062211,
+      "origin": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm/storage/single-anchor/results.json",
+      "role": "strategy results: run completion flag, failure state, delivery evidence, baskets, research account and margin summaries"
+    },
+    {
+      "path": "data-monitor-report-20260928140057827.json",
+      "sha256": "c4fc28bd7567b38e0e6b46219096547db0bd124960cef391b77cf2825b342da8",
+      "bytes": 896,
+      "origin": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm/data-monitor-report-20260928140057827.json",
+      "role": "engine data-monitor report (request counts)"
+    },
+    {
+      "path": "failed-data-requests-20260928135349447.txt",
+      "sha256": "df6983b05edb1e55fa77de84603c4ceb86a738d528649f3b2c393e7b9ad18055",
+      "bytes": 3087,
+      "origin": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm/failed-data-requests-20260928135349447.txt",
+      "role": "engine failed-data-request lines (66 requests)"
+    },
+    {
+      "path": "succeeded-data-requests-20260928135349447.txt",
+      "sha256": "4f0d008870d8bced33fa7307cbb5933a3b44671b65764f484471d34633fef861",
+      "bytes": 18078,
+      "origin": "MarketLab/output/20260928-135348-SingleAnchorVNextAlgorithm/succeeded-data-requests-20260928135349447.txt",
+      "role": "engine succeeded-data-request lines (385 requests)"
+    }
+  ],
+  "notCommitted": [
+    {
+      "sha256": "854a941274e40447c9310854c13e37daedea3e7c50443b77105a492a98fd1d49",
+      "bytes": 346913,
+      "reason": "engine log (347 KB) with per-event price observations; its strategy-relevant facts are in strategy-results.json and the classification record",
+      "path": "log.txt"
+    },
+    {
+      "sha256": "56c5a3e7c26354381e5d8e6917087bcb16c518be9226d9c8858daa407fb6a0be",
+      "bytes": 266907,
+      "reason": "engine algorithm log (267 KB); not needed for audit",
+      "path": "SingleAnchorVNextAlgorithm-log.txt"
+    },
+    {
+      "sha256": "2f8e16a5b9d5418fe2efb15ff9b54e18362977d8eb5e727453aad82ecd6fc107",
+      "bytes": 253984,
+      "reason": "LEAN result packet (254 KB); LEAN placed no orders, and its runtime error text duplicates strategy-results.json",
+      "path": "SingleAnchorVNextAlgorithm.json"
+    },
+    {
+      "sha256": "42618914aaec6f0b3ed4859f30495aa155ebf2057b1b995d45523731d59ae91e",
+      "bytes": 11213,
+      "reason": "LEAN summary packet (11 KB); empty trade statistics because the research executor places no LEAN orders",
+      "path": "SingleAnchorVNextAlgorithm-summary.json"
+    },
+    {
+      "sha256": "c65a89cfa53f463782bf98416590596a439b08bdb29d5b6615a214cf82a38bd1",
+      "bytes": 35964,
+      "reason": "derived metric extraction generated during finalization; BASELINE_RUN_RESULT.md is the reviewed rendering",
+      "path": "baseline-report-data.json"
+    },
+    {
+      "sha256": "0fe447c1b4feda3c71a3a4cb934b04c54296c3538d4353f9d3afe7bc1b38d319",
+      "bytes": 325563,
+      "reason": "auxiliary helper console capture",
+      "path": "baseline-run-console-20260928-135339.stdout.log"
+    },
+    {
+      "sha256": "36a20c1e01628139f542fb8818e016d9a15c006fc784deb34c4c0cda1e7b6d4a",
+      "bytes": 17465,
+      "reason": "auxiliary helper console capture",
+      "path": "baseline-run-console-20260928-135339.stderr.log"
+    }
+  ],
+  "notes": [
+    "Committed artifacts are byte-identical copies of the retained local run artifacts; every hash above was recomputed from the committed files.",
+    "The historical run was produced under the frozen contract and the pre-liquidation account-survival model; no broker liquidation sequence is simulated by that model.",
+    "Basket #276 is recorded open at the historical run termination; no closing transactions are fabricated.",
+    "The local host retains no independent run ledger; this repository directory is the preserved record of the retained execution."
+  ]
+}

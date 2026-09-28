@@ -128,8 +128,11 @@ section 6:
 
 - the canonical, complete, machine-readable configuration is
   `config/baseline-contract.json`, with the human-auditable rendering
-  `BASELINE_CONTRACT.md`; baseline contract identity (LF-normalized SHA-256)
-  `d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`;
+  `BASELINE_CONTRACT.md`; the original PR #15 baseline contract identity
+  (LF-normalized SHA-256) was
+  `d57e245ce370ad4a82954f805e7d9b077c1b691ed5bcebe7891e474f64f1196e`, and the
+  current identity after the PR #16 corrections is
+  `0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a`;
 - the approved values include the qualified data identity
   (XAUUSD/dukascopy/Cfd; the continuous folder at
   `E:\MarketLab\data\lean\xauusd-dukascopy` with its 90 months, 2,332
@@ -176,9 +179,15 @@ section 6:
   is rendered by `scripts/Get-SingleAnchorBaselineInvocation.ps1` and recorded
   in `BASELINE_CONTRACT.md`.
 
-The first untouched full-history baseline was **not** run by the freeze and
-parameter optimization has **not** started; the next roadmap step is the single
-authoritative baseline run under the reviewed and merged contract.
+The first untouched full-history baseline was **not** run by the freeze; it was
+subsequently run and qualified on 2026-09-28 from the finalized reviewed
+revision as historical evidence of the pre-liquidation Stop Out model (the
+frozen strategy reached Stop Out territory; broker-forced liquidation was not
+simulated, so the recorded open positions and floating loss are pre-liquidation
+observations, not a final broker-account state). See
+[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). Parameter optimization has
+**not** started; the post-baseline prerequisites are section 8, after any
+broker-liquidation correction.
 
 This document is the authoritative implementation roadmap after the current
 SingleAnchor vNext C# strategy implementation. It does not change strategy
@@ -730,6 +739,21 @@ is a defect to fix, not an expected cost to accept.
 
 ### PR 3 -- target-account margin survival
 
+**Status note (2026-09-28):** sections 3.16-3.20 below describe the historical
+and currently implemented **pre-liquidation** contract. The frozen first
+full-history baseline was produced under exactly this contract and is preserved
+as historical evidence in
+[BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). In this contract a Stop Out is
+terminal *for this research model* because the model does not simulate
+broker-forced liquidation. That no-liquidation restriction is intentionally
+superseded by the separately approved Phase B correction: broker-forced
+liquidation is to be implemented in a separate, later change (not in the
+baseline-result PR), after which post-Stop-Out survival can be determined.
+Until Phase B lands, the code still behaves exactly as sections 3.16-3.20
+describe, so they remain the accurate description of the current
+implementation; the Phase B change defines its own separately identified
+contract and must not modify the frozen baseline contract.
+
 Goal: answer whether the configured account could finance and survive the
 strategy path. This is a MarketLab research layer, not LEAN portfolio/margin.
 
@@ -1189,7 +1213,10 @@ This phase is complete only when:
    baseline configuration (including that composed folder and the qualified
    source-derived session map) is frozen;
 8. one untouched full-history baseline run is completed and audited before
-   parameter optimization begins.
+   parameter optimization begins (the historical pre-liquidation run is
+   recorded in [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md); the
+   broker-liquidation correction and any post-correction determination are
+   separate later work).
 
 Until those gates pass, historical output is engineering/qualification evidence,
 not proof of strategy edge or an optimized parameter set.
