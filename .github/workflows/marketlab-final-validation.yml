@@ -1,0 +1,101 @@
+name: MarketLab final validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact reviewed 40-character commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketlab-final-validation
+  cancel-in-progress: false
+
+jobs:
+  final-validation:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Require master dispatch
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -cne 'refs/heads/master') { throw "Dispatch must target master (got '$env:GITHUB_REF')." }
+          Write-Host "workflow revision: $env:GITHUB_WORKFLOW_REF @ $env:GITHUB_WORKFLOW_SHA"
+
+      - name: Validate candidate SHA input
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          if ($env:CANDIDATE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'candidate_sha must be a full lowercase 40-character commit SHA.' }
+
+      - name: Install .NET 10.0.401
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: '10.0.401'
+
+      - name: Verify effective .NET SDK
+        shell: pwsh
+        run: |
+          $v = (dotnet --version).Trim()
+          if ($v -ne '10.0.401') { throw "Expected .NET SDK 10.0.401 but dotnet resolved '$v'." }
+          Write-Host "dotnet SDK: $v"
+          Write-Host "dotnet executable: $((Get-Command dotnet).Source)"
+
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Bind candidate/base
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          $sha = $env:CANDIDATE_SHA
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne $sha) { throw "Checked-out HEAD $head does not equal candidate $sha." }
+          if (git status --porcelain) { throw 'Working tree is not clean after checkout.' }
+          $base = $env:GITHUB_SHA
+          $status = (gh api "repos/$env:GITHUB_REPOSITORY/compare/$base...$sha" --jq '.status').Trim()
+          if ($status -notin @('ahead','identical')) { throw "Candidate $sha does not contain dispatched master $base (compare status: $status)." }
+          Write-Host "base for this gate: $base ($status of candidate $sha)"
+
+      - name: Run final validation
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          pwsh -NoProfile -File MarketLab/ci/Invoke-FinalValidation.ps1 `
+            -CandidateSha $env:CANDIDATE_SHA `
+            -BaseSha $env:GITHUB_SHA `
+            -SummaryPath "$env:RUNNER_TEMP/marketlab-final-validation/gate-summary.json"
+
+      - name: Require evidence
+        if: always()
+        shell: pwsh
+        run: |
+          $required = @(
+            "$env:RUNNER_TEMP/marketlab-final-validation/gate-summary.json",
+            "$env:GITHUB_WORKSPACE/MarketLab/output/baseline-build.json"
+          )
+          $missing = @($required | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+          if ($missing.Count -gt 0) { throw "Required evidence file(s) missing: $($missing -join ', ')" }
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: marketlab-final-validation-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/marketlab-final-validation/gate-summary.json
+            ${{ github.workspace }}/MarketLab/output/baseline-build.json
+          if-no-files-found: error
+          retention-days: 14
