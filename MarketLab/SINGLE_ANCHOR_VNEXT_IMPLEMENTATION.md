@@ -1604,8 +1604,9 @@ at the configured point value, less the round-trip commission on its own
 volume (the same cost model as the account's floating mark). Equal executable
 profits are broken by the **higher immutable trade number first** (the most
 recently opened position), so the ordering is total and stable. The rule is
-locked by the tests in `tests\SingleAnchor\LiquidationTests.cs` and by the
-March 2020 qualification below.
+locked by the tests in `tests\SingleAnchor\LiquidationTests.cs`; the March 2020
+qualification's 30 forced closes all selected the actual least-profitable open
+position and encountered no equal-profit tie.
 
 ### 14.2 Strategy/account state consistency
 
@@ -1761,11 +1762,14 @@ pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release `
 Both runs exited 0 with `completed: true` and no failure, and produced
 **byte-identical** `results.json` (SHA-256
 `b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef`,
-1,202,916 bytes), so the whole run is deterministic, not only the liquidation
-sequence. Each run's `marketlab-run-invocation.json` records the repository
-HEAD `d92580d74feafe7d42da0307fa979f493e1d085d`, a clean tree, and the
-algorithm/launcher/config SHA-256; each `marketlab-run-outcome.json` records
-exit code 0, zero engine errors and the same results SHA-256. The pre-trigger
+1,202,916 bytes): the complete persisted strategy result is deterministic
+across the two executions (other generated run artifacts, such as logs and
+timestamps, differ). Each qualification run records the clean source revision
+together with the exact algorithm binary (DLL SHA-256), launcher,
+configuration, runtime identities, invocation and result hash; this is strong
+provenance evidence, but without a source-bound build receipt for this bounded
+run it is not a cryptographic proof that the DLL was compiled from that HEAD.
+The pre-trigger
 path reproduces the Phase A record exactly: basket
 #276, trigger quote sequence 51,304,749 and time 2020-03-23T12:06:26.292Z, bid
 1505.618 / ask 1506.182, balance 25,519.92800, floating -25,320.42700, equity
@@ -1786,9 +1790,11 @@ strategy closes, 30 forced closes over 4 episodes, realized +5,572.00500, final
 balance 25,572.00500, final equity 23,526.86200, open basket #279 with 19
 positions.
 
-The least-profitable-first property held over all 30 real forced closes
-(non-decreasing executable P/L in every episode) and the equal-profit tie rule
-was never violated. The compact source-bound evidence is committed under
+Independent reconstruction confirmed that each of the 30 real forced closes
+selected the actual least-profitable open position at that step
+(`leastProfitableFirst`). The March qualification encountered **no equal-profit
+tie**; the deterministic higher-immutable-trade-number tie rule is established
+by the focused unit test, not by the historical run. The compact source-bound evidence is committed under
 `MarketLab\evidence\20260928-phase-b-march-2020\`: `manifest.json` (source
 revision, hashes and key results), both machine-generated
 `marketlab-run-invocation-*.json` and `marketlab-run-outcome-*.json` records,

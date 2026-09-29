@@ -34,16 +34,21 @@ session map and `single-anchor-margin-enabled=true`, launched with
 
 The runs were launched from the clean committed source revision
 `d92580d74feafe7d42da0307fa979f493e1d085d` (`repositoryDirty: false` in both
-invocation files); the algorithm DLL, launcher and config hashes are recorded
-in the same files. The evidence commit that contains this directory is a child
-of that revision and changes only evidence/docs.
+invocation files). Each qualification run records that clean source revision
+together with the exact algorithm binary (DLL SHA-256), launcher,
+configuration, runtime identities, invocation and result hash. This is strong
+provenance evidence; without a source-bound build receipt for this bounded run
+it is not a cryptographic proof that the DLL was compiled from that HEAD. The
+evidence commit that contains this directory is a child of that revision and
+changes only evidence/docs.
 
 ## Result
 
 The two runs produced **byte-identical** `results.json`
 (SHA-256 `b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef`,
-1,202,916 bytes each), so the whole run — not only the liquidation sequence —
-is deterministic.
+1,202,916 bytes each): the complete persisted strategy result is deterministic
+across the two executions. Other generated run artifacts (logs, timestamps,
+elapsed times) naturally differ between executions.
 
 - The pre-trigger path reproduces the preserved Phase A record exactly: basket
   #276, trigger quote sequence 51,304,749 at `2020-03-23T12:06:26.292Z`, the
@@ -61,23 +66,31 @@ is deterministic.
   baskets fully liquidated, 30 forced closes over 4 episodes, realized
   +5,572.00500, final balance 25,572.00500, final equity 23,526.86200, open
   basket #279 with 19 positions.
-- Least-profitable-first held over all 30 real forced closes and the
-  equal-profit tie rule was never violated.
+- Least-profitable-first held over all 30 real forced closes: independent
+  reconstruction confirmed each selected leg was the actual least-profitable
+  open position at that step. The March qualification encountered **no
+  equal-profit tie**; the deterministic tie rule (higher immutable trade number
+  first) is established by the focused unit test
+  (`LiquidationTests.EqualProfitTiesCloseTheHigherImmutableTradeNumberFirst`),
+  not by the historical run.
 
 ## Reconstructing the least-profitable-first selection
 
 `results.json` contains enough to independently verify each forced close:
 
-1. For basket #276, `closedBaskets[276].LegTrace` lists the 6 surviving legs
-   and `closedBaskets[276].LiquidationTrace` lists the 30 removed legs, each
-   with its immutable side, lots, entry price and realized P/L.
+1. Take the `closedBaskets` record whose `Sequence == 276` (the array position
+   is not the sequence number). Its `LegTrace` lists the 6 surviving legs and
+   its `LiquidationTrace` lists the 30 removed legs, each with its immutable
+   side, lots, entry price and realized P/L.
 2. An episode's trigger quote (bid/ask) is carried on every one of its
    liquidation records; the open inventory at each step is the initial 36 legs
    minus the already removed ones.
 3. Compute each open leg's executable P/L at the trigger quote (BUY at Bid,
    SELL at Ask, zero slippage/commission in the frozen configuration) and check
-   that the leg actually removed is the minimum, with equal values broken by
-   the higher trade number.
+   that the leg actually removed is the minimum. If two open legs ever have
+   equal executable P/L, the rule is the higher trade number first; the
+   historical run contained no such tie, so this branch is covered by the
+   focused unit test.
 
 This qualification is execution evidence only: it does not establish
 profitability, does not determine the final 2019-2026 strategy outcome and does

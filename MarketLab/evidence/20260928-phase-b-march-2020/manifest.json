@@ -5,7 +5,7 @@
   "sourceTreeClean": true,
   "modelRevision": "marketlab-single-anchor-broker-liquidation-v1",
   "stopOutModel": "BrokerLiquidation",
-  "sourceBinding": "Both runs were launched with run-backtest.ps1 -RunEvidence and without -BaselineContract/-BaselineRegister (the frozen contract asserts the full 2019-01-01..2026-06-30 window). The machine-generated marketlab-run-invocation-runN.json files record the repository HEAD, the clean-tree check, the algorithm/launcher/config SHA-256 values and the exact launcher arguments; the marketlab-run-outcome-runN.json files record the exit codes, the zero engine-error count and the results SHA-256, which equals the SHA-256 of the committed canonical results.json. This evidence directory is committed after the source revision and changes only evidence/docs, not executable source.",
+  "sourceBinding": "Both runs were launched with run-backtest.ps1 -RunEvidence and without -BaselineContract/-BaselineRegister (the frozen contract asserts the full 2019-01-01..2026-06-30 window). Each qualification run records the clean committed source revision together with the exact algorithm binary (DLL SHA-256), launcher, configuration, runtime identities, invocation and result hash: the machine-generated marketlab-run-invocation-runN.json files record the repository HEAD, the clean-tree check, the hashes and the exact launcher arguments, and the marketlab-run-outcome-runN.json files record the exit codes, the zero engine-error count and the results SHA-256, which equals the SHA-256 of the committed canonical results.json. This is strong provenance evidence; without a source-bound build receipt for this bounded run it is not a cryptographic proof that the DLL was compiled from that HEAD. This evidence directory is committed after the source revision and changes only evidence/docs, not executable source.",
   "window": {
     "start": "2019-01-01",
     "end": "2020-04-30",
@@ -63,7 +63,8 @@
       "resultsSha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef"
     }
   ],
-  "resultsByteIdenticalAcrossRuns": true,
+  "resultsJsonByteIdenticalAcrossRuns": true,
+  "resultsJsonDeterminismNote": "The complete persisted strategy result is byte-identical across the two executions. Other generated run artifacts (logs, timestamps, elapsed times) naturally differ; only results.json is compared.",
   "canonicalResults": {
     "path": "results.json",
     "sha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef",
@@ -73,8 +74,8 @@
   },
   "qualificationSummary": {
     "path": "qualification-summary.json",
-    "sha256": "816c4b84ffb5937b8613db9df936b76da7a160090fddf02428acaa96ae47fb0a",
-    "bytes": 52223
+    "sha256": "270c933344d2925c38f5673b467dee71ba06ed412b11e613ecfda5d2bdbc3af6",
+    "bytes": 52356
   },
   "keyResults": {
     "completed": true,
@@ -107,7 +108,9 @@
     }
   },
   "leastProfitableFirst": true,
-  "equalProfitTieRuleHeld": true,
+  "leastProfitableFirstNote": "Independent reconstruction confirmed each of the 30 historical forced closes selected the actual least-profitable open position at that step.",
+  "equalProfitTieEncountered": false,
+  "equalProfitTieRule": "higher immutable trade number first; established by the focused unit test LiquidationTests.EqualProfitTiesCloseTheHigherImmutableTradeNumberFirst, not by the historical run (which encountered no equal-profit tie)",
   "supersededRuns": [
     "E:\\MarketLab\\phaseb-march2020\\ (pre-correction survivor-only economics; not qualification evidence)",
     "E:\\MarketLab\\phaseb-march2020-correction\\ (corrected economics but no -RunEvidence source binding; superseded by this directory)"

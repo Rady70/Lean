@@ -58,7 +58,8 @@
     "quotesIdentical": true
   },
   "leastProfitableFirst": true,
-  "equalProfitTieRuleHeld": true,
+  "equalProfitTieEncountered": false,
+  "equalProfitTieRule": "higher immutable trade number first; established by the focused unit test, not by the historical run",
   "triggerComparison": {
     "oldStopOutTime": "2020-03-23T12:06:26.292",
     "newTriggerTime": "2020-03-23T12:06:26.292",
