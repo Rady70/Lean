@@ -104,9 +104,11 @@ function Assert-NotContains([string]$Text, [string]$Needle, [string]$Name, [swit
     Report $ok $Name "text unexpectedly contains [$Needle]"
 }
 
-function Assert-Match([string]$Text, [string]$Pattern, [string]$Name) {
+function Assert-Match([string]$Text, [string]$Pattern, [string]$Name, [string]$Context = '') {
     $ok = ($null -ne $Text) -and ([System.Text.RegularExpressions.Regex]::IsMatch($Text, $Pattern))
-    Report $ok $Name "text does not match /$Pattern/"
+    $detail = "text does not match /$Pattern/"
+    if (-not [string]::IsNullOrEmpty($Context)) { $detail += "; $Context" }
+    Report $ok $Name $detail
 }
 
 function Assert-NotMatch([string]$Text, [string]$Pattern, [string]$Name) {
@@ -615,7 +617,8 @@ try {
         $empty = Invoke-Helper @('-AlgorithmTypeName', 'BasicTemplateAlgorithm', '-DataFolder', $emptyData, '-OutputRoot', $emptyOutput)
         Assert-Equal 4 $empty.ExitCode 'empty zip entry: helper exit code 4'
         Assert-Contains $empty.StdOut 'failed 0.' 'empty zip entry: data monitor reports 0 failed requests'
-        Assert-Match $empty.StdErr '(?m)^ERROR:   .*SubscriptionDataSourceReader\.InvalidSource\(\): File not found: .*20131009_trade\.zip' 'empty zip entry: ERROR quotes the InvalidSource line for the existing file'
+        $emptyErrorLines = @($empty.StdErr -split "`r?`n" | Where-Object { $_ -match 'ERROR' })
+        Assert-Match $empty.StdErr '(?m)^ERROR:   .*SubscriptionDataSourceReader\.InvalidSource\(\): File not found: .*20131009_trade\.zip' 'empty zip entry: ERROR quotes the InvalidSource line for the existing file' "captured stderr ERROR line(s) [$($emptyErrorLines.Count)]: $($emptyErrorLines -join ' || ')"
 
         # F2d: one file missing AND one corrupt: exit 3 wins, both blocks are
         # printed, and the missing file's InvalidSource line is not counted as
