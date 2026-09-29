@@ -73,7 +73,7 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void FeedIncludesTheStopOutQuoteButExcludesTheRestOfItsSlice()
+        public void FeedIncludesTheForcedLiquidationFaultQuoteButExcludesTheRestOfItsSlice()
         {
             var h = new Harness(Harness.Defaults(), null, 4.05m, Harness.MarginDefaults());
             var delivery = new QuoteDelivery(TimeZones.Utc, TimeZones.Utc);
@@ -82,16 +82,25 @@ namespace MarketLab.SingleAnchor.Tests
             {
                 Symbol = symbol, TickType = TickType.Quote, Time = Harness.T0.AddSeconds(second), BidPrice = bid, AskPrice = ask
             };
+            // The post-fill Stop Out requires a deterministic forced close; the injected executor
+            // failure makes the liquidation unexecutable, which is the genuine terminal condition
+            // that stops the run on this quote (the delivery layer must include that quote).
+            h.Executor.LegCloseOverride = _ => LegCloseExecution.Failure("injected forced close failure");
             var feed = new QuoteTickFeed();
-            Assert.Throws<AccountStopOutException>(() => feed.Feed(new[]
+            var failure = Assert.Throws<BrokerLiquidationException>(() => feed.Feed(new[]
             {
                 TickAt(0, 1999.9m, 2000.1m), TickAt(1, 2010m, 2020m), TickAt(2, 2000m, 2000.2m)
             }, h.Engine, delivery.Add));
+            Assert.That(failure!.Condition, Is.EqualTo("ForcedCloseFailed"));
             var result = delivery.Snapshot();
             Assert.That(result.QuoteCount, Is.EqualTo(2));
             Assert.That(result.QuoteCount, Is.EqualTo(h.Engine.QuotesProcessed));
             Assert.That(result.LastQuote!.Value.Time, Is.EqualTo(h.Engine.LastProcessedQuote!.Value.Time));
             Assert.That(result.LastQuote.Value.Bid, Is.EqualTo(2010m));
+            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1), "the position stays open because the forced close failed");
+            Assert.That(h.ResearchAccount!.StopOutEpisodes, Has.Count.EqualTo(1));
+            Assert.That(h.ResearchAccount.StopOutEpisodes[0].Outcome, Is.Null, "the unresolved episode is recorded truthfully");
+            Assert.That(h.ResearchAccount.StopOutEpisodes[0].Liquidations, Is.Empty);
         }
 
         private static string Digest(string text) => "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();

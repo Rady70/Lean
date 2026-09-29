@@ -49,21 +49,29 @@ namespace MarketLab.SingleAnchor
     /// the 100-per-lot USD point value; another symbol, security type or point value is refused
     /// rather than described as the frozen model. It adds used/free margin and margin level
     /// derived from the same balance/equity, the 50% Margin Call entry block, explicit
-    /// <c>InsufficientMargin</c> rejections against the projected post-fill inventory, a
-    /// post-fill stop-out check, and terminal 20% (or open-position negative-equity) stop-out
-    /// that stops the run as an <c>AccountStopOut</c> failure; an executable mark that cannot be
-    /// computed stops the run as an <c>AccountSurvival</c> failure instead of certifying
-    /// survival from a stale state. The extra evidence is written to <c>researchMargin</c>;
-    /// disabling margin leaves the pre-PR-3 strategy path exactly unchanged. The account
+    /// <c>InsufficientMargin</c> rejections against the projected post-fill inventory, and the
+    /// Phase B broker-liquidation model: reaching the 20% Stop Out condition (or open positions
+    /// with negative equity) no longer terminates the run; the engine deterministically
+    /// force-closes the least-profitable open position first (equal-profit ties by the higher
+    /// immutable trade number) at the executable market side of the triggering quote, realizes
+    /// its P/L, revalues the surviving inventory and continues until the condition clears or no
+    /// positions remain. A basket whose positions were all liquidated ends through the
+    /// <c>BrokerLiquidation</c> reason and the account continues processing subsequent historical
+    /// data; every Stop Out episode and forced close is recorded in <c>researchMargin</c>. An
+    /// executable mark that cannot be computed stops the run as an <c>AccountSurvival</c> failure
+    /// instead of certifying survival from a stale state, and a forced close the executor cannot
+    /// fill stops the run as a <c>BrokerLiquidation</c> failure. Disabling margin leaves the
+    /// pre-PR-3 strategy path exactly unchanged. The account
     /// currency is USD as a research simplification (the user's live account is EUR-denominated;
     /// historical EURUSD conversion is out of scope), and no LEAN portfolio, order or margin
     /// state is used.
     /// A strategy invariant
     /// failure (<see cref="StrategyInvariantException"/>), a data-quality failure
     /// (<see cref="DataQualityException"/>), a session-map coverage mismatch
-    /// (<see cref="SessionMapException"/>) or â€” with the PR 3 margin layer enabled â€” terminal
-    /// account stop-out (<see cref="AccountStopOutException"/>) or an account that cannot be
-    /// revalued on a quote (<see cref="AccountSurvivalException"/>) writes the results with the
+    /// (<see cref="SessionMapException"/>) or â€” with the PR 3 margin layer enabled â€” an account
+    /// that cannot be revalued on a quote (<see cref="AccountSurvivalException"/>) or a forced
+    /// liquidation the executor cannot fill (<see cref="BrokerLiquidationException"/>) writes the
+    /// results with the
     /// failure recorded and then stops the run as a LEAN runtime error. The results also carry the hard-BE verification
     /// metadata (strategy definition resolved, requirement verified at each tail entry under the
     /// configured execution model).
@@ -78,6 +86,20 @@ namespace MarketLab.SingleAnchor
     {
         /// <summary>Object-store key of the strategy's results file.</summary>
         public const string ResultsKey = "single-anchor/results.json";
+
+        /// <summary>
+        /// Persisted identity of this build's broker-model revision: the Phase B broker-forced
+        /// Stop Out liquidation model. The frozen pre-liquidation model's historical result files
+        /// do not carry this key; a new result always does, so consumers never have to infer the
+        /// model from field presence.
+        /// </summary>
+        public const string ModelRevision = "marketlab-single-anchor-broker-liquidation-v1";
+
+        /// <summary>
+        /// Persisted name of the Stop Out model: deterministic broker-forced liquidation with
+        /// continued processing, not a terminal fault.
+        /// </summary>
+        public const string StopOutModel = "BrokerLiquidation";
 
         // ---- Host / instrument ----
         [Parameter("single-anchor-symbol")] private string _ticker = "XAUUSD";
@@ -230,7 +252,7 @@ namespace MarketLab.SingleAnchor
                 : "SingleAnchor research account disabled (single-anchor-research-account=false): the run is the pre-PR-2 strategy path with no derived account state.");
             if (margin != null)
             {
-                Log($"SingleAnchor target-account margin enabled: USD XM-style research account (not the EUR live account), contract {F(margin.ContractSize)} oz/lot, fixed leverage 1:{F(margin.Leverage)}, initial/maintenance margin rate 1.0, matched BUY/SELL volume has zero margin and only the uncovered side is charged {F(margin.ContractSize)} oz/lot * weighted-average open price / {F(margin.Leverage)}; Margin Call {F(margin.MarginCallLevelPercent)}% blocks new entries while exits stay possible, terminal Stop Out {F(margin.StopOutLevelPercent)}% (or open positions with negative equity) stops the run, no broker liquidation is simulated; BUY/SELL swap 0 and commission per lot {F(_parameters.CommissionPerLot)}.");
+                Log($"SingleAnchor target-account margin enabled: USD XM-style research account (not the EUR live account), contract {F(margin.ContractSize)} oz/lot, fixed leverage 1:{F(margin.Leverage)}, initial/maintenance margin rate 1.0, matched BUY/SELL volume has zero margin and only the uncovered side is charged {F(margin.ContractSize)} oz/lot * weighted-average open price / {F(margin.Leverage)}; Margin Call {F(margin.MarginCallLevelPercent)}% blocks new entries while exits stay possible; reaching Stop Out {F(margin.StopOutLevelPercent)}% (or open positions with negative equity) starts deterministic broker liquidation: the least-profitable open position is force-closed first at the executable market side of the triggering quote, its realized P/L reaches the balance, and liquidation continues until the account is restored or no positions remain, after which historical processing continues; BUY/SELL swap 0 and commission per lot {F(_parameters.CommissionPerLot)}.");
             }
 
             var verification = _engine.HardBreakevenStatus;
@@ -376,9 +398,10 @@ namespace MarketLab.SingleAnchor
                 // LEAN ends the run on the rethrow without calling OnEndOfAlgorithm, so the
                 // results are written here, with the failure recorded. Every engine fault kind
                 // ends the run the same way: strategy invariant, data quality, session-map
-                // coverage and, with the PR 3 margin layer enabled, terminal account stop-out
-                // (AccountStopOut) or an account that cannot be revalued on the quote
-                // (AccountSurvival).
+                // coverage and, with the PR 3 margin layer enabled, an account that cannot be
+                // revalued on the quote (AccountSurvival) or a forced liquidation the executor
+                // cannot fill (BrokerLiquidation). Reaching Stop Out is not a fault: it triggers
+                // deterministic broker liquidation instead.
                 Error($"SingleAnchor {failure.Kind} failure ({failure.Condition}): {failure.Message}");
                 Log($"SingleAnchor run stopped by the {failure.Condition} condition at {failure.Quote}.");
                 WriteResults(new RunFailure(failure.Kind, failure.Condition, failure.Quote, failure.Message));
@@ -404,7 +427,10 @@ namespace MarketLab.SingleAnchor
             }
             else
             {
-                Log($"SingleAnchor end of data: open basket #{snapshot.Sequence} marked to market at {snapshot.Quote} (not closed): {snapshot.OpenPositions} legs, buy {F(snapshot.BuyLots)} / sell {F(snapshot.SellLots)} / gross {F(snapshot.GrossLots)} / net {F(snapshot.NetLots)} lots, raw profit {F(snapshot.RawProfit!.Value)}, exit profit {F(snapshot.ExitProfit!.Value)}, executable profit {(snapshot.ExecutableProfit.HasValue ? F(snapshot.ExecutableProfit.Value) : "n/a (a needed executable close price is not positive)")}, step money {F(snapshot.StepMoney!.Value)}, hard-BE mode {snapshot.HardBreakevenModeActive}, trailing {snapshot.TrailingActive} (peak {F(snapshot.PeakProfit)}).");
+                Log($"SingleAnchor end of data: open basket #{snapshot.Sequence} marked to market at {snapshot.Quote} (not closed): {snapshot.OpenPositions} legs, buy {F(snapshot.BuyLots)} / sell {F(snapshot.SellLots)} / gross {F(snapshot.GrossLots)} / net {F(snapshot.NetLots)} lots, raw profit {F(snapshot.RawProfit!.Value)}, exit profit {F(snapshot.ExitProfit!.Value)}, executable profit {(snapshot.ExecutableProfit.HasValue ? F(snapshot.ExecutableProfit.Value) : "n/a (a needed executable close price is not positive)")}, step money {F(snapshot.StepMoney!.Value)}, hard-BE mode {snapshot.HardBreakevenModeActive}, trailing {snapshot.TrailingActive} (peak {F(snapshot.PeakProfit)})" +
+                    (snapshot.LiquidatedPositions > 0
+                        ? $"; {snapshot.LiquidatedPositions} position(s) already force-closed by broker liquidation (realized {F(snapshot.LiquidatedRealizedProfit)})"
+                        : string.Empty) + ".");
                 foreach (var leg in basket.Legs)
                 {
                     Log($"SingleAnchor open leg: {leg}");
@@ -426,7 +452,16 @@ namespace MarketLab.SingleAnchor
                 Log($"SingleAnchor research account: balance {F(a.Balance)} ({mark}), realized {F(a.RealizedProfit)}, peak balance {F(a.PeakBalance)}, max balance drawdown {F(a.MaxBalanceDrawdown)}, peak equity {F(a.PeakEquity)}, max equity drawdown {F(a.MaxEquityDrawdown)}; exposure max {a.MaxOpenPositions} positions / {F(a.MaxGrossLots)} gross / {F(a.MaxAbsoluteNetLots)} |net| lots (final {a.CurrentOpenPositions} / {F(a.CurrentGrossLots)} / {F(a.CurrentAbsoluteNetLots)}); max executable floating loss {FNullable(a.MaxExecutableFloatingLoss)}, max executable floating profit {FNullable(a.MaxExecutableFloatingProfit)}; skipped executable marks {a.FloatingObservationsSkipped}; {a.ClosedBasketsObserved} closed-basket research record(s).");
                 if (_researchAccount.MarginSummary is { } m)
                 {
-                    Log($"SingleAnchor target-account margin: used {F(m.CurrentUsedMargin)}, free {FNullable(m.CurrentFreeMargin)}, margin level {FPercent(m.CurrentMarginLevelPercent)} (max used {F(m.MaxUsedMargin)}, min free {FNullable(m.MinFreeMargin)}, min level {FPercent(m.MinMarginLevelPercent)}); Margin Call {m.MarginCallActive} ({m.MarginCallEpisodes} episode(s), {m.MarginCallObservations} observation(s), {m.MarginCallBlockedEpisodes} blocked episode(s)/{m.MarginCallBlockedAttempts} attempt(s)); insufficient-margin {m.InsufficientMarginEpisodes} episode(s)/{m.InsufficientMarginAttempts} attempt(s); stop-out {(m.StopOut == null ? "none" : m.StopOut.Reason + " at " + m.StopOut.Time.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture))}.");
+                    Log($"SingleAnchor target-account margin: used {F(m.CurrentUsedMargin)}, free {FNullable(m.CurrentFreeMargin)}, margin level {FPercent(m.CurrentMarginLevelPercent)} (max used {F(m.MaxUsedMargin)}, min free {FNullable(m.MinFreeMargin)}, min level {FPercent(m.MinMarginLevelPercent)}); Margin Call {m.MarginCallActive} ({m.MarginCallEpisodes} episode(s), {m.MarginCallObservations} observation(s), {m.MarginCallBlockedEpisodes} blocked episode(s)/{m.MarginCallBlockedAttempts} attempt(s)); insufficient-margin {m.InsufficientMarginEpisodes} episode(s)/{m.InsufficientMarginAttempts} attempt(s); Stop Out {m.StopOutEpisodes.Count} episode(s), {m.ForcedLiquidations} forced liquidation(s), {_engine.BasketsLiquidated} basket(s) fully liquidated by the broker.");
+                    for (var i = 0; i < m.StopOutEpisodes.Count; i++)
+                    {
+                        var episode = m.StopOutEpisodes[i];
+                        Log($"SingleAnchor Stop Out episode {i + 1}: basket #{episode.Basket} {episode.Reason} at {episode.TriggerTime:yyyy-MM-dd HH:mm:ss.fff} (quote sequence {episode.TriggerQuoteSequence}, bid {F(episode.TriggerBid)} / ask {F(episode.TriggerAsk)}), {episode.Liquidations.Count} forced close(s), outcome {(episode.Outcome.HasValue ? episode.Outcome.Value.ToString() : "unresolved at end of run")}; after: balance {F(episode.AfterLiquidation.Balance)}, equity {F(episode.AfterLiquidation.Equity)}, used margin {F(episode.AfterLiquidation.UsedMargin)}, {episode.AfterLiquidation.OpenPositions} open position(s).");
+                        foreach (var liquidation in episode.Liquidations)
+                        {
+                            Log($"SingleAnchor forced liquidation #{liquidation.Leg.Ordinal}: basket #{liquidation.Leg.Basket} trade {liquidation.Leg.TradeNumber} {liquidation.Leg.Side} {F(liquidation.Leg.PlacedLot)} lots @ {F(liquidation.Leg.EntryPrice)} ({liquidation.Leg.EntryTime:yyyy-MM-dd HH:mm:ss.fff}) force-closed at {F(liquidation.Leg.ClosePrice)} on {liquidation.Leg.LiquidationTime:yyyy-MM-dd HH:mm:ss.fff}, realized {F(liquidation.Leg.RealizedProfit)}; balance {F(liquidation.Before.Balance)} -> {F(liquidation.After.Balance)}, equity {F(liquidation.Before.Equity)} -> {F(liquidation.After.Equity)}.");
+                        }
+                    }
                 }
             }
 
@@ -445,6 +480,8 @@ namespace MarketLab.SingleAnchor
             var results = new Dictionary<string, object?>
             {
                 ["completed"] = failure == null,
+                ["modelRevision"] = ModelRevision,
+                ["stopOutModel"] = StopOutModel,
                 ["algorithmTimeZone"] = TimeZone.Id,
                 ["startUtc"] = StartDate.ConvertToUtc(TimeZone),
                 ["endUtc"] = EndDate.ConvertToUtc(TimeZone),
@@ -470,6 +507,8 @@ namespace MarketLab.SingleAnchor
                 ["distinctRejectedEntries"] = _engine.EntriesRejected,
                 ["rejectedEntryAttempts"] = _engine.RejectedEntryAttempts,
                 ["basketsClosed"] = _engine.BasketsClosed,
+                ["basketsLiquidated"] = _engine.BasketsLiquidated,
+                ["forcedLiquidations"] = _engine.ForcedLiquidations,
                 ["realizedProfit"] = _engine.RealizedProfit,
                 ["researchAccount"] = _researchAccount?.Summary,
                 ["researchBaskets"] = _researchAccount?.BasketRecords,
@@ -497,8 +536,15 @@ namespace MarketLab.SingleAnchor
             _engine.EntryRejected += e => Error($"SingleAnchor entry rejected ({e.Rejection.Reason}) for trade {e.Rejection.TradeNumber} {e.Rejection.Side} of basket #{e.Basket.Sequence} at {e.Quote}: {e.Rejection.Message}");
             _engine.HardBreakevenViolated += e => Error($"SingleAnchor hard-BE violated by the fill of {e.Leg} in basket #{e.Basket.Sequence}: projected executable P/L at target {F(e.Sizing.Target.Target)} is {F(e.ProjectedProfitAfterFill)} after the fill (sizing expected {F(e.Sizing.ProjectedProfitAfter)}); the run stops.");
             _engine.TrailingActivated += e => Log($"SingleAnchor trailing activated at profit {F(e.Profit)} (threshold {F(e.ActivationThreshold)}) at {e.Quote}.");
-            _engine.BasketClosed += e => Log($"SingleAnchor basket #{e.Record.Sequence} closed by {e.Record.Reason} at {e.Quote}: {e.Record.Legs} legs, raw profit {F(e.Record.RawProfit)}, exit profit {F(e.Record.ExitProfit)} vs threshold {F(e.Record.Threshold)}, realized {F(e.Record.RealizedProfit)} (buys closed {F(e.Record.BuyClosePrice)}, sells closed {F(e.Record.SellClosePrice)}, commission {F(e.Record.Commission)}); realized total {F(_engine.RealizedProfit)}.");
+            _engine.BasketClosed += e => Log($"SingleAnchor basket #{e.Record.Sequence} closed by {e.Record.Reason} at {e.Quote}: {e.Record.Legs} legs, raw profit {F(e.Record.RawProfit)}, exit profit {F(e.Record.ExitProfit)} vs threshold {F(e.Record.Threshold)}, realized {F(e.Record.RealizedProfit)} (buys closed {F(e.Record.BuyClosePrice)}, sells closed {F(e.Record.SellClosePrice)}, commission {F(e.Record.Commission)})" +
+                (e.Record.LiquidatedPositions > 0 ? $", including {e.Record.LiquidatedPositions} position(s) already force-closed by broker liquidation for {F(e.Record.LiquidatedRealizedProfit)}" : string.Empty) +
+                $"; realized total {F(_engine.RealizedProfit)}.");
             _engine.BasketCloseFailed += e => Error($"SingleAnchor close ({e.Reason}) failed at {e.Quote}: {e.Message}");
+            _engine.StopOutTriggered += e => Log($"SingleAnchor Stop Out triggered ({e.StopOut.Reason}) on basket #{e.Basket.Sequence} at {e.Quote}: equity {F(e.StopOut.Equity)}, balance {F(e.StopOut.Balance)}, floating {F(e.StopOut.FloatingProfit)}, used margin {F(e.StopOut.UsedMargin)}, free margin {F(e.StopOut.FreeMargin)}" +
+                (e.StopOut.MarginLevelPercent.HasValue ? $", margin level {F(e.StopOut.MarginLevelPercent.Value)}%" : ", margin level n/a (zero used margin)") +
+                $", {e.StopOut.OpenPositions} open position(s); deterministic broker liquidation begins before any strategy action on this quote.");
+            _engine.ForcedLiquidation += e => Log($"SingleAnchor forced liquidation #{e.Record.Ordinal}: basket #{e.Basket.Sequence} trade {e.Record.TradeNumber} {e.Record.Side} {F(e.Record.PlacedLot)} lots @ {F(e.Record.EntryPrice)} ({e.Record.EntryTime:yyyy-MM-dd HH:mm:ss.fff}) force-closed at {F(e.Record.ClosePrice)} at {e.Quote} for realized {F(e.Record.RealizedProfit)} (commission {F(e.Record.Commission)}); realized total {F(_engine.RealizedProfit)}.");
+            _engine.BasketLiquidated += e => Log($"SingleAnchor basket #{e.Record.Sequence} fully liquidated by the broker at {e.Quote}: {e.Record.LiquidatedPositions} position(s), realized {F(e.Record.RealizedProfit)} (buys closed {F(e.Record.BuyClosePrice)}, sells closed {F(e.Record.SellClosePrice)}); this is a broker-liquidation outcome, not a strategy exit. Historical processing continues.");
         }
 
         private static string F(decimal value)

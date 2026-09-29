@@ -22,8 +22,9 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// RawProfit: the combined current profit of every leg, BUY legs marked at the Bid and
-        /// SELL legs at the Ask (section 9). Constant time.
+        /// RawProfit: the combined current profit of the surviving legs, BUY legs marked at the Bid
+        /// and SELL legs at the Ask (section 9). Constant time. For the basket's lifetime economic
+        /// basis (forced-liquidation P/L plus survivors) use <see cref="LifetimeRawProfit"/>.
         /// </summary>
         public static decimal RawProfit(Basket basket, in Quote quote, SingleAnchorParameters parameters)
         {
@@ -33,12 +34,28 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// Profit used for exit decisions: RawProfit minus the optional commission buffer
-        /// (section 9: Profit = RawProfit - CommissionBuffer).
+        /// The basket's lifetime raw profit at a quote: the executable P/L already realized by
+        /// broker-forced liquidation plus the raw profit of the surviving legs. This is the basis
+        /// the strategy's exit rules use, so a partial liquidation never silently improves the
+        /// surviving basket's decision economics: the forced P/L stays in the series. For a basket
+        /// that never liquidated it equals <see cref="RawProfit"/> exactly. The survivor-only
+        /// floating mark stays available as <see cref="RawProfit"/> and, on the account, as
+        /// <c>FloatingProfit</c>.
+        /// </summary>
+        public static decimal LifetimeRawProfit(Basket basket, in Quote quote, SingleAnchorParameters parameters)
+        {
+            if (basket == null) throw new ArgumentNullException(nameof(basket));
+            return basket.LiquidatedRealizedProfit + RawProfit(basket, quote, parameters);
+        }
+
+        /// <summary>
+        /// Profit used for exit decisions: the basket's lifetime raw profit minus the optional
+        /// commission buffer (section 9: Profit = RawProfit - CommissionBuffer, with the forced
+        /// liquidation P/L included after a partial liquidation).
         /// </summary>
         public static decimal ExitProfit(Basket basket, in Quote quote, SingleAnchorParameters parameters)
         {
-            return RawProfit(basket, quote, parameters) - parameters!.CommissionBuffer;
+            return LifetimeRawProfit(basket, quote, parameters) - parameters!.CommissionBuffer;
         }
 
         /// <summary>
@@ -106,10 +123,49 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
+        /// Executable close price of one position at the triggering quote under the configured
+        /// execution model: a BUY closes at the Bid less slippage, a SELL at the Ask plus slippage.
+        /// This is the correct market side the deterministic broker liquidation must use.
+        /// </summary>
+        public static decimal ExecutableLegClosePrice(TradeSide side, in Quote quote, SingleAnchorParameters parameters)
+        {
+            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
+            return side == TradeSide.Buy ? quote.Bid - parameters.Slippage : quote.Ask + parameters.Slippage;
+        }
+
+        /// <summary>
+        /// Executable P/L of one position closed at <paramref name="closePrice"/>: the price move
+        /// from its actual entry, valued at the configured point value, less the round-trip
+        /// commission on its own volume. This is the position's value used by the broker's
+        /// least-profitable-first liquidation ordering and by each forced close's realized P/L;
+        /// summing it over every open leg reproduces the account's executable floating mark
+        /// (raw profit less the per-lot cost on the gross volume).
+        /// </summary>
+        public static decimal ExecutableLegProfit(BasketLeg leg, decimal closePrice, SingleAnchorParameters parameters)
+        {
+            if (leg == null) throw new ArgumentNullException(nameof(leg));
+            if (parameters == null) throw new ArgumentNullException(nameof(parameters));
+            var priceMove = leg.Side == TradeSide.Buy ? closePrice - leg.EntryPrice : leg.EntryPrice - closePrice;
+            return priceMove * leg.Lots * parameters.PointValuePerLot - parameters.CommissionPerLot * leg.Lots;
+        }
+
+        /// <summary>
+        /// Executable P/L of one position at a quote: a BUY valued at the Bid less slippage, a
+        /// SELL at the Ask plus slippage, each less its own round-trip commission. Used by the
+        /// deterministic liquidation ordering.
+        /// </summary>
+        public static decimal ExecutableLegProfit(BasketLeg leg, in Quote quote, SingleAnchorParameters parameters)
+        {
+            return ExecutableLegProfit(leg, ExecutableLegClosePrice(leg.Side, quote, parameters), parameters);
+        }
+
+        /// <summary>
         /// Executable profit of the whole basket closed at the given per-side prices: price P/L
         /// less the round-trip commission on the gross volume. Used for the projection at a hard
         /// target (section 7), for the realized result of a close and for the executable
-        /// mark-to-market of an open basket. Constant time.
+        /// mark-to-market of an open basket's surviving inventory. Constant time. For the basket's
+        /// lifetime executable result (forced P/L plus survivors) use
+        /// <see cref="LifetimeExecutableProfit"/>.
         /// </summary>
         public static decimal ExecutableProfit(Basket basket, decimal buyClosePrice, decimal sellClosePrice, SingleAnchorParameters parameters)
         {
@@ -117,6 +173,18 @@ namespace MarketLab.SingleAnchor
             if (parameters == null) throw new ArgumentNullException(nameof(parameters));
             return PriceProfit(basket, buyClosePrice, sellClosePrice, parameters.PointValuePerLot)
                 - parameters.CommissionPerLot * basket.GrossLots;
+        }
+
+        /// <summary>
+        /// The basket's lifetime executable result at the given per-side prices: the P/L already
+        /// realized by broker-forced liquidation plus the executable value of the surviving
+        /// inventory (close-side slippage and round-trip commission included on the survivors).
+        /// For a basket that never liquidated it equals <see cref="ExecutableProfit"/> exactly.
+        /// </summary>
+        public static decimal LifetimeExecutableProfit(Basket basket, decimal buyClosePrice, decimal sellClosePrice, SingleAnchorParameters parameters)
+        {
+            if (basket == null) throw new ArgumentNullException(nameof(basket));
+            return basket.LiquidatedRealizedProfit + ExecutableProfit(basket, buyClosePrice, sellClosePrice, parameters);
         }
 
         /// <summary>
@@ -133,13 +201,29 @@ namespace MarketLab.SingleAnchor
         }
 
         /// <summary>
-        /// PL_existing(T): projected executable profit of every open leg at the boundary (section 7).
-        /// Constant time; equal to the sum of <see cref="ProjectedLegProfit"/> over the legs.
+        /// PL_existing(T): projected executable profit of every surviving leg at the boundary
+        /// (section 7). Constant time; equal to the sum of <see cref="ProjectedLegProfit"/> over
+        /// the legs. For the hard-BE sizing basis after a partial liquidation use
+        /// <see cref="LifetimeProjectedExistingProfit"/>, which also carries the already realized
+        /// broker-liquidation P/L.
         /// </summary>
         public static decimal ProjectedExistingProfit(Basket basket, in TargetPrices target, SingleAnchorParameters parameters)
         {
             var (buyClose, sellClose) = ExecutableClosePrices(target, parameters);
             return ExecutableProfit(basket, buyClose, sellClose, parameters);
+        }
+
+        /// <summary>
+        /// The basket's lifetime projected executable P/L at the boundary: the P/L already realized
+        /// by broker-forced liquidation plus the surviving legs' projected value. This is the basis
+        /// the hard-BE sizing and its post-fill verification use, so a forced loss is not silently
+        /// dropped from the next tail's requirement (and a forced profit is not silently ignored).
+        /// For a basket that never liquidated it equals <see cref="ProjectedExistingProfit"/> exactly.
+        /// </summary>
+        public static decimal LifetimeProjectedExistingProfit(Basket basket, in TargetPrices target, SingleAnchorParameters parameters)
+        {
+            if (basket == null) throw new ArgumentNullException(nameof(basket));
+            return basket.LiquidatedRealizedProfit + ProjectedExistingProfit(basket, target, parameters);
         }
 
         private static decimal PriceProfit(Basket basket, decimal buyClosePrice, decimal sellClosePrice, decimal pointValuePerLot)

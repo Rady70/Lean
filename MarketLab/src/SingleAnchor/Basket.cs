@@ -19,7 +19,11 @@ namespace MarketLab.SingleAnchor
     {
         private readonly List<BasketLeg> _legs = new List<BasketLeg>();
         private readonly List<EntryRejectionRecord> _rejections = new List<EntryRejectionRecord>();
+        private readonly List<LiquidatedLegRecord> _liquidations = new List<LiquidatedLegRecord>();
         private readonly decimal _volumeStep;
+        private int _nextTradeNumber = 1;
+        private TradeSide? _lastEntrySide;
+        private int _historicalEntries;
 
         internal Basket(int sequence, in Quote anchorQuote, SingleAnchorParameters parameters)
             : this(sequence, 0, anchorQuote, parameters)
@@ -71,8 +75,25 @@ namespace MarketLab.SingleAnchor
         /// <summary>T_down = A * (1 - C / 100), the lower hard-BE boundary for a required SELL (the actual BE must stay at or above it).</summary>
         public decimal LowerTarget { get; }
 
-        /// <summary>Legs in entry order (audit; valuations use the aggregates below).</summary>
+        /// <summary>Legs still open in entry order (audit; valuations use the aggregates below).</summary>
         public IReadOnlyList<BasketLeg> Legs => _legs;
+
+        /// <summary>
+        /// Positions removed from this basket by deterministic broker-forced liquidation, in
+        /// liquidation order, with their immutable identities and forced-close prices. A leg the
+        /// broker removed is never a strategy exit and never disappears from the basket's history.
+        /// The trace is a read-only view; it grows only by a forced close.
+        /// </summary>
+        public IReadOnlyList<LiquidatedLegRecord> LiquidationTrace => _liquidations.AsReadOnly();
+
+        /// <summary>Number of positions this basket opened over its lifetime, including liquidated ones.</summary>
+        public int HistoricalEntries => _historicalEntries;
+
+        /// <summary>Number of positions removed by broker-forced liquidation so far.</summary>
+        public int LiquidatedPositions => _liquidations.Count;
+
+        /// <summary>Realized executable P/L of the positions removed by broker-forced liquidation (commission included).</summary>
+        public decimal LiquidatedRealizedProfit { get; private set; }
 
         /// <summary>Every rejected-entry situation of this basket, in order; repeats are counted on their row.</summary>
         public IReadOnlyList<EntryRejectionRecord> Rejections => _rejections;
@@ -110,17 +131,25 @@ namespace MarketLab.SingleAnchor
         /// <summary>MinLot: the smallest currently open position size, or 0 with no legs.</summary>
         public decimal SmallestOpenLots { get; private set; }
 
-        /// <summary>Side of the most recent leg, or null before the first entry.</summary>
-        public TradeSide? LastSide { get; private set; }
+        /// <summary>Side of the most recent leg ever opened in this basket, or null before the first entry.</summary>
+        /// <remarks>
+        /// This is the basket's historical entry sequence, not its surviving inventory: a leg
+        /// removed by broker liquidation does not change the side the next entry must take.
+        /// </remarks>
+        public TradeSide? LastSide => _lastEntrySide;
 
         /// <summary>
-        /// Side the next leg must take: the opposite of the last leg, or null before the first
-        /// entry (either boundary may open the basket).
+        /// Side the next leg must take: the opposite of the most recent historical leg, or null
+        /// before the first entry (either boundary may open the basket). Broker liquidation of a
+        /// leg does not reorder the historical entry sequence.
         /// </summary>
-        public TradeSide? NextRequiredSide => LastSide?.Opposite();
+        public TradeSide? NextRequiredSide => _lastEntrySide?.Opposite();
 
-        /// <summary>Trade number the next entry would carry.</summary>
-        public int NextTradeNumber => _legs.Count + 1;
+        /// <summary>
+        /// Trade number the next entry would carry. It is the basket's monotonic historical
+        /// sequence and never falls back when positions are removed by broker liquidation.
+        /// </summary>
+        public int NextTradeNumber => _nextTradeNumber;
 
         /// <summary>
         /// True once a trade beyond Nnormal has been required; stays true until the basket closes
@@ -165,8 +194,91 @@ namespace MarketLab.SingleAnchor
                 SellNotional += leg.EntryPrice * leg.Lots;
             }
             SmallestOpenLots = _legs.Count == 1 ? leg.Lots : Math.Min(SmallestOpenLots, leg.Lots);
-            LastSide = leg.Side;
+            _lastEntrySide = leg.Side;
+            _historicalEntries++;
+            if (leg.TradeNumber >= _nextTradeNumber)
+            {
+                _nextTradeNumber = leg.TradeNumber + 1;
+            }
             LastRejection = null;
+        }
+
+        /// <summary>
+        /// Removes one open position because the broker force-closed it during deterministic Stop Out
+        /// liquidation, and records the forced close in the basket's liquidation trace. The leg's
+        /// immutable identity is copied; the surviving aggregates and the smallest open lot are
+        /// recomputed from the surviving inventory. The historical entry sequence, the trade
+        /// numbering and hard-BE state are deliberately untouched.
+        /// </summary>
+        internal LiquidatedLegRecord RemoveLeg(
+            BasketLeg leg,
+            in Quote triggerQuote,
+            long triggerQuoteSequence,
+            decimal closePrice,
+            decimal commission,
+            decimal realizedProfit,
+            StopOutReason reason,
+            int ordinal)
+        {
+            if (leg == null) throw new ArgumentNullException(nameof(leg));
+            var index = _legs.IndexOf(leg);
+            if (index < 0)
+            {
+                throw new InvalidOperationException($"Leg {leg} is not an open position of basket #{Sequence}.");
+            }
+            _legs.RemoveAt(index);
+            if (leg.Side == TradeSide.Buy)
+            {
+                BuyLots -= leg.Lots;
+                BuyNotional -= leg.EntryPrice * leg.Lots;
+            }
+            else
+            {
+                SellLots -= leg.Lots;
+                SellNotional -= leg.EntryPrice * leg.Lots;
+            }
+            SmallestOpenLots = SmallestLot();
+            var record = new LiquidatedLegRecord(
+                Sequence,
+                leg.TradeNumber,
+                leg.Side,
+                leg.Lots,
+                leg.EntryPrice,
+                leg.EntryTime,
+                leg.Regime,
+                leg.RawRequestedLots,
+                leg.Sizing?.ExactRequired,
+                leg.Sizing?.NormalizedRequiredLot ?? leg.Lots,
+                triggerQuote.Time,
+                triggerQuote.Time,
+                triggerQuoteSequence,
+                triggerQuote.Bid,
+                triggerQuote.Ask,
+                closePrice,
+                commission,
+                realizedProfit,
+                reason,
+                ordinal);
+            _liquidations.Add(record);
+            LiquidatedRealizedProfit += realizedProfit;
+            return record;
+        }
+
+        private decimal SmallestLot()
+        {
+            if (_legs.Count == 0)
+            {
+                return 0m;
+            }
+            var smallest = _legs[0].Lots;
+            for (var i = 1; i < _legs.Count; i++)
+            {
+                if (_legs[i].Lots < smallest)
+                {
+                    smallest = _legs[i].Lots;
+                }
+            }
+            return smallest;
         }
 
         internal void AddRejection(EntryRejectionRecord record)

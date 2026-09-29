@@ -33,7 +33,9 @@ namespace MarketLab.SingleAnchor
 
     /// <summary>
     /// Full record of one hard-BE sizing, feasible or not, so the decision can be logged and tested.
-    /// <see cref="RequiredLot"/> is the exact Q_BE, or 0 when the ratio is not applicable (the
+    /// <see cref="ExistingProfitAtTarget"/> is the basket's lifetime projected executable P/L at the
+    /// boundary: the surviving legs' projection plus any P/L already realized by broker-forced
+    /// liquidation (zero for a basket that never liquidated). <see cref="RequiredLot"/> is the exact Q_BE, or 0 when the ratio is not applicable (the
     /// basket already projects at or inside the ceiling, or PL_1lot(T) is not positive);
     /// <see cref="ExactRequired"/> is that exact requirement or null when it does not exist;
     /// <see cref="NormalizedRequiredLot"/> is the smallest broker-valid lot whose direct
@@ -80,7 +82,7 @@ namespace MarketLab.SingleAnchor
                     case HardBreakevenOutcome.InvalidTargetPrices:
                         return $"Executable prices of the {Side} projection are not positive (target {target}, spread {F(Target.Spread)}, projected Bid {F(Target.Bid)} / Ask {F(Target.Ask)} before slippage, candidate entry {F(CandidateEntryPrice)}).";
                     case HardBreakevenOutcome.NonPositiveMarginalProfit:
-                        return $"One lot of {Side} at {F(CandidateEntryPrice)} contributes {F(MarginalProfitPerLot)} at the hard boundary {target} (projected close {F(Side == TradeSide.Buy ? Target.Bid : Target.Ask)}) while the basket projects {F(ExistingProfitAtTarget)} there; the boundary cannot be reached by adding {Side} volume.";
+                        return $"One lot of {Side} at {F(CandidateEntryPrice)} contributes {F(MarginalProfitPerLot)} at the hard boundary {target} (projected close {F(Side == TradeSide.Buy ? Target.Bid : Target.Ask)}) while the basket's lifetime economics project {F(ExistingProfitAtTarget)} there (realized broker-liquidation P/L included); the boundary cannot be reached by adding {Side} volume.";
                     default:
                         return $"Hard-BE requires exactly {F(RequiredLot)} lots of {Side} (normalized requirement {F(NormalizedRequiredLot)}) and the smallest valid lot above the maximum volume {F(MaximumVolume)}; the order is not placed and breakeven is not allowed to drift.";
                 }
@@ -110,7 +112,9 @@ namespace MarketLab.SingleAnchor
         /// <list type="number">
         /// <item>Upper recovery (BUY): T = T_up, projected Bid = T_up, projected Ask = T_up + W. Lower recovery (SELL): T = T_down, projected Ask = T_down, projected Bid = T_down - W.</item>
         /// <item>Candidate entry: Ask + slippage for a BUY, Bid - slippage for a SELL.</item>
-        /// <item>PL_existing(T) over every open leg; PL_1lot(T) for one lot of the candidate.</item>
+        /// <item>PL_existing(T) over every surviving leg plus any P/L already realized by
+        /// broker-forced liquidation (the basket's lifetime basis); PL_1lot(T) for one lot of the
+        /// candidate.</item>
         /// <item>PL_1lot(T) &gt; 0: Q_BE = -PL_existing / PL_1lot (0 when PL_existing &gt;= 0); the
         /// broker-normalized requirement is the smallest volume-step multiple whose direct
         /// recomputation of PL_after(T, Q) is non-negative, starting from ceil(max(Q_BE, minimum) /
@@ -146,7 +150,7 @@ namespace MarketLab.SingleAnchor
                 return new HardBreakevenSizing(side, tradeNumber, target, candidateEntry, 0m, 0m, 0m, 0m, 0m, 0m, maximum, HardBreakevenOutcome.InvalidTargetPrices);
             }
 
-            var existing = BasketEconomics.ProjectedExistingProfit(basket, target, parameters);
+            var existing = BasketEconomics.LifetimeProjectedExistingProfit(basket, target, parameters);
             var marginal = BasketEconomics.ProjectedLegProfit(side, 1m, candidateEntry, target, parameters);
 
             if (marginal <= 0m)

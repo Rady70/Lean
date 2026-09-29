@@ -15,12 +15,22 @@ namespace MarketLab.SingleAnchor.Tests
         public MarginEntryDecision NextEntryDecision { get; set; } = MarginEntryDecision.Allowed;
         public int SurvivalChecks { get; private set; }
 
+        /// <summary>Number of times the scripted stop-out is reported before the guard answers "outside Stop Out"; the default reports it forever.</summary>
+        public int StopOutLimit { get; set; } = int.MaxValue;
+
+        private int _stopOutAnswers;
+
         /// <summary>Scripted observability; false makes the engine stop with AccountSurvival.</summary>
         public bool SurvivalObservable { get; set; } = true;
 
-        public MarginStopOut? EvaluateSurvival(in Quote quote)
+        public MarginStopOut? EvaluateSurvival(in Quote quote, long quoteSequence)
         {
             SurvivalChecks++;
+            if (NextStopOut == null || _stopOutAnswers >= StopOutLimit)
+            {
+                return null;
+            }
+            _stopOutAnswers++;
             return NextStopOut;
         }
 
@@ -295,7 +305,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(m.MinFreeMargin, Is.EqualTo(995.76m));
             Assert.That(m.MinMarginLevelPercent, Is.EqualTo(m.CurrentMarginLevelPercent));
             Assert.That(m.MarginCallActive, Is.False);
-            Assert.That(m.StopOut, Is.Null);
+            Assert.That(m.StopOutEpisodes, Is.Empty);
         }
 
         [Test]
@@ -353,15 +363,24 @@ namespace MarketLab.SingleAnchor.Tests
             account.ObserveQuote(boundary, basket, 0m, null);
             Assert.That(account.MarginSummary!.CurrentMarginLevelPercent, Is.EqualTo(20m), "equity 0.808 over used 4.04");
 
-            var stopOut = account.EvaluateSurvival(boundary);
-            Assert.That(stopOut, Is.Not.Null, "at or below 20% is terminal");
+            var stopOut = account.EvaluateSurvival(boundary, 1);
+            Assert.That(stopOut, Is.Not.Null, "at or below 20% is the Stop Out condition");
             Assert.That(stopOut!.Reason, Is.EqualTo(StopOutReason.MarginLevel));
             Assert.That(stopOut.Equity, Is.EqualTo(0.808m));
             Assert.That(stopOut.UsedMargin, Is.EqualTo(4.04m));
             Assert.That(stopOut.FreeMargin, Is.EqualTo(-3.232m));
             Assert.That(stopOut.MarginLevelPercent, Is.EqualTo(20m));
             Assert.That(stopOut.OpenPositions, Is.EqualTo(1));
-            Assert.That(account.EvaluateSurvival(boundary), Is.SameAs(stopOut), "the terminal record is idempotent");
+
+            // The evaluation is recomputed from the current state on every call (the engine re-asks
+            // after each forced close), so the condition is still reported while the state is
+            // unchanged; it is not a sticky terminal record.
+            var again = account.EvaluateSurvival(boundary, 1);
+            Assert.That(again, Is.Not.Null);
+            Assert.That(again!.Equity, Is.EqualTo(0.808m));
+            Assert.That(account.StopOutEpisodes, Has.Count.EqualTo(1), "one unresolved episode is exposed");
+            Assert.That(account.StopOutEpisodes[0].Outcome, Is.Null, "the run has not left the condition yet");
+            Assert.That(account.StopOutEpisodes[0].TriggerQuoteSequence, Is.EqualTo(1));
         }
 
         [Test]
@@ -373,7 +392,7 @@ namespace MarketLab.SingleAnchor.Tests
             account.ObserveQuote(quote, basket, 0m, null);
 
             Assert.That(account.MarginSummary!.CurrentMarginLevelPercent, Is.GreaterThan(20m));
-            Assert.That(account.EvaluateSurvival(quote), Is.Null);
+            Assert.That(account.EvaluateSurvival(quote, 1), Is.Null);
             Assert.That(account.MarginSummary.MarginCallActive, Is.True, "still inside the Margin Call band");
         }
 
@@ -391,7 +410,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(account.MarginSummary.CurrentMarginLevelPercent, Is.Null, "a matched hedge has no margin level");
             Assert.That(account.MarginSummary.CurrentFreeMargin, Is.EqualTo(-130.4m));
 
-            var stopOut = account.EvaluateSurvival(quote);
+            var stopOut = account.EvaluateSurvival(quote, 1);
             Assert.That(stopOut, Is.Not.Null);
             Assert.That(stopOut!.Reason, Is.EqualTo(StopOutReason.NegativeEquity), "zero used margin must not look infinitely safe");
             Assert.That(stopOut.UsedMargin, Is.EqualTo(0m));
@@ -411,7 +430,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(m.CurrentFreeMargin, Is.EqualTo(-50m), "free margin is the balance when nothing is required");
             Assert.That(m.CurrentMarginLevelPercent, Is.Null);
             Assert.That(m.MarginCallActive, Is.False);
-            Assert.That(account.EvaluateSurvival(quote), Is.Null, "a flat account has nothing to liquidate");
+            Assert.That(account.EvaluateSurvival(quote, 1), Is.Null, "a flat account has nothing to liquidate");
 
             var empty = new Basket(1, quote, Harness.Defaults());
             var assessment = account.AssessEntry(new EntryOrder(1, TradeSide.Buy, 0.01m, quote, SizingRegime.Arithmetic, null), empty);
@@ -516,24 +535,24 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(m.CurrentFreeMargin, Is.EqualTo(1039.6m));
             Assert.That(m.CurrentMarginLevelPercent, Is.Null);
             Assert.That(m.MarginCallActive, Is.False);
-            Assert.That(m.StopOut, Is.Null);
+            Assert.That(m.StopOutEpisodes, Is.Empty);
             Assert.That(m.MaxUsedMargin, Is.EqualTo(4.04m), "the one-leg BUY state used the most margin before the hedge existed");
         }
 
         [Test]
         public void InitialBalanceChangesSurvivalOnTheSamePath()
         {
-            // Same basket and quote: a 44-balance account is stopped out, a 1000-balance account
+            // Same basket and quote: a 44-balance account enters Stop Out, a 1000-balance account
             // survives. (44 is the smallest balance that lets the two-leg basket open: the SELL
             // entry at 1980 needs equity 4.0 over used 4.04, just above the 50% entry block.)
             var poor = new Harness(Harness.Defaults(), null, 44m, new MarginParameters());
             poor.Anchor();
             poor.AtUpper();
             poor.AtLower();
-            Assert.That(poor.Engine.Basket!.OpenPositions, Is.EqualTo(2));
+            Assert.That(poor.Engine.Basket!.OpenPositions, Is.EqualTo(2), "both legs opened before the crash");
             var crash = new Quote(Harness.T0.AddSeconds(3), 2100m, 2100.2m);
             poor.ResearchAccount!.ObserveQuote(crash, poor.Engine.Basket, 0m, null);
-            var stopOut = poor.ResearchAccount.EvaluateSurvival(crash);
+            var stopOut = poor.ResearchAccount.EvaluateSurvival(crash, 1);
             Assert.That(stopOut, Is.Not.Null);
             Assert.That(stopOut!.Equity, Is.EqualTo(-116.4m), "44 - 160.4 floating");
 
@@ -543,7 +562,7 @@ namespace MarketLab.SingleAnchor.Tests
             rich.AtLower();
             rich.Feed(2100m, 2100.2m);
             Assert.That(rich.Engine.Fault, Is.Null);
-            Assert.That(rich.ResearchAccount!.MarginSummary!.StopOut, Is.Null);
+            Assert.That(rich.ResearchAccount!.MarginSummary!.StopOutEpisodes, Is.Empty);
         }
     }
 
@@ -752,30 +771,46 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void AFillThatImmediatelyStopsOutIsTerminalOnTheSameQuote()
+        public void AFillThatImmediatelyStopsOutIsForceLiquidatedOnTheSameQuote()
         {
             // Equity 4.05 finances the 4.04 projected margin of a 0.01 BUY at 2020, but the fill's
-            // immediate mark at the same quote's bid 2010 is -10: the post-fill account is
-            // terminal and must not be allowed to wait for a next quote that may never come.
+            // immediate mark at the same quote's bid 2010 is -10: the post-fill account is in Stop
+            // Out, so deterministic broker liquidation force-closes the leg on the same quote
+            // instead of leaving an account that failed survival intact.
             var h = new Harness(Harness.Defaults(), null, 4.05m, Harness.MarginDefaults());
             h.Anchor();
 
-            var failure = Assert.Throws<AccountStopOutException>(() => h.Feed(2010m, 2020m));
+            h.Feed(2010m, 2020m);
 
-            Assert.That(failure!.Kind, Is.EqualTo("AccountStopOut"));
-            Assert.That(h.BasketsClosed, Is.Empty);
-            Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1), "the filled leg stays in the ledger and in the terminal state");
-            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(0), "the fill is not published as a normal successful entry");
-            Assert.That(h.Executor.Entries, Has.Count.EqualTo(1), "the executor did fill the order");
+            Assert.That(h.Engine.Fault, Is.Null, "reaching Stop Out no longer faults the engine");
+            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(1), "the fill happened and is published as a normal entry");
+            Assert.That(h.Engine.ForcedLiquidations, Is.EqualTo(1));
+            Assert.That(h.Engine.BasketsLiquidated, Is.EqualTo(1));
+            Assert.That(h.Engine.BasketsClosed, Is.EqualTo(0), "a broker liquidation is not a strategy close");
+            Assert.That(h.Engine.Basket, Is.Null, "the only position was force-closed");
+            Assert.That(h.Engine.RealizedProfit, Is.EqualTo(-10m), "(2010 - 2020) * 0.01 * 100");
 
-            var stopOut = h.ResearchAccount!.MarginSummary!.StopOut;
-            Assert.That(stopOut, Is.Not.Null);
-            Assert.That(stopOut!.Time, Is.EqualTo(h.Engine.LastProcessedQuote!.Value.Time));
-            Assert.That(stopOut.Equity, Is.EqualTo(-5.95m), "balance 4.05 plus the immediate -10 mark");
-            Assert.That(stopOut.FloatingProfit, Is.EqualTo(-10m));
-            Assert.That(stopOut.UsedMargin, Is.EqualTo(4.04m));
-            Assert.That(stopOut.OpenPositions, Is.EqualTo(1));
-            Assert.Throws<AccountStopOutException>(() => h.Feed(2000m, 2000.2m), "a faulted engine refuses every further quote");
+            var record = h.Engine.ClosedBaskets[0];
+            Assert.That(record.Reason, Is.EqualTo(ExitReason.BrokerLiquidation));
+            Assert.That(record.HistoricalEntries, Is.EqualTo(1));
+            Assert.That(record.LiquidatedPositions, Is.EqualTo(1));
+            Assert.That(record.LiquidatedRealizedProfit, Is.EqualTo(-10m));
+            Assert.That(record.RealizedProfit, Is.EqualTo(-10m));
+            Assert.That(record.LiquidationTrace[0].TradeNumber, Is.EqualTo(1));
+            Assert.That(record.LiquidationTrace[0].Side, Is.EqualTo(TradeSide.Buy));
+            Assert.That(record.LiquidationTrace[0].ClosePrice, Is.EqualTo(2010m), "a BUY closes at the Bid less slippage");
+
+            var episode = h.ResearchAccount!.MarginSummary!.StopOutEpisodes[0];
+            Assert.That(episode.Reason, Is.EqualTo(StopOutReason.MarginLevel));
+            Assert.That(episode.Outcome, Is.EqualTo(StopOutEpisodeOutcome.AllPositionsLiquidated));
+            Assert.That(episode.AtTrigger.Equity, Is.EqualTo(-5.95m), "balance 4.05 plus the immediate -10 mark");
+            Assert.That(episode.AtTrigger.UsedMargin, Is.EqualTo(4.04m));
+            Assert.That(episode.Liquidations, Has.Count.EqualTo(1));
+            Assert.That(episode.Liquidations[0].Before.Balance, Is.EqualTo(4.05m));
+            Assert.That(episode.Liquidations[0].After.Balance, Is.EqualTo(-5.95m), "the realized loss reaches the balance");
+            Assert.That(episode.Liquidations[0].After.Equity, Is.EqualTo(-5.95m));
+            Assert.That(episode.Liquidations[0].After.OpenPositions, Is.EqualTo(0));
+            Assert.That(h.ResearchAccount.MarginSummary.ForcedLiquidations, Is.EqualTo(1));
         }
 
         [Test]
@@ -793,9 +828,9 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(failure!.Kind, Is.EqualTo("AccountSurvival"));
             Assert.That(failure.Condition, Is.EqualTo("ExecutableMarkUnavailable"));
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(1), "the fill happened and stays in the ledger");
-            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(0));
+            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(1), "the fill was published; the survival fault follows it");
             Assert.That(h.Engine.Fault, Is.SameAs(failure));
-            Assert.That(h.ResearchAccount!.MarginSummary!.StopOut, Is.Null, "this is not a stop-out: survival could not be established");
+            Assert.That(h.ResearchAccount!.MarginSummary!.StopOutEpisodes, Is.Empty, "this is not a stop-out: survival could not be established");
             Assert.That(h.ResearchAccount.FloatingObservable, Is.False);
             Assert.That(h.ResearchAccount.FloatingObservationsSkipped, Is.EqualTo(1));
             Assert.Throws<AccountSurvivalException>(() => h.Feed(3000m, 3000.2m), "a faulted engine refuses every further quote");
@@ -828,10 +863,11 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void StopOutPrecedesASameQuoteStrategyRescue()
+        public void BrokerLiquidationPrecedesASameQuoteStrategyRescue()
         {
-            // A stop-out state on the very quote whose escape would close the basket: the guard
-            // is asked before the exit evaluation, so the run stops and the basket is not closed.
+            // A Stop Out state on the very quote whose escape would close the basket: the guard is
+            // asked before the exit evaluation, so deterministic broker liquidation closes the
+            // positions least-profitable first and the strategy exit never runs.
             var p = Harness.Defaults();
             var executor = new SyntheticExecutor(p);
             var guard = new StubRiskGuard();
@@ -843,15 +879,20 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(basket.OpenPositions, Is.EqualTo(2));
 
             guard.NextStopOut = new MarginStopOut(StopOutReason.MarginLevel, Harness.T0.AddSeconds(3), 0m, 0m, 0.6m, 3.96m, -3.36m, 15.1515m, 2);
-            var failure = Assert.Throws<AccountStopOutException>(() => engine.OnQuote(new Quote(Harness.T0.AddSeconds(3), 1900m, 1900.2m)));
+            engine.OnQuote(new Quote(Harness.T0.AddSeconds(3), 1900m, 1900.2m));
 
-            Assert.That(failure!.Kind, Is.EqualTo("AccountStopOut"));
-            Assert.That(failure.Condition, Is.EqualTo("MarginLevel"));
-            Assert.That(engine.ClosedBaskets, Is.Empty, "the escape exit that would have fired is not allowed to rescue the account");
-            Assert.That(executor.Closes, Is.Empty, "the executor was never asked to close");
-            Assert.That(basket.OpenPositions, Is.EqualTo(2), "no broker liquidation is simulated");
-            Assert.That(engine.Fault, Is.SameAs(failure));
-            Assert.Throws<AccountStopOutException>(() => engine.OnQuote(new Quote(Harness.T0.AddSeconds(4), 1900m, 1900.2m)), "a faulted engine refuses every further quote");
+            Assert.That(engine.Fault, Is.Null, "Stop Out triggers liquidation instead of a terminal fault");
+            Assert.That(engine.BasketsClosed, Is.EqualTo(0), "the escape exit that would have fired is not a strategy close here");
+            Assert.That(executor.Closes, Is.Empty, "the whole-basket strategy close was never requested");
+            Assert.That(executor.LegCloses, Has.Count.EqualTo(2), "the broker force-closed both positions");
+            Assert.That(executor.LegCloses[0].Leg.Side, Is.EqualTo(TradeSide.Buy), "the losing BUY is the least-profitable position");
+            Assert.That(executor.LegCloses[1].Leg.Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(engine.RealizedProfit, Is.EqualTo(39.6m), "-120 on the BUY and +159.6 on the SELL");
+            Assert.That(engine.BasketsLiquidated, Is.EqualTo(1));
+            Assert.That(engine.ClosedBaskets[0].Reason, Is.EqualTo(ExitReason.BrokerLiquidation));
+            Assert.That(engine.ClosedBaskets[0].LiquidationTrace[0].TradeNumber, Is.EqualTo(1));
+            Assert.That(engine.ClosedBaskets[0].LiquidationTrace[1].TradeNumber, Is.EqualTo(2));
+            Assert.That(engine.Basket, Is.Null, "every position was liquidated");
 
             // The same path without a risk guard closes the basket at that quote.
             var plain = new Harness(Harness.Defaults(), null, 1000m);
@@ -863,19 +904,37 @@ namespace MarketLab.SingleAnchor.Tests
         }
 
         [Test]
-        public void StopOutAtExactlyTwentyPercentStopsTheRun()
+        public void StopOutAtExactlyTwentyPercentForceLiquidatesDeterministically()
         {
             var h = NewMarginHarness(null, 61.192m);
             h.Anchor();
             h.AtUpper();
             h.AtLower();
 
-            var failure = Assert.Throws<AccountStopOutException>(() => h.Feed(2000m, 2000.2m));
+            h.Feed(2000m, 2000.2m);
 
-            Assert.That(failure!.Condition, Is.EqualTo("MarginLevel"));
-            var stopOut = h.ResearchAccount!.MarginSummary!.StopOut!;
-            Assert.That(stopOut.MarginLevelPercent, Is.EqualTo(20m));
-            Assert.That(stopOut.Equity, Is.EqualTo(0.792m));
+            Assert.That(h.Engine.Fault, Is.Null);
+            Assert.That(h.Engine.ForcedLiquidations, Is.EqualTo(2), "the account needs both positions closed to leave Stop Out");
+            Assert.That(h.Engine.BasketsLiquidated, Is.EqualTo(1));
+            Assert.That(h.Engine.BasketsClosed, Is.EqualTo(0));
+            Assert.That(h.Engine.RealizedProfit, Is.EqualTo(-60.4m), "-40.4 on the SELL and -20 on the BUY");
+            Assert.That(h.ResearchAccount!.Balance, Is.EqualTo(0.792m));
+
+            var episode = h.ResearchAccount.MarginSummary!.StopOutEpisodes[0];
+            Assert.That(episode.Reason, Is.EqualTo(StopOutReason.MarginLevel));
+            Assert.That(episode.AtTrigger.MarginLevelPercent, Is.EqualTo(20m));
+            Assert.That(episode.AtTrigger.Equity, Is.EqualTo(0.792m));
+            Assert.That(episode.Outcome, Is.EqualTo(StopOutEpisodeOutcome.AllPositionsLiquidated));
+            Assert.That(episode.Liquidations[0].Leg.TradeNumber, Is.EqualTo(2), "the SELL leg is the least-profitable position");
+            Assert.That(episode.Liquidations[0].Leg.Side, Is.EqualTo(TradeSide.Sell));
+            Assert.That(episode.Liquidations[0].Leg.ClosePrice, Is.EqualTo(2000.2m), "a SELL closes at the Ask plus slippage");
+            Assert.That(episode.Liquidations[0].Leg.RealizedProfit, Is.EqualTo(-40.4m));
+            Assert.That(episode.Liquidations[0].After.MarginLevelPercent, Is.EqualTo(0.792m / 4.04m * 100m), "one forced close did not restore the margin");
+            Assert.That(episode.Liquidations[1].Leg.TradeNumber, Is.EqualTo(1));
+            Assert.That(episode.Liquidations[1].Leg.Ordinal, Is.EqualTo(2));
+            Assert.That(episode.Liquidations[1].Leg.RealizedProfit, Is.EqualTo(-20m));
+            Assert.That(episode.AfterLiquidation.OpenPositions, Is.EqualTo(0));
+            Assert.That(episode.AfterLiquidation.Balance, Is.EqualTo(0.792m));
         }
 
         [Test]
@@ -888,12 +947,13 @@ namespace MarketLab.SingleAnchor.Tests
             h.Feed(2000m, 2000.2m);
 
             Assert.That(h.Engine.Fault, Is.Null);
-            Assert.That(h.ResearchAccount!.MarginSummary!.StopOut, Is.Null);
+            Assert.That(h.Engine.ForcedLiquidations, Is.EqualTo(0), "above the threshold nothing is liquidated");
+            Assert.That(h.ResearchAccount!.MarginSummary!.StopOutEpisodes, Is.Empty);
             Assert.That(h.ResearchAccount.MarginSummary.MarginCallActive, Is.True);
         }
 
         [Test]
-        public void StopOutIsEvaluatedOnAQuoteOnlyBufferQuote()
+        public void StopOutOnAQuoteOnlyBufferQuoteStillForceLiquidates()
         {
             var sessions = new[] { new HistoricalSession(new DateTime(2024, 1, 2, 9, 0, 0), new DateTime(2024, 1, 2, 9, 30, 0)) };
             var h = new Harness(Harness.Defaults(), new HistoricalTradingAvailability(sessions), 20.808m, new MarginParameters());
@@ -901,17 +961,21 @@ namespace MarketLab.SingleAnchor.Tests
             h.FeedAt(new DateTime(2024, 1, 2, 9, 6, 1), 2019.8m, 2020m); // BUY 0.01 at 2020
             Assert.That(h.ResearchAccount!.MarginSummary!.CurrentUsedMargin, Is.EqualTo(4.04m));
 
-            // 09:26 is in the closing buffer: no strategy action, but the account still revalues
-            // and stop-out is terminal (equity 0.808 over used 4.04 = 20%).
-            var failure = Assert.Throws<AccountStopOutException>(() => h.FeedAt(new DateTime(2024, 1, 2, 9, 26, 0), 2000m, 2000.2m));
+            // 09:26 is in the closing buffer: no strategy action, but the account still revalues and
+            // Stop Out is a broker condition, so deterministic liquidation executes there too
+            // (equity 0.808 over used 4.04 = 20%).
+            h.FeedAt(new DateTime(2024, 1, 2, 9, 26, 0), 2000m, 2000.2m);
 
-            Assert.That(failure!.Condition, Is.EqualTo("MarginLevel"));
+            Assert.That(h.Engine.Fault, Is.Null);
             Assert.That(h.Engine.QuoteOnlyQuotes, Is.EqualTo(1));
             Assert.That(h.BasketsClosed, Is.Empty);
+            Assert.That(h.Engine.ForcedLiquidations, Is.EqualTo(1));
+            Assert.That(h.Engine.BasketsLiquidated, Is.EqualTo(1), "the buffer quote closed the only position without a strategy action");
+            Assert.That(h.ResearchAccount.MarginSummary.StopOutEpisodes[0].Liquidations[0].Leg.ClosePrice, Is.EqualTo(2000m));
         }
 
         [Test]
-        public void NegativeEquityWithOpenPositionsStopsTheEnginePath()
+        public void NegativeEquityWithOpenPositionsForceLiquidatesEveryPosition()
         {
             var h = NewMarginHarness(null, 44m);
             h.Anchor();
@@ -919,11 +983,17 @@ namespace MarketLab.SingleAnchor.Tests
             h.AtLower();
             Assert.That(h.Engine.Basket!.OpenPositions, Is.EqualTo(2));
 
-            var failure = Assert.Throws<AccountStopOutException>(() => h.Feed(2000m, 2000.2m));
+            h.Feed(2000m, 2000.2m);
 
-            Assert.That(failure!.Condition, Is.EqualTo("MarginLevel"), "negative equity with a charged uncovered side reports the level rule");
-            Assert.That(h.ResearchAccount!.MarginSummary!.StopOut!.Equity, Is.EqualTo(-16.4m), "44 - 60.4 floating");
-            Assert.That(h.ResearchAccount.MarginSummary.StopOut.OpenPositions, Is.EqualTo(2));
+            Assert.That(h.Engine.Fault, Is.Null);
+            Assert.That(h.Engine.ForcedLiquidations, Is.EqualTo(2));
+            Assert.That(h.Engine.BasketsLiquidated, Is.EqualTo(1));
+            var episode = h.ResearchAccount!.MarginSummary!.StopOutEpisodes[0];
+            Assert.That(episode.Reason, Is.EqualTo(StopOutReason.MarginLevel), "negative equity with a charged uncovered side reports the level rule first");
+            Assert.That(episode.AtTrigger.Equity, Is.EqualTo(-16.4m), "44 - 60.4 floating");
+            Assert.That(episode.AtTrigger.OpenPositions, Is.EqualTo(2));
+            Assert.That(episode.AfterLiquidation.Balance, Is.EqualTo(-16.4m), "the realized loss is now the balance of the flat account");
+            Assert.That(episode.AfterLiquidation.OpenPositions, Is.EqualTo(0));
         }
     }
 
@@ -958,7 +1028,8 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(marginEnabled.Engine.BasketsClosed, Is.GreaterThan(0), "the stream must exercise closes");
             Assert.That(marginEnabled.Engine.RejectedEntryAttempts, Is.GreaterThan(0), "the stream must exercise rejected attempts");
             Assert.That(marginEnabled.ResearchAccount!.MarginSummary!.MaxUsedMargin, Is.GreaterThan(0m), "the margin layer observed real inventory");
-            Assert.That(marginEnabled.ResearchAccount.MarginSummary.StopOut, Is.Null);
+            Assert.That(marginEnabled.ResearchAccount.MarginSummary.StopOutEpisodes, Is.Empty);
+            Assert.That(marginEnabled.Engine.ForcedLiquidations, Is.EqualTo(0), "a stream that never reaches Stop Out is unchanged");
             Assert.That(marginEnabled.ResearchAccount.MarginSummary.InsufficientMarginAttempts, Is.EqualTo(0));
             Assert.That(marginEnabled.ResearchAccount.MarginSummary.MarginCallBlockedAttempts, Is.EqualTo(0));
             Assert.That(accountOnly.ResearchAccount!.MarginSummary, Is.Null, "no margin parameters: no margin block");
@@ -978,7 +1049,7 @@ namespace MarketLab.SingleAnchor.Tests
             // margin parameters refuses the risk-guard role instead of fabricating account state.
             var account = new SingleAnchorResearchAccount(Harness.Defaults(), 1000m);
             Assert.That(account.MarginSummary, Is.Null);
-            Assert.Throws<InvalidOperationException>(() => account.EvaluateSurvival(new Quote(Harness.T0, 2000m, 2000.2m)));
+            Assert.Throws<InvalidOperationException>(() => account.EvaluateSurvival(new Quote(Harness.T0, 2000m, 2000.2m), 1));
             Assert.Throws<InvalidOperationException>(() => account.AssessEntry(
                 new EntryOrder(1, TradeSide.Buy, 0.01m, new Quote(Harness.T0, 2000m, 2000.2m), SizingRegime.Arithmetic, null),
                 new Basket(1, new Quote(Harness.T0, 1999.9m, 2000.1m), Harness.Defaults())));
@@ -1126,23 +1197,35 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(json, Does.Contain("\"MarginCallActive\""));
             Assert.That(json, Does.Contain("\"MarginCallBlockedAttempts\""));
             Assert.That(json, Does.Contain("\"InsufficientMarginAttempts\""));
-            Assert.That(json, Does.Contain("\"StopOut\":null"));
+            Assert.That(json, Does.Contain("\"ForcedLiquidations\":0"));
+            Assert.That(json, Does.Contain("\"StopOutEpisodes\":[]"));
             Assert.That(json, Does.Contain("\"ContractSize\":100"));
             Assert.That(json, Does.Contain("\"Leverage\":500"));
         }
 
         [Test]
-        public void TerminalStopOutAndRejectionEvidenceSerialize()
+        public void StopOutEpisodeAndForcedLiquidationEvidenceSerialize()
         {
             var h = new Harness(Harness.Defaults(), null, 61.192m, new MarginParameters());
             h.Anchor();
             h.AtUpper();
             h.AtLower();
-            Assert.Throws<AccountStopOutException>(() => h.Feed(2000m, 2000.2m));
+            h.Feed(2000m, 2000.2m);
 
             var stopOutJson = JsonSerializer.Serialize(h.ResearchAccount!.MarginSummary, HostLike);
-            Assert.That(stopOutJson, Does.Contain("\"StopOut\":{"));
+            Assert.That(stopOutJson, Does.Contain("\"ForcedLiquidations\":2"));
+            Assert.That(stopOutJson, Does.Contain("\"StopOutEpisodes\":["));
             Assert.That(stopOutJson, Does.Contain("\"Reason\":\"MarginLevel\""));
+            Assert.That(stopOutJson, Does.Contain("\"Outcome\":\"AllPositionsLiquidated\""));
+            Assert.That(stopOutJson, Does.Contain("\"TriggerQuoteSequence\":4"));
+            Assert.That(stopOutJson, Does.Contain("\"Liquidations\":["));
+            Assert.That(stopOutJson, Does.Contain("\"TradeNumber\":2"), "the SELL leg is the least-profitable position");
+            Assert.That(stopOutJson, Does.Contain("\"Side\":\"Sell\""));
+            Assert.That(stopOutJson, Does.Contain("\"ClosePrice\":2000.2"));
+            Assert.That(stopOutJson, Does.Contain("\"Ordinal\":1"));
+            Assert.That(stopOutJson, Does.Contain("\"LiquidationTime\""));
+            Assert.That(stopOutJson, Does.Contain("\"Before\":{"));
+            Assert.That(stopOutJson, Does.Contain("\"After\":{"));
 
             var rejections = new Harness(Harness.Defaults(), null, 88.5m, new MarginParameters());
             rejections.Anchor();

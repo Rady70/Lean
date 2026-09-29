@@ -20,6 +20,12 @@ removed from the parsed rows before hashing, so the projection is genuinely stra
 a pre-PR-3 result and a margin-disabled PR 3 result of the same strategy path hash identically
 even when rejection episodes exist.
 
+Phase B adds liquidation fields to the closed-basket and open-basket objects (liquidation
+trace, liquidated position count and realized P/L, historical entry count). They stay in the
+projection because they are strategy-ledger facts. A projection hash is therefore comparable
+only within the same model revision: a Phase B result of a path and a pre-Phase-B result of the
+same path do not hash identically even when neither run liquidated anything.
+
 The values are re-serialized as compact canonical JSON in a fixed key order
 (ConvertTo-Json -Depth 100 -Compress) and hashed with SHA-256. Run every compared file through
 the same shell, because hosts may format JSON numbers slightly differently.

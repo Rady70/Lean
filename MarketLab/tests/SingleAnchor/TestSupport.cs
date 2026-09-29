@@ -18,8 +18,10 @@ namespace MarketLab.SingleAnchor.Tests
 
         public List<EntryOrder> Entries { get; } = new List<EntryOrder>();
         public List<CloseOrder> Closes { get; } = new List<CloseOrder>();
+        public List<LegCloseOrder> LegCloses { get; } = new List<LegCloseOrder>();
         public Func<EntryOrder, EntryExecution>? EntryOverride { get; set; }
         public Func<CloseOrder, CloseExecution>? CloseOverride { get; set; }
+        public Func<LegCloseOrder, LegCloseExecution>? LegCloseOverride { get; set; }
 
         public EntryExecution OpenPosition(EntryOrder order)
         {
@@ -31,6 +33,12 @@ namespace MarketLab.SingleAnchor.Tests
         {
             Closes.Add(order);
             return CloseOverride != null ? CloseOverride(order) : _research.CloseBasket(order);
+        }
+
+        public LegCloseExecution ClosePosition(LegCloseOrder order)
+        {
+            LegCloses.Add(order);
+            return LegCloseOverride != null ? LegCloseOverride(order) : _research.ClosePosition(order);
         }
     }
 
@@ -59,6 +67,9 @@ namespace MarketLab.SingleAnchor.Tests
             Engine.TrailingActivated += e => TrailingActivations.Add(e);
             Engine.BasketClosed += e => BasketsClosed.Add(e);
             Engine.BasketCloseFailed += e => CloseFailures.Add(e);
+            Engine.StopOutTriggered += e => StopOutTriggers.Add(e);
+            Engine.ForcedLiquidation += e => ForcedLiquidations.Add(e);
+            Engine.BasketLiquidated += e => BasketsLiquidated.Add(e);
         }
 
         public SingleAnchorParameters Parameters { get; }
@@ -75,6 +86,9 @@ namespace MarketLab.SingleAnchor.Tests
         public List<TrailingActivatedEvent> TrailingActivations { get; } = new List<TrailingActivatedEvent>();
         public List<BasketClosedEvent> BasketsClosed { get; } = new List<BasketClosedEvent>();
         public List<BasketCloseFailedEvent> CloseFailures { get; } = new List<BasketCloseFailedEvent>();
+        public List<StopOutTriggeredEvent> StopOutTriggers { get; } = new List<StopOutTriggeredEvent>();
+        public List<ForcedLiquidationEvent> ForcedLiquidations { get; } = new List<ForcedLiquidationEvent>();
+        public List<BasketLiquidatedEvent> BasketsLiquidated { get; } = new List<BasketLiquidatedEvent>();
 
         private int _tick;
 
