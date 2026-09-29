@@ -187,6 +187,7 @@ finally {
             windowsPowerShell = $windowsPowerShell
             dotnetSdk         = $sdkVersion
             dotnetExecutable  = $dotnet
+            dotnetInfo        = if ($dotnet) { @(& $dotnet --info 2>$null) } else { @() }
             runtimes          = if ($dotnet) { @(& $dotnet --list-runtimes 2>$null) } else { @() }
             git               = $gitVersion
             gh                = $ghVersion

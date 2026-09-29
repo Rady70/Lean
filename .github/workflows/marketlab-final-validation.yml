@@ -65,6 +65,7 @@ jobs:
           if (git status --porcelain) { throw 'Working tree is not clean after checkout.' }
           $base = $env:GITHUB_SHA
           $status = (gh api "repos/$env:GITHUB_REPOSITORY/compare/$base...$sha" --jq '.status').Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($status)) { throw "Could not verify base ancestry through the GitHub compare API (gh exit code $LASTEXITCODE)." }
           if ($status -notin @('ahead','identical')) { throw "Candidate $sha does not contain dispatched master $base (compare status: $status)." }
           Write-Host "base for this gate: $base ($status of candidate $sha)"
 
