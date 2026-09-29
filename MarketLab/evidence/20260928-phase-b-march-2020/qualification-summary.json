@@ -1,6 +1,10 @@
 {
   "contract": "marketlab-phase-b-march-2020-lifetime-economics-qualification-v1",
-  "generatedUtc": "2026-09-28T23:22:37Z",
+  "sourceRevision": "d92580d74feafe7d42da0307fa979f493e1d085d",
+  "sourceTreeClean": true,
+  "algorithmSha256": "f4b051b8eef8b3fb0ee64d9ca378575f9975dc6037ebf3f6535382c84aeacb27",
+  "configSha256LfNormalized": "877dadf1ff325ed836970cd36090a2b1ba48f3d687d4ad68ef11ba56e7b1a99f",
+  "launcherSha256": "7a0d04baeb48561141dbc6e241033392cd921f5d04fdeba2b18f56a56cffce47",
   "modelRevision": "marketlab-single-anchor-broker-liquidation-v1",
   "stopOutModel": "BrokerLiquidation",
   "windowStart": "2019-01-01",
@@ -9,7 +13,13 @@
   "strategyNote": "frozen baseline parameter values; only single-anchor-end-date bounded to 2020-04-30",
   "runs": [
     {
-      "run": "20260928-225825-SingleAnchorVNextAlgorithm",
+      "run": "20260928-234933-SingleAnchorVNextAlgorithm",
+      "invocation": "marketlab-run-invocation-run1.json",
+      "outcome": "marketlab-run-outcome-run1.json",
+      "leanExitCode": 0,
+      "helperExitCode": 0,
+      "engineErrorCount": 0,
+      "resultsSha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef",
       "completed": true,
       "quotes": 55873930,
       "realizedProfit": 5572.005,
@@ -22,7 +32,13 @@
       "openPositions": 19
     },
     {
-      "run": "20260928-231147-SingleAnchorVNextAlgorithm",
+      "run": "20260929-000450-SingleAnchorVNextAlgorithm",
+      "invocation": "marketlab-run-invocation-run2.json",
+      "outcome": "marketlab-run-outcome-run2.json",
+      "resultsSha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef",
+      "leanExitCode": 0,
+      "helperExitCode": 0,
+      "engineErrorCount": 0,
       "completed": true,
       "quotes": 55873930,
       "realizedProfit": 5572.005,

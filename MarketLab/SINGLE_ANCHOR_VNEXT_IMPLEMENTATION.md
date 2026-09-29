@@ -1739,26 +1739,34 @@ Dukascopy XAUUSD data folder `E:\MarketLab\data\lean\xauusd-dukascopy` over
 `2019-01-01` .. `2020-04-30` — the frozen start date and the former failure
 region plus five weeks of continuation — with the frozen strategy parameter
 values (only `single-anchor-end-date` bounded to `2020-04-30`), the frozen
-session map and `single-anchor-margin-enabled=true`. The runs deliberately do
-not use the frozen-baseline `-RunEvidence`/contract binding, because the
-contract asserts the full 2019-01-01..2026-06-30 window. The full 2019-2026
-baseline and the 413,750,130-row data qualification were not run.
+session map and `single-anchor-margin-enabled=true`. The runs were launched
+from the clean committed revision
+`d92580d74feafe7d42da0307fa979f493e1d085d` with
+`run-backtest.ps1 -RunEvidence` and **without**
+`-BaselineContract`/`-BaselineRegister` (the frozen contract asserts the full
+2019-01-01..2026-06-30 window; `-RunEvidence` alone still records the source,
+binary and runtime binding). The full 2019-2026 baseline and the
+413,750,130-row data qualification were not run.
 
 ~~~powershell
 pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release `
   -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp `
   -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll `
   -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy `
-  -OutputRoot E:\MarketLab\phaseb-march2020-correction `
+  -OutputRoot E:\MarketLab\phaseb-march2020-review2 `
   -Parameters "<the 30 frozen single-anchor-* values, single-anchor-end-date:2020-04-30>" `
-  -AllowMissingData
+  -AllowMissingData -RunEvidence
 ~~~
 
 Both runs exited 0 with `completed: true` and no failure, and produced
 **byte-identical** `results.json` (SHA-256
 `b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef`,
 1,202,916 bytes), so the whole run is deterministic, not only the liquidation
-sequence. The pre-trigger path reproduces the Phase A record exactly: basket
+sequence. Each run's `marketlab-run-invocation.json` records the repository
+HEAD `d92580d74feafe7d42da0307fa979f493e1d085d`, a clean tree, and the
+algorithm/launcher/config SHA-256; each `marketlab-run-outcome.json` records
+exit code 0, zero engine errors and the same results SHA-256. The pre-trigger
+path reproduces the Phase A record exactly: basket
 #276, trigger quote sequence 51,304,749 and time 2020-03-23T12:06:26.292Z, bid
 1505.618 / ask 1506.182, balance 25,519.92800, floating -25,320.42700, equity
 199.50100, used margin 1,157.8848069189189189189189189, free margin
@@ -1780,22 +1788,25 @@ positions.
 
 The least-profitable-first property held over all 30 real forced closes
 (non-decreasing executable P/L in every episode) and the equal-profit tie rule
-was never violated. The compact reviewable evidence is committed under
-`MarketLab\evidence\20260928-phase-b-march-2020\` (`manifest.json` with the
-exact invocation and both `results.json` hashes, `qualification-summary.json`
-with every ordered episode and forced-close record, `run-parameters.txt` and a
-`README.md`); the full run directories stay local outside Git. This
-qualification is execution evidence only: it does not establish profitability,
-does not determine the final 2019-2026 strategy outcome and does not replace
-the later corrected full-history characterization (Phase D).
+was never violated. The compact source-bound evidence is committed under
+`MarketLab\evidence\20260928-phase-b-march-2020\`: `manifest.json` (source
+revision, hashes and key results), both machine-generated
+`marketlab-run-invocation-*.json` and `marketlab-run-outcome-*.json` records,
+the canonical `results.json` (with every closed basket's `LiquidationTrace` and
+surviving `LegTrace`, so the least-profitable-first selection can be
+reconstructed for every forced close), `qualification-summary.json` and
+`run-parameters.txt`. The evidence commit is a child of the source revision and
+changes only evidence/docs. The full run directories stay local outside Git.
+This qualification is execution evidence only: it does not establish
+profitability, does not determine the final 2019-2026 strategy outcome and does
+not replace the later corrected full-history characterization (Phase D).
 
 The earlier Phase B qualification runs under `E:\MarketLab\phaseb-march2020\`
-were produced before the lifetime-economics correction and are **superseded**;
-they are not qualification evidence for this model. Their reported basket #276
-outcome (Escape with a lifetime result of -25,028.97300 while the survivors
-were only +22.44800) was the defect the correction fixes: the survivors' own
-profit was compared with the Escape threshold while the forced loss was
-ignored.
+and `E:\MarketLab\phaseb-march2020-correction\` are **superseded**; they are
+not qualification evidence for this model. The first used survivor-only
+economics (its reported #276 Escape closed at lifetime -25,028.97300 while the
+survivors were only +22.44800, the defect the correction fixes); the second had
+the corrected economics but no source binding. Neither result is inherited.
 
 ### 14.6 Limitations
 

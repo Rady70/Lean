@@ -1,0 +1,29 @@
+{
+  "contract": "marketlab-run-outcome-evidence-v1",
+  "generatedUtc": "2026-09-29T00:18:44Z",
+  "invocationEvidence": "marketlab-run-invocation.json",
+  "invocationEvidenceSha256": "59cbdb281779eb892554bddd125d3e86262c8568d56253dc09ad5ef2756a4ebf",
+  "leanExitCode": 0,
+  "helperExitCode": 0,
+  "leanElapsedSeconds": 834.7,
+  "engineErrorCheckPerformed": true,
+  "engineErrorCount": 0,
+  "expectedTerminalException": "",
+  "terminalExceptionLineCount": 0,
+  "engineErrorMessages": [],
+  "dataMonitorReport": "data-monitor-report-20260929001844653.json",
+  "failedDataRequestCount": 72,
+  "totalDataRequestCount": 489,
+  "runtimeBinariesAfter": {
+    "QuantConnect.Lean.Launcher.dll": "7a0d04baeb48561141dbc6e241033392cd921f5d04fdeba2b18f56a56cffce47",
+    "QuantConnect.Lean.Engine.dll": "9a1f1e23fc4353089f354cb373f1e2b0bc3d7753cb4a703191e9f6d07a7ee0f6",
+    "QuantConnect.Common.dll": "e995bbb77fd0ffa3f37383972d046a8509e056955eebacc32f7f52a7e9ac8f80",
+    "QuantConnect.Algorithm.dll": "f796a4a3576f79fd3a1750816d3237539b26b95f90a7afe12a78b5d1710b79cf",
+    "QuantConnect.AlgorithmFactory.dll": "4d6bdc2e51f1b2f1ab4b84ea4a79e11874b2ffa5bc1b1d1b6bae739165de7f3d",
+    "QuantConnect.Configuration.dll": "18abef95520e1fc472ece62a96856eb0477be0943927e50079dfdf4c5402f672",
+    "QuantConnect.Logging.dll": "419db708603b4fb95e0811cd5f5ba8a46dc4ca053e7435e98733fe9b0de23778"
+  },
+  "runtimeBinariesUnchanged": true,
+  "baselineArtifactsAfter": null,
+  "strategyResultsSha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef"
+}

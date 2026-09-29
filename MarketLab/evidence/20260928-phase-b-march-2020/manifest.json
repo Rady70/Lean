@@ -1,38 +1,80 @@
 {
   "contract": "marketlab-phase-b-broker-liquidation-qualification-evidence-v1",
-  "recordedUtc": "2026-09-28T23:30:00Z",
-  "phase": "Phase C focused local qualification of the corrected (lifetime-economics) Phase B model",
-  "role": "Bounded qualification of the corrected broker-forced liquidation model over the former March 2020 failure region. It preserves the ordered Stop Out episodes and forced-liquidated basket records so the liquidation sequence is reviewable without the 1.2 MB full results files. The pre-correction Phase B qualification runs (E:\\MarketLab\\phaseb-march2020\\) are superseded and are not qualification evidence for this model.",
+  "phase": "Phase B focused local qualification of the broker-forced liquidation model over the former March 2020 failure region",
+  "sourceRevision": "d92580d74feafe7d42da0307fa979f493e1d085d",
+  "sourceTreeClean": true,
   "modelRevision": "marketlab-single-anchor-broker-liquidation-v1",
   "stopOutModel": "BrokerLiquidation",
+  "sourceBinding": "Both runs were launched with run-backtest.ps1 -RunEvidence and without -BaselineContract/-BaselineRegister (the frozen contract asserts the full 2019-01-01..2026-06-30 window). The machine-generated marketlab-run-invocation-runN.json files record the repository HEAD, the clean-tree check, the algorithm/launcher/config SHA-256 values and the exact launcher arguments; the marketlab-run-outcome-runN.json files record the exit codes, the zero engine-error count and the results SHA-256, which equals the SHA-256 of the committed canonical results.json. This evidence directory is committed after the source revision and changes only evidence/docs, not executable source.",
   "window": {
     "start": "2019-01-01",
     "end": "2020-04-30",
-    "note": "Frozen baseline parameter values; only single-anchor-end-date is bounded. Running without the frozen-baseline -RunEvidence contract binding is deliberate: that contract asserts the full 2019-01-01..2026-06-30 window."
+    "note": "Frozen baseline parameter values; only single-anchor-end-date is bounded."
   },
   "dataFolder": "E:\\MarketLab\\data\\lean\\xauusd-dukascopy",
   "sessionMap": "marketlab-sessions/xauusd-sessions.json",
-  "parametersFile": "run-parameters.txt",
-  "runCommand": "pwsh -File MarketLab\\scripts\\run-backtest.ps1 -Configuration Release -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp -AlgorithmLocation MarketLab\\src\\SingleAnchor\\bin\\Release\\MarketLab.SingleAnchor.dll -DataFolder E:\\MarketLab\\data\\lean\\xauusd-dukascopy -OutputRoot E:\\MarketLab\\phaseb-march2020-correction -Parameters <run-parameters.txt> -AllowMissingData",
+  "algorithmSha256": "f4b051b8eef8b3fb0ee64d9ca378575f9975dc6037ebf3f6535382c84aeacb27",
+  "configSha256LfNormalized": "877dadf1ff325ed836970cd36090a2b1ba48f3d687d4ad68ef11ba56e7b1a99f",
+  "launcherSha256": "7a0d04baeb48561141dbc6e241033392cd921f5d04fdeba2b18f56a56cffce47",
+  "parameterFile": {
+    "path": "run-parameters.txt",
+    "sha256": "cc3f670d24e1eea32f9abaaec7a13a1dc5b53756fc21cdc3418b7f19d4b802c1",
+    "bytes": 1078
+  },
   "runs": [
     {
-      "directory": "20260928-225825-SingleAnchorVNextAlgorithm",
+      "directory": "E:\\MarketLab\\phaseb-march2020-review2\\20260928-234933-SingleAnchorVNextAlgorithm",
+      "invocationFile": {
+        "path": "marketlab-run-invocation-run1.json",
+        "sha256": "275def845b20936a699d69d66e894e9ee20e1c11d440d6dcb1c7c0420e700bb4",
+        "bytes": 6706,
+        "generatedUtc": "2026-09-28T23:49:33Z"
+      },
+      "outcomeFile": {
+        "path": "marketlab-run-outcome-run1.json",
+        "sha256": "f1ae0ad8960cb850af238bfa570d0a3957002ca7b398f59ba8a437d7c69a04dd",
+        "bytes": 1570,
+        "generatedUtc": "2026-09-29T00:04:44Z"
+      },
+      "leanExitCode": 0,
       "helperExitCode": 0,
-      "resultsSha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef",
-      "resultsBytes": 1202916
+      "engineErrorCount": 0,
+      "expectedTerminalException": null,
+      "resultsSha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef"
     },
     {
-      "directory": "20260928-231147-SingleAnchorVNextAlgorithm",
+      "directory": "E:\\MarketLab\\phaseb-march2020-review2\\20260929-000450-SingleAnchorVNextAlgorithm",
+      "invocationFile": {
+        "path": "marketlab-run-invocation-run2.json",
+        "sha256": "59cbdb281779eb892554bddd125d3e86262c8568d56253dc09ad5ef2756a4ebf",
+        "bytes": 6706,
+        "generatedUtc": "2026-09-29T00:04:50Z"
+      },
+      "outcomeFile": {
+        "path": "marketlab-run-outcome-run2.json",
+        "sha256": "c85e50f88bf36da05f8cc4d2df63e1f13566e7c1fdc2a4c85e49760144d39330",
+        "bytes": 1570,
+        "generatedUtc": "2026-09-29T00:18:44Z"
+      },
+      "leanExitCode": 0,
       "helperExitCode": 0,
-      "resultsSha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef",
-      "resultsBytes": 1202916
+      "engineErrorCount": 0,
+      "expectedTerminalException": null,
+      "resultsSha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef"
     }
   ],
-  "resultsByteIdentical": true,
+  "resultsByteIdenticalAcrossRuns": true,
+  "canonicalResults": {
+    "path": "results.json",
+    "sha256": "b28336fc791df1d3d16b69a3e04dd16c657869091cb3eab5ffc38265735bdcef",
+    "bytes": 1202916,
+    "fromRun": "20260928-234933-SingleAnchorVNextAlgorithm",
+    "role": "Complete run result: every closed basket record with its liquidation trace and surviving leg trace, so the least-profitable-first selection can be reconstructed for every forced close (each leg's side, lots and entry price; each episode's trigger quote; each liquidation's realized P/L and ordinal)."
+  },
   "qualificationSummary": {
     "path": "qualification-summary.json",
-    "sha256": "37a355a7359b6201568f923be84334b13a8a638b8e020476492b573ab3d519b8",
-    "bytes": 51319
+    "sha256": "816c4b84ffb5937b8613db9df936b76da7a160090fddf02428acaa96ae47fb0a",
+    "bytes": 52223
   },
   "keyResults": {
     "completed": true,
@@ -56,11 +98,21 @@
       "forcedRealizedProfit": -25051.421,
       "closedAt": "2020-04-13T18:24:10.475Z",
       "closeReason": "Escape",
+      "closeBid": 1721.098,
+      "closeAsk": 1721.212,
+      "exitThreshold": 22.1803125,
+      "exitProfit": 30.657,
       "lifetimeRealizedProfit": 30.657,
       "survivorsAtClose": 6
     }
   },
+  "leastProfitableFirst": true,
+  "equalProfitTieRuleHeld": true,
+  "supersededRuns": [
+    "E:\\MarketLab\\phaseb-march2020\\ (pre-correction survivor-only economics; not qualification evidence)",
+    "E:\\MarketLab\\phaseb-march2020-correction\\ (corrected economics but no -RunEvidence source binding; superseded by this directory)"
+  ],
   "notCommitted": [
-    "The full run directories (log.txt, LEAN result packets and storage) stay local outside Git under E:\\MarketLab\\phaseb-march2020-correction\\ because they carry the complete 55.9M-quote run state; their results.json identity is recorded above."
+    "The full run directories (log.txt, LEAN result packets) stay local outside Git under E:\\MarketLab\\phaseb-march2020-review2\\; the canonical results.json and the source-bound invocation/outcome records are committed here."
   ]
 }
