@@ -53,7 +53,7 @@ function Invoke-GateStep {
     Write-Host "=== $Name ==="
     Write-Host ("> " + $FilePath + ' ' + ($Arguments -join ' '))
     $started = [DateTime]::UtcNow
-    & $FilePath @Arguments
+    & $FilePath @Arguments *>&1 | ForEach-Object { Write-Host $_ }
     $code = $LASTEXITCODE
     $ended = [DateTime]::UtcNow
     [void]$script:steps.Add([ordered]@{
