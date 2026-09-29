@@ -754,9 +754,11 @@ Batch C:
 
 Every clean qualified run has no `ERROR::` line in its `log.txt`, so after a
 run that LEAN ended with exit code 0 the helper reads `log.txt` and exits **4**
-with an `ERROR:` block quoting up to five engine `ERROR::` lines when any are
-present. Two kinds of `ERROR::` line are **not** engine errors and are not
-counted:
+with an `ERROR:` block quoting up to five complete engine `ERROR::` lines when
+any are present. Individual lines are not truncated, so long paths retain the
+filename and error details. The same applies to `WARNING:` output with
+`-AllowEngineErrors`. Two kinds of `ERROR::` line are **not** engine errors and
+are not counted:
 
 - lines whose message starts with the algorithm time
   (`2013-10-07 09:31:00 ...`): LEAN routes the algorithm's own `Error()` /

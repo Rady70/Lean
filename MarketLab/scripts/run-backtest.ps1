@@ -1317,9 +1317,9 @@ if (Test-Path -LiteralPath $logPath -PathType Leaf) {
         $shown = 0
         foreach ($e in $engineErrors) {
             if ($shown -ge 5) { $lines += "  ... ($($engineErrors.Count - $shown) more in the log)"; break }
-            $text = $e
-            if ($text.Length -gt 240) { $text = $text.Substring(0, 240) + ' ...' }
-            $lines += "  $text"
+            # Bound the number of diagnostics, but preserve each complete line:
+            # truncating it can remove the filename or the cause of the error.
+            $lines += "  $e"
             $shown++
         }
         if ($AllowEngineErrors) {

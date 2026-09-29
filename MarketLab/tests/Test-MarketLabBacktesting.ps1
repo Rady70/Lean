@@ -603,7 +603,9 @@ try {
         # F2c: a valid zip whose only entry is empty. The file opens, so the
         # data monitor counts success; LEAN's only signal is an
         # "InvalidSource(): File not found" line for a file that exists.
-        $emptyData = New-SampleDataRoot 'empty-entry-data'
+        # Keep the diagnostic longer than the old 240-character display cap
+        # even with a short temp root; CI must not depend on the user's path.
+        $emptyData = New-SampleDataRoot ('empty-entry-data-' + ('x' * 64))
         $emptyFile = Join-Path $emptyData 'equity\usa\minute\spy\20131009_trade.zip'
         Remove-Item -LiteralPath $emptyFile -Force
         Add-Type -AssemblyName System.IO.Compression
@@ -619,6 +621,19 @@ try {
         Assert-Contains $empty.StdOut 'failed 0.' 'empty zip entry: data monitor reports 0 failed requests'
         $emptyErrorLines = @($empty.StdErr -split "`r?`n" | Where-Object { $_ -match 'ERROR' })
         Assert-Match $empty.StdErr '(?m)^ERROR:   .*SubscriptionDataSourceReader\.InvalidSource\(\): File not found: .*20131009_trade\.zip' 'empty zip entry: ERROR quotes the InvalidSource line for the existing file' "captured stderr ERROR line(s) [$($emptyErrorLines.Count)]: $($emptyErrorLines -join ' || ')"
+        $emptyRunDirs = @(Get-ChildItem -LiteralPath $emptyOutput -Directory)
+        Assert-Equal 1 $emptyRunDirs.Count 'empty zip entry: exactly one run directory created'
+        if ($emptyRunDirs.Count -eq 1) {
+            $emptyLogLines = @([System.IO.File]::ReadLines((Join-Path $emptyRunDirs[0].FullName 'log.txt')) | Where-Object {
+                $_.Contains(' ERROR:: SubscriptionDataSourceReader.InvalidSource(): File not found: ') -and
+                $_.EndsWith($emptyFile, [System.StringComparison]::OrdinalIgnoreCase)
+            })
+            Assert-Equal 1 $emptyLogLines.Count 'empty zip entry: engine log identifies the existing empty file'
+            if ($emptyLogLines.Count -eq 1) {
+                Assert-True ($emptyLogLines[0].Length -gt 240) 'fixture: empty-entry engine line exceeds 240 characters'
+                Assert-Match $empty.StdErr ('(?m)^ERROR:   ' + [regex]::Escape($emptyLogLines[0]) + '\r?$') 'empty zip entry: ERROR preserves the complete engine log line'
+            }
+        }
 
         # F2d: one file missing AND one corrupt: exit 3 wins, both blocks are
         # printed, and the missing file's InvalidSource line is not counted as
