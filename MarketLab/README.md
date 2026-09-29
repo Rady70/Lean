@@ -869,3 +869,37 @@ unchanged and unused; nothing claims it was removed.
 - `tests\Test-MarketLabBacktesting.ps1` run against a directory that is not a
   LEAN checkout ends with a terminating error (exit 1) instead of a tally; it
   still fails, which is what the negative check requires.
+
+## 14. Manual final-validation gate (GitHub-hosted, optional)
+
+A reviewed SingleAnchor implementation candidate can receive one final,
+independent confirmation on a clean GitHub-hosted `windows-2025` runner through
+`.github/workflows/marketlab-final-validation.yml`, dispatched manually from
+`master` with the exact reviewed 40-character candidate SHA:
+
+```text
+gh workflow run marketlab-final-validation.yml -R Rady70/Lean --ref master -f candidate_sha=<reviewed SHA>
+```
+
+The run records the dispatched `master` base, checks that the base is an
+ancestor of the candidate, verifies that the effective .NET SDK is `10.0.401`,
+builds through `scripts\Build-SingleAnchorBaseline.ps1 -ReviewedCommit`, runs
+the regression matrix (the unit tests plus the helper/smoke, invocation,
+classifier, guards, delivery and availability suites), then re-verifies the
+final HEAD, the clean source tree and the production build receipt. Evidence is
+limited to `gate-summary.json` and `output\baseline-build.json`, retained as a
+14-day artifact.
+
+Dispatch is manual only: the workflow has no `push`, `pull_request`, `schedule`
+or label trigger, does not run on intermediate heads, needs no repository
+secret, and never runs the historical-data/research qualification. The gate is
+procedural: it creates no required status and no branch protection; the control
+repository's phase record keeps the final summary and run URL.
+
+Before the first hosted run, repository Actions must be enabled and the nine
+inherited upstream workflows disabled individually in repository settings (see
+`Rady70/Market_Lab`, `docs/LEAN_UPDATE_PROCEDURE.md`). Until then the workflow
+file sits on `master` and no hosted run occurs. The design and its policy
+exception are recorded in `Rady70/Market_Lab`,
+`docs/LEAN_CI_VALIDATION_GATE_DESIGN.md` and `docs/LEAN_FORK_PLAN.md` section
+14.
