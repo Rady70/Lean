@@ -53,6 +53,38 @@ function Get-BaselineNativePrefix([string]$Path, [string]$Day, [long]$Count) {
     }
 }
 
+function Get-BaselineNativeNextQuote([string]$Path, [string]$Day, [long]$Skip) {
+    # The native quote row immediately after a verified prefix of $Skip rows in the named day
+    # partition, as the unchanged LEAN engine would next deliver it. Returns $null when the
+    # partition carries no further row. Purely a read-side identity binding for a terminal
+    # pre-acceptance fault (DataQuality/SessionMap): the refused quote was offered after the
+    # processed prefix and never became the last processed quote.
+    if ($Skip -lt 0) { throw 'A native skip count must be non-negative.' }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($Path)
+    $reader = $null
+    try {
+        $member = $Day.Replace('-', '') + '_xauusd_tick_quote.csv'
+        if ($archive.Entries.Count -ne 1 -or $archive.Entries[0].FullName -cne $member) {
+            throw 'The native partition has an unexpected member layout.'
+        }
+        $reader = [IO.StreamReader]::new($archive.Entries[0].Open())
+        for ([long]$ordinal = 0; $ordinal -lt $Skip; $ordinal++) {
+            if ($null -eq $reader.ReadLine()) { return $null }
+        }
+        $line = $reader.ReadLine()
+        if ($null -eq $line) { return $null }
+        $cells = $line.Split(',')
+        if ($cells.Length -ne 3) { throw 'Invalid native quote row in the partition.' }
+        $midnight = [DateTime]::SpecifyKind([DateTime]::ParseExact($Day, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture), [DateTimeKind]::Utc)
+        $time = $midnight.AddTicks(([long]$cells[0]) * [TimeSpan]::TicksPerMillisecond)
+        return [pscustomobject]@{ Time = $time; Bid = [decimal]::Parse($cells[1], [Globalization.CultureInfo]::InvariantCulture); Ask = [decimal]::Parse($cells[2], [Globalization.CultureInfo]::InvariantCulture) }
+    } finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+        $archive.Dispose()
+    }
+}
+
 function Assert-BaselineDelivery($Results, $Manifest, $Identity, [string]$DataFolder) {
     if ($Results.completed -isnot [bool]) { throw 'The strategy completed flag must be present and boolean.' }
     $terminal = $null -ne $Results.failure

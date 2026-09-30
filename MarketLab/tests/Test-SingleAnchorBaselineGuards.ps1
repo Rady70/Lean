@@ -112,6 +112,17 @@ try {
         -BaselineRegister (Join-Path $repo 'MarketLab\config\baseline-decision-audit.json') 2>&1)
     Check ($LASTEXITCODE -eq 2) 'CorrectedHistoryContract with the baseline contract must be refused'
     Check (($mixedModes -join ' ') -match 'mutually exclusive') 'The refusal names the mutual exclusion'
+    $copiedDescriptor = Join-Path $env:TEMP ('marketlab-corrected-descriptor-copy-' + [guid]::NewGuid().ToString('N') + '.json')
+    Copy-Item -LiteralPath $correctedContractPath -Destination $copiedDescriptor
+    try {
+        $nonCanonical = @(& pwsh -NoProfile -File (Join-Path $repo 'MarketLab\scripts\run-backtest.ps1') `
+            -Configuration Release -AlgorithmTypeName $correctedLaunch.AlgorithmTypeName `
+            -AlgorithmLocation $correctedLaunch.AlgorithmLocation -DataFolder $correctedLaunch.DataFolder `
+            -Parameters $correctedLaunch.Parameters -AllowMissingData -RunEvidence -DryRun `
+            -CorrectedHistoryContract $copiedDescriptor -ReviewedCommit ('a' * 40) 2>&1)
+        Check ($LASTEXITCODE -eq 2) 'A non-canonical corrected descriptor must be refused'
+        Check (($nonCanonical -join ' ') -match 'canonical tracked') 'The refusal names the canonical descriptor requirement'
+    } finally { Remove-Item -LiteralPath $copiedDescriptor -Force -ErrorAction SilentlyContinue }
 } finally { $ErrorActionPreference = $previousErrorActionPreference }
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('marketlab-baseline-guards-' + [guid]::NewGuid().ToString('N'))

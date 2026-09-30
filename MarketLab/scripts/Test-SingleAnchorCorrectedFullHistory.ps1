@@ -34,16 +34,20 @@ AccountStopOut result shape and is never used to certify a Phase D run.
    - a completed run must carry the full qualified stream (2,332 partitions, 413,750,130 quotes,
      the qualified first/last quotes and global semantic digest) and a clean helper outcome
      (LEAN exit 0, helper exit 0, engine-error audit performed, zero engine ERROR:: lines);
-   - a terminal run (one of the current model's own run-ending failure kinds) must carry the
-     exact qualified prefix ending at its last processed quote, with the partial terminal day
-     proven by reading the native ZIP prefix, LEAN exit 1 / helper exit 1, and exactly one
-     unrelated engine ERROR:: line: the SetRuntimeError line naming the recorded failure's
-     exception type and message. AccountStopOut is refused: it belongs to the historical model.
+   - a terminal run (one of the current model's own run-ending failure kinds with its exact
+     reviewed condition) must carry the exact qualified prefix ending at its last processed
+     quote, with the partial terminal day proven by reading the native ZIP prefix, LEAN exit 1 /
+     helper exit 1, and exactly one terminal engine ERROR:: line (the SetRuntimeError line
+     naming the recorded failure's exception type and message) with no unrelated engine
+     ERROR:: lines. The faulting quote is bound to the engine's semantics: the final processed
+     quote for accepted-then-faulted kinds, and the next qualified source quote after the
+     verified prefix for pre-acceptance kinds. AccountStopOut is refused: it belongs to the
+     historical model.
 6. Every failed data request is classified against the frozen window, the qualified tree and the
    run's processed horizon (a completed run's horizon is the full window; a terminal run's is its
    last processed day). A source-absent calendar day inside the horizon that was never requested,
-   a failed request for a qualified partition, an out-of-window or unknown request, an accounting
-   mismatch or a contract/evidence mismatch invalidates the run.
+   a post-horizon failed request, a failed request for a qualified partition, an out-of-window or
+   unknown request, an accounting mismatch or a contract/evidence mismatch invalidates the run.
 
 The -Preflight -CheckOnly mode is the exact non-result-dependent stage run-backtest.ps1 invokes
 immediately before launching the corrected run; only result-dependent checks remain for the
@@ -141,6 +145,21 @@ $script:TerminalExceptionByKind = [ordered]@{
     'AccountSurvival'   = 'MarketLab.SingleAnchor.AccountSurvivalException'
     'BrokerLiquidation' = 'MarketLab.SingleAnchor.BrokerLiquidationException'
 }
+# The exact, case-sensitive condition each kind may carry (Execution.cs / SingleAnchorEngine.cs
+# of the reviewed implementation). A kind outside this map, or a condition outside its list,
+# can never certify a terminal Phase D classification.
+$script:ConditionsByKind = [ordered]@{
+    'StrategyInvariant' = @('HardBreakevenViolatedByFill')
+    'DataQuality'       = @('InvalidQuote', 'OutOfOrderQuote')
+    'SessionMap'        = @('QuoteOutsideMapCoverage')
+    'AccountSurvival'   = @('ExecutableMarkUnavailable')
+    'BrokerLiquidation' = @('ForcedCloseFailed')
+}
+# Which faults happen after the faulting quote was accepted and counted (so failure.Quote equals
+# the final processed quote), and which are raised before acceptance (DataQuality/SessionMap: the
+# refused quote is not counted and is the next qualified source quote after the delivered prefix).
+$script:ProcessedFaultKinds = @('StrategyInvariant', 'AccountSurvival', 'BrokerLiquidation')
+$script:PreAcceptanceFaultKinds = @('DataQuality', 'SessionMap')
 
 function Write-ErrorLine([string]$Message) {
     [Console]::Error.WriteLine("ERROR: $Message")
@@ -175,6 +194,19 @@ function Test-JsonTrue($Value) {
 
 function Test-JsonFalse($Value) {
     return (($Value -is [bool]) -and -not [bool]$Value)
+}
+
+# Exact quote identity (Time, Bid, Ask) of two quote-shaped records. Missing or unparseable
+# members are a mismatch, never a pass.
+function Test-SameQuote($A, $B) {
+    if ($null -eq $A -or $null -eq $B) { return $false }
+    try {
+        $sameTime = (ConvertTo-BaselineUtc (Get-PropertyOrNull $A 'Time')) -eq (ConvertTo-BaselineUtc (Get-PropertyOrNull $B 'Time'))
+        $sameBid = ([decimal](Get-RequiredProperty $A 'Bid')) -eq ([decimal](Get-RequiredProperty $B 'Bid'))
+        $sameAsk = ([decimal](Get-RequiredProperty $A 'Ask')) -eq ([decimal](Get-RequiredProperty $B 'Ask'))
+        return $sameTime -and $sameBid -and $sameAsk
+    }
+    catch { return $false }
 }
 
 function Get-LfNormalizedSha256([string]$Path) {
@@ -253,6 +285,16 @@ if (-not [string]::IsNullOrWhiteSpace($DataFolder) -and -not $AllowNonAuthoritat
 }
 if ($authoritative -and [string]::IsNullOrWhiteSpace($ReviewedCommit)) {
     Fail-Preflight 'an authoritative corrected-full-history classification requires -ReviewedCommit (the explicitly approved full Git commit SHA).' $outputFullPath $authoritative
+}
+if ($authoritative) {
+    # The descriptor controls the terminal-failure policy, so an authoritative classification
+    # must consume the canonical tracked descriptor from the reviewed checkout, not an arbitrary
+    # file that merely hashes to whatever the invocation recorded. Synthetic fixtures use the
+    # explicit -AllowNonAuthoritativeOverride mode.
+    $canonicalDescriptorPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'MarketLab\config\corrected-full-history-contract.json'))
+    if ($correctedContractPath -ne $canonicalDescriptorPath) {
+        Fail-Preflight "an authoritative corrected-full-history classification requires the canonical tracked descriptor '$canonicalDescriptorPath' from the reviewed checkout (got '$correctedContractPath')." $outputFullPath $authoritative
+    }
 }
 $invariant = [System.Globalization.CultureInfo]::InvariantCulture
 
@@ -759,6 +801,33 @@ if ($null -eq $resultInitialBalance -or ([decimal]$resultInitialBalance) -ne $fr
 if ($null -eq (Get-PropertyOrNull $results 'researchMargin')) {
     Fail-Preflight 'the run results carry no research margin block; the frozen baseline contract enables single-anchor-margin-enabled.' $outputFullPath $authoritative
 }
+# The effective account identity exposed in the result must be the frozen one: the numeric
+# margin contract (100 oz/lot, 1:500, Margin Call 50%, Stop Out 20%) is checked directly rather
+# than inferred from the source binding. The hedged-margin behavior stays source-bound.
+try {
+    $marginContract = Get-RequiredProperty $baselineData 'marginContract'
+    if (-not (Test-JsonTrue (Get-RequiredProperty $marginContract 'enabled'))) {
+        Fail-Preflight 'the frozen baseline contract does not enable the margin contract.' $outputFullPath $authoritative
+    }
+    $resultMarginParameters = Get-PropertyOrNull (Get-PropertyOrNull $results 'researchMargin') 'Parameters'
+    if ($null -eq $resultMarginParameters) {
+        Fail-Preflight 'the run research margin block carries no effective Parameters.' $outputFullPath $authoritative
+    }
+    $marginParameterMap = [ordered]@{
+        ContractSize = 'contractSizeOzPerLot'
+        Leverage = 'leverage'
+        MarginCallLevelPercent = 'marginCallThresholdPercent'
+        StopOutLevelPercent = 'stopOutThresholdPercent'
+    }
+    foreach ($entry in $marginParameterMap.GetEnumerator()) {
+        $actualMargin = Get-PropertyOrNull $resultMarginParameters $entry.Key
+        $expectedMargin = [decimal](Get-RequiredProperty $marginContract $entry.Value)
+        if ($null -eq $actualMargin -or ([decimal]$actualMargin) -ne $expectedMargin) {
+            Fail-Preflight "the run research margin parameter '$($entry.Key)' is '$actualMargin' but the frozen baseline contract freezes '$expectedMargin'." $outputFullPath $authoritative
+        }
+    }
+}
+catch { Fail-Preflight "the margin identity block is incomplete: $($_.Exception.Message)" $outputFullPath $authoritative }
 $resultSessionMap = Get-PropertyOrNull $results 'sessionMap'
 if ($null -eq $resultSessionMap) {
     Fail-Preflight 'the run used no session map; the frozen baseline contract requires the qualified session map.' $outputFullPath $authoritative
@@ -969,7 +1038,8 @@ $failure = Get-PropertyOrNull $results 'failure'
 $runTerminated = $null -ne $failure
 $terminationKind = ''
 $terminationCondition = ''
-$failureQuoteTimeValue = $null
+$failureQuoteObject = $null
+$failureQuoteSource = ''
 $coverageEndDay = $endDate
 if ($runTerminated) {
     $terminationKind = [string](Get-PropertyOrNull $failure 'Kind')
@@ -980,13 +1050,15 @@ if ($runTerminated) {
     if (-not $script:TerminalExceptionByKind.Contains($terminationKind) -or -not ($terminalKinds -contains $terminationKind)) {
         Fail-Preflight "the run ended by '$terminationKind', which is not one of the current model's terminal failure kinds ($($terminalKinds -join ', '))." $outputFullPath $authoritative
     }
-    if ([string]::IsNullOrWhiteSpace($terminationCondition)) {
-        Fail-Preflight 'the terminal failure record carries no condition; a current-model terminal outcome must name it.' $outputFullPath $authoritative
+    $validConditions = @($script:ConditionsByKind[$terminationKind])
+    if ($null -eq $validConditions -or -not ($validConditions -ccontains $terminationCondition)) {
+        Fail-Preflight "the terminal failure pair '$terminationKind' / '$terminationCondition' is not a valid current-model condition for that kind ($($validConditions -join ', ')); the terminal outcome is not the reviewed implementation's." $outputFullPath $authoritative
     }
     if ([string]::IsNullOrWhiteSpace([string](Get-PropertyOrNull $failure 'Message'))) {
         Fail-Preflight 'the terminal failure record carries no message; the terminal engine line cannot be matched against an empty failure.' $outputFullPath $authoritative
     }
-    $failureQuoteTimeValue = Get-PropertyOrNull (Get-PropertyOrNull $failure 'Quote') 'Time'
+    $failureQuoteObject = Get-PropertyOrNull $failure 'Quote'
+    $failureQuoteTimeValue = Get-PropertyOrNull $failureQuoteObject 'Time'
     $parsedFailureQuote = [System.DateTime]::MinValue
     if ($null -ne $failureQuoteTimeValue) {
         try { $parsedFailureQuote = ConvertTo-BaselineUtc $failureQuoteTimeValue }
@@ -1008,6 +1080,48 @@ if ($runTerminated) {
     }
     if ($deliveryVerification.mode -cne 'phase-b-terminal-prefix') {
         Fail-Preflight "the terminal run's delivery was verified as '$($deliveryVerification.mode)', not the exact qualified prefix." $outputFullPath $authoritative
+    }
+    # Bind the faulting quote to the verified historical execution, exactly as the engine
+    # semantics define it. Accepted-then-faulted kinds: the faulting quote is the final processed
+    # quote (the verifier already equates that to the delivered last quote). Pre-acceptance kinds
+    # (DataQuality/SessionMap): the refused quote is not counted, so it must be the next qualified
+    # source row after the verified delivered prefix.
+    if ($script:ProcessedFaultKinds -ccontains $terminationKind) {
+        if (-not (Test-SameQuote $failureQuoteObject $lastProcessed)) {
+            Fail-Preflight "the terminal failure quote for '$terminationKind' is not the final processed quote; the terminal state is not the externally evidenced one." $outputFullPath $authoritative
+        }
+        $failureQuoteSource = 'final-processed-quote'
+    }
+    elseif ($script:PreAcceptanceFaultKinds -ccontains $terminationKind) {
+        $prefixLastDayText = $parsedLastProcessed.Date.ToString('yyyy-MM-dd')
+        $terminalPartitionName = $parsedLastProcessed.Date.ToString('yyyyMMdd') + '_quote.zip'
+        $resultsDelivered = Get-PropertyOrNull $results 'delivered'
+        $terminalPartition = Get-PropertyOrNull (Get-PropertyOrNull $resultsDelivered 'per_partition') $prefixLastDayText
+        if ($null -eq $terminalPartition) {
+            Fail-Preflight 'the terminal prefix has no delivered partition for its last day; the refused quote cannot be located.' $outputFullPath $authoritative
+        }
+        $terminalDeliveredCount = [long](Get-RequiredProperty $terminalPartition 'quote_count')
+        $terminalAcceptedCount = [long](Get-RequiredProperty (Get-PropertyOrNull $manifestData.semantic.per_partition $prefixLastDayText) 'accepted_row_count')
+        $nextQuote = $null
+        if ($terminalDeliveredCount -lt $terminalAcceptedCount) {
+            $nativeEntries = @($manifestData.native.partitions | Where-Object { [IO.Path]::GetFileName($_.zip_relative_path) -ceq $terminalPartitionName })
+            if ($nativeEntries.Count -ne 1) { Fail-Preflight 'cannot resolve the terminal native partition for the refused quote.' $outputFullPath $authoritative }
+            $nextQuote = Get-BaselineNativeNextQuote (Join-Path $resolvedDataFolder $nativeEntries[0].zip_relative_path) $prefixLastDayText $terminalDeliveredCount
+        }
+        else {
+            $laterDays = @($manifestData.semantic.per_partition.PSObject.Properties.Name | Where-Object { $_ -cgt $prefixLastDayText } | Sort-Object)
+            if ($laterDays.Count -gt 0) {
+                $nextDayText = $laterDays[0]
+                $nextPartitionName = ($nextDayText -replace '-', '') + '_quote.zip'
+                $nextEntries = @($manifestData.native.partitions | Where-Object { [IO.Path]::GetFileName($_.zip_relative_path) -ceq $nextPartitionName })
+                if ($nextEntries.Count -ne 1) { Fail-Preflight 'cannot resolve the next native partition for the refused quote.' $outputFullPath $authoritative }
+                $nextQuote = Get-BaselineNativeNextQuote (Join-Path $resolvedDataFolder $nextEntries[0].zip_relative_path) $nextDayText 0
+            }
+        }
+        if ($null -eq $nextQuote -or -not (Test-SameQuote $failureQuoteObject $nextQuote)) {
+            Fail-Preflight "the terminal failure quote for '$terminationKind' is not the next qualified source quote after the delivered prefix; the refused quote cannot be externally evidenced." $outputFullPath $authoritative
+        }
+        $failureQuoteSource = 'next-qualified-source-quote'
     }
     $coverageEndDay = $parsedLastProcessed.Date
     if ($coverageEndDay -lt $startDate) { $coverageEndDay = $startDate }
@@ -1108,7 +1222,7 @@ if ($runTerminated) {
         Fail-Preflight "the corrected run declared an expected terminal exception '$outcomeTerminalException'; the current model declares none." $outputFullPath $authoritative
     }
     if ($null -eq $outcomeEngineCount -or [int]$outcomeEngineCount -ne 1) {
-        Fail-Preflight "the terminal run outcome records '$outcomeEngineCount' unrelated engine ERROR:: line(s); exactly one (the recorded failure's terminal runtime-error line) is required for a clean terminal evidence chain." $outputFullPath $authoritative
+        Fail-Preflight "the terminal run outcome records '$outcomeEngineCount' engine ERROR:: line(s) beyond the recorded failure; exactly one terminal engine ERROR:: line (the recorded failure's runtime-error line) is required and no unrelated engine ERROR:: lines may exist." $outputFullPath $authoritative
     }
     $expectedException = [string]$script:TerminalExceptionByKind[$terminationKind]
     $failureMessage = [string](Get-PropertyOrNull $failure 'Message')
@@ -1153,6 +1267,7 @@ $occurrenceCounts = [ordered]@{
     'recorded-absence-after-terminated-horizon' = 0
     'unexpected-missing-qualified-partition' = 0
     'unexpected-out-of-window-request' = 0
+    'unexpected-post-horizon-request' = 0
     'unexpected-unknown-request' = 0
     'unexpected-unrequested-absence' = 0
     'failed-request-accounting-mismatch' = 0
@@ -1183,8 +1298,14 @@ foreach ($line in $failedLines) {
             try { $parsedDay = [System.DateTime]::ParseExact($dayText, 'yyyyMMdd', $invariant) }
             catch { $parsedDay = [System.DateTime]::MinValue }
             if ($parsedDay -ne [System.DateTime]::MinValue -and $parsedDay -ge $startDate -and $parsedDay -le $endDate) {
-                $category = 'expected-source-absent-calendar-day'
-                [void]$requestedAbsentDays.Add($dayText)
+                if ($runTerminated -and $parsedDay -gt $coverageEndDay) {
+                    $category = 'unexpected-post-horizon-request'
+                    $detail = "the run terminated on $coverageEndText before this day was ever processed; a post-horizon failed request cannot be an expected source-absent day"
+                }
+                else {
+                    $category = 'expected-source-absent-calendar-day'
+                    [void]$requestedAbsentDays.Add($dayText)
+                }
             }
             else {
                 $category = 'unexpected-out-of-window-request'
@@ -1286,6 +1407,7 @@ $record['stopOutModel'] = $stopOutModel
 $record['runDirectory'] = $runPath
 $record['resultsFile'] = $resultsPath
 $record['resultsSha256'] = Get-FileSha256 $resultsPath
+$record['resultsBytes'] = (Get-Item -LiteralPath $resultsPath).Length
 $record['deliveryVerification'] = $deliveryVerification
 $record['invocationEvidenceFile'] = $invocationEvidencePath
 $record['invocationEvidenceVerified'] = $true
@@ -1320,7 +1442,8 @@ $record['symbolPropertiesDatabaseSha256'] = $symbolPropertiesSha256
 $record['runTerminated'] = $runTerminated
 $record['terminationKind'] = $terminationKind
 $record['terminationCondition'] = $terminationCondition
-$record['failureQuote'] = $failureQuoteTimeValue
+$record['failureQuote'] = $failureQuoteObject
+$record['failureQuoteSource'] = $failureQuoteSource
 $record['failureMessage'] = Get-PropertyOrNull $failure 'Message'
 $record['coverageEndDay'] = $coverageEndText
 $record['expectedSourceAbsentDayCount'] = $expectedAbsentDays.Count

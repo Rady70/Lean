@@ -340,7 +340,7 @@ function New-CorrectedContract([string]$Path, [string]$BaselinePath, [string]$Re
     Write-JsonFile $Path $corrected
 }
 
-function New-Results([string]$Path, $Contract, [string]$Through, [string]$FailureKind, [string]$FailureCondition) {
+function New-Results([string]$Path, $Contract, [string]$Through, [string]$FailureKind, [string]$FailureCondition, $FailureQuote = $null) {
     $parameterToResult = [ordered]@{
         'single-anchor-step-percent' = 'StepPercent'
         'single-anchor-base-lot' = 'BaseLot'
@@ -389,16 +389,22 @@ function New-Results([string]$Path, $Contract, [string]$Through, [string]$Failur
         endDate = $endDateText
         parameters = $resultParameters
         researchAccount = [ordered]@{ InitialBalance = $cash; CurrentOpenPositions = 1; Equity = $cash }
-        researchMargin = [ordered]@{ MarginCallActive = $false; CurrentUsedMargin = 10 }
+        researchMargin = [ordered]@{
+            Parameters = [ordered]@{ ContractSize = 100; Leverage = 500; MarginCallLevelPercent = 50; StopOutLevelPercent = 20 }
+            MarginCallActive = $false
+            CurrentUsedMargin = 10
+        }
         sessionMap = [ordered]@{ Sha256 = $script:dataTree.SessionMapHash }
         failure = $null
         lastProcessedQuote = $delivered.last_quote
     }
     if ($FailureKind) {
+        $effectiveFailureQuote = $delivered.last_quote
+        if ($null -ne $FailureQuote) { $effectiveFailureQuote = $FailureQuote }
         $results['failure'] = [ordered]@{
             Kind = $FailureKind
             Condition = $FailureCondition
-            Quote = $delivered.last_quote
+            Quote = $effectiveFailureQuote
             Message = "synthetic terminal failure $FailureKind"
         }
     }
@@ -501,12 +507,13 @@ function New-RunCase {
         [string]$FailureKind = '',
         [string]$FailureCondition = '',
         [string]$Through = '',
+        $FailureQuote = $null,
         $RuntimeRoot,
         $RuntimeHashes
     )
     $caseDir = Join-Path $runRoot $Name
     New-Item -ItemType Directory -Path (Join-Path $caseDir 'storage\single-anchor') -Force | Out-Null
-    New-Results (Join-Path $caseDir 'storage\single-anchor\results.json') $script:baselineContract $Through $FailureKind $FailureCondition
+    New-Results (Join-Path $caseDir 'storage\single-anchor\results.json') $script:baselineContract $Through $FailureKind $FailureCondition $FailureQuote
     New-InvocationEvidence (Join-Path $caseDir 'marketlab-run-invocation.json') $script:baselineContract $DataFolder $caseDir $RuntimeRoot $RuntimeHashes
     New-FailedRequests $caseDir $FailedLines
     New-Monitor $caseDir $MonitorCount
@@ -575,6 +582,10 @@ $runtimeRoot = Join-Path $root 'runtime'
 $runtimeHashes = New-RuntimeSet $runtimeRoot
 $absentRequest = '\cfd\dukascopy\tick\xauusd\' + $absentDay + '_quote.zip'
 $auxiliaryRequest = '\cfd\dukascopy\hour\xauusd.zip'
+# The synthetic 2019-01-03 partition holds 12:00 (100/100.5) then 13:00 (101/101.5); a prefix
+# through 12:00 leaves this as the next qualified source quote, which a pre-acceptance fault
+# (DataQuality/SessionMap) must carry as its refusal quote.
+$nextSourceQuoteAfterPrefix = [pscustomobject]@{ Time = '2019-01-03T13:00:00.000Z'; Bid = 101; Ask = 101.5 }
 
 try {
     Write-Host 'Case A: completed full-stream run'
@@ -588,6 +599,7 @@ try {
     Check 'stopOutModel recorded' ($resultA.Record.stopOutModel -eq 'BrokerLiquidation')
     Check 'verifiedPartitionCount 2' ($resultA.Record.verifiedPartitionCount -eq 2)
     Check 'invocationEvidenceVerified' ($resultA.Record.invocationEvidenceVerified -eq $true)
+    Check 'results byte size recorded' ($resultA.Record.resultsBytes -eq (Get-Item -LiteralPath (Join-Path $caseA 'storage\single-anchor\results.json')).Length)
 
     Write-Host 'Case B: BrokerLiquidation/ForcedCloseFailed exact terminal prefix'
     $caseB = New-RunCase -Name 'case-b-broker-liquidation' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'BrokerLiquidation' -FailureCondition 'ForcedCloseFailed' -Through '2019-01-03T12:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
@@ -600,6 +612,8 @@ try {
     Check 'terminalDayPrefixRead true' ((Get-PropertyValue $resultB.Record @('deliveryVerification', 'terminalDayPrefixRead')) -eq $true)
     Check 'coverageEndDay is the terminal day' ((Get-PropertyValue $resultB.Record @('coverageEndDay')) -eq '2019-01-03')
     Check 'terminationCondition ForcedCloseFailed' ((Get-PropertyValue $resultB.Record @('terminationCondition')) -eq 'ForcedCloseFailed')
+    Check 'failureQuoteSource is the final processed quote' ((Get-PropertyValue $resultB.Record @('failureQuoteSource')) -eq 'final-processed-quote')
+    Check 'complete failure quote persisted' ((Get-PropertyValue $resultB.Record @('failureQuote', 'Bid')) -eq 100 -and (Get-PropertyValue $resultB.Record @('failureQuote', 'Ask')) -eq 100.5)
 
     Write-Host 'Case Z: AccountSurvival/ExecutableMarkUnavailable is also an accepted terminal kind'
     $caseZ = New-RunCase -Name 'case-z-account-survival' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'AccountSurvival' -FailureCondition 'ExecutableMarkUnavailable' -Through '2019-01-03T12:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
@@ -612,14 +626,47 @@ try {
     Check 'delivery mode phase-b-terminal-prefix' ((Get-PropertyValue $resultZ.Record @('deliveryVerification', 'mode')) -eq 'phase-b-terminal-prefix')
     Check 'terminalDayPrefixRead true' ((Get-PropertyValue $resultZ.Record @('deliveryVerification', 'terminalDayPrefixRead')) -eq $true)
 
-    foreach ($kind in @('StrategyInvariant', 'DataQuality', 'SessionMap')) {
-        Write-Host "Case Z2: $kind is also an accepted terminal kind"
-        $caseZ2 = New-RunCase -Name ('case-z2-' + $kind.ToLowerInvariant()) -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind $kind -FailureCondition 'SyntheticCondition' -Through '2019-01-03T12:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $terminalPairs = @(
+        @{ Kind = 'StrategyInvariant'; Condition = 'HardBreakevenViolatedByFill'; NextSource = $false },
+        @{ Kind = 'DataQuality'; Condition = 'InvalidQuote'; NextSource = $true },
+        @{ Kind = 'DataQuality'; Condition = 'OutOfOrderQuote'; NextSource = $true },
+        @{ Kind = 'SessionMap'; Condition = 'QuoteOutsideMapCoverage'; NextSource = $true }
+    )
+    foreach ($pair in $terminalPairs) {
+        Write-Host "Case Z2: $($pair.Kind)/$($pair.Condition) is an accepted terminal pair"
+        $pairQuote = $null
+        if ($pair.NextSource) { $pairQuote = $nextSourceQuoteAfterPrefix }
+        $caseZ2 = New-RunCase -Name ('case-z2-' + $pair.Kind.ToLowerInvariant() + '-' + $pair.Condition.ToLowerInvariant()) -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind $pair.Kind -FailureCondition $pair.Condition -Through '2019-01-03T12:00:00Z' -FailureQuote $pairQuote -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
         $resultZ2 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseZ2
-        Check "exit 0 ($kind)" ($resultZ2.Code -eq 0)
-        Check "qualification EXPECTED ($kind)" ((Get-PropertyValue $resultZ2.Record @('qualification')) -eq 'EXPECTED')
-        Check "terminationKind recorded ($kind)" ((Get-PropertyValue $resultZ2.Record @('terminationKind')) -eq $kind)
+        Check "exit 0 ($($pair.Kind)/$($pair.Condition))" ($resultZ2.Code -eq 0)
+        Check "qualification EXPECTED ($($pair.Kind)/$($pair.Condition))" ((Get-PropertyValue $resultZ2.Record @('qualification')) -eq 'EXPECTED')
+        Check "terminationKind recorded ($($pair.Kind))" ((Get-PropertyValue $resultZ2.Record @('terminationKind')) -eq $pair.Kind)
+        Check "terminationCondition recorded ($($pair.Condition))" ((Get-PropertyValue $resultZ2.Record @('terminationCondition')) -eq $pair.Condition)
+        $expectedSource = if ($pair.NextSource) { 'next-qualified-source-quote' } else { 'final-processed-quote' }
+        Check "failureQuoteSource recorded ($expectedSource)" ((Get-PropertyValue $resultZ2.Record @('failureQuoteSource')) -eq $expectedSource)
     }
+
+    Write-Host 'Case Z3: mismatched and case-mutated terminal conditions are refused'
+    $caseZ3 = New-RunCase -Name 'case-z3-mismatched-condition' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'DataQuality' -FailureCondition 'ForcedCloseFailed' -Through '2019-01-03T12:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultZ3 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseZ3
+    Check 'exit 2 (mismatched condition)' ($resultZ3.Code -eq 2)
+    Check 'controlled failure (mismatched condition)' ($resultZ3.Record.qualification -eq 'CONTROLLED_FAILURE')
+    Check 'failure names the invalid kind/condition pair' ($resultZ3.Record.failure -match 'not a valid current-model condition')
+    $caseZ4 = New-RunCase -Name 'case-z4-case-mutated-condition' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'BrokerLiquidation' -FailureCondition 'forcedclosefailed' -Through '2019-01-03T12:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultZ4 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseZ4
+    Check 'exit 2 (case-mutated condition)' ($resultZ4.Code -eq 2)
+    Check 'failure names the invalid kind/condition pair (case-mutated)' ($resultZ4.Record.failure -match 'not a valid current-model condition')
+
+    Write-Host 'Case Z5: wrong failure quotes are refused for both fault semantics'
+    $wrongProcessedQuote = [pscustomobject]@{ Time = '2019-01-03T12:00:00.000Z'; Bid = 999; Ask = 100.5 }
+    $caseZ5 = New-RunCase -Name 'case-z5-wrong-processed-quote' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'BrokerLiquidation' -FailureCondition 'ForcedCloseFailed' -Through '2019-01-03T12:00:00Z' -FailureQuote $wrongProcessedQuote -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultZ5 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseZ5
+    Check 'exit 2 (wrong processed fault quote)' ($resultZ5.Code -eq 2)
+    Check 'failure names the final-processed-quote binding' ($resultZ5.Record.failure -match 'not the final processed quote')
+    $caseZ6 = New-RunCase -Name 'case-z6-wrong-preacceptance-quote' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'SessionMap' -FailureCondition 'QuoteOutsideMapCoverage' -Through '2019-01-03T12:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultZ6 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseZ6
+    Check 'exit 2 (wrong pre-acceptance fault quote)' ($resultZ6.Code -eq 2)
+    Check 'failure names the next-source-quote binding' ($resultZ6.Record.failure -match 'not the next qualified source quote')
 
     Write-Host 'Case C: AccountStopOut belongs to the historical model'
     $caseC = New-RunCase -Name 'case-c-account-stop-out' -DataFolder $dataRoot -FailedLines @($auxiliaryRequest) -MonitorCount 1 -FailureKind 'AccountStopOut' -FailureCondition 'MarginLevel' -Through '2019-01-01T12:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
@@ -702,6 +749,14 @@ try {
     Check 'coverageEndDay is the terminal day' ((Get-PropertyValue $resultK.Record @('coverageEndDay')) -eq '2019-01-01')
     Check 'one absent day after termination' ((Get-PropertyValue $resultK.Record @('sourceAbsentDaysAfterTermination')) -eq 1)
 
+    Write-Host 'Case K2: an actual failed request after the terminal horizon is refused'
+    $caseK2 = New-RunCase -Name 'case-k2-post-horizon-request' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'BrokerLiquidation' -FailureCondition 'ForcedCloseFailed' -Through '2019-01-01T13:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultK2 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseK2
+    Check 'exit 1' ($resultK2.Code -eq 1)
+    Check 'qualification INVALID' ($resultK2.Record.qualification -eq 'INVALID')
+    Check 'post-horizon request classified as unexpected' ($resultK2.Record.occurrencesByCategory.'unexpected-post-horizon-request' -eq 1)
+    Check 'post-horizon request leaves zero expected absent requests' ($resultK2.Record.occurrencesByCategory.'expected-source-absent-calendar-day' -eq 0)
+
     Write-Host 'Case L: corrected contract baseline pin mismatch'
     $pinMismatch = [IO.File]::ReadAllText($script:correctedContractPath) | ConvertFrom-Json
     $pinMismatch.baselineContract.sha256LfNormalized = ('0' * 64)
@@ -770,6 +825,18 @@ try {
     Check 'qualification CONTROLLED_FAILURE' ($resultR.Record.qualification -eq 'CONTROLLED_FAILURE')
     Check 'failure names the research margin' ($resultR.Record.failure -match 'research margin')
 
+    Write-Host 'Case R2: a drifted runtime margin parameter is refused'
+    $caseR2 = New-RunCase -Name 'case-r2-margin-drift' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -Through '' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultsR2Path = Join-Path $caseR2 'storage\single-anchor\results.json'
+    $resultsR2 = [IO.File]::ReadAllText($resultsR2Path) | ConvertFrom-Json
+    $resultsR2.researchMargin.Parameters.Leverage = 100
+    Write-JsonFile $resultsR2Path $resultsR2
+    New-Outcome -RunDirectory $caseR2 -LeanExit 0 -HelperExit 0 -EnginePerformed $true -EngineCount 0 -EngineMessages @() -RuntimeAfter $runtimeHashes
+    $resultR2 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseR2
+    Check 'exit 2 (margin drift)' ($resultR2.Code -eq 2)
+    Check 'controlled failure (margin drift)' ($resultR2.Record.qualification -eq 'CONTROLLED_FAILURE')
+    Check 'failure names the drifted margin parameter' ($resultR2.Record.failure -match 'Leverage')
+
     Write-Host 'Case S: preflight pass without a run directory'
     $resultS = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -Preflight
     Check 'exit 0' ($resultS.Code -eq 0)
@@ -794,6 +861,10 @@ try {
     Check 'exit 2 without -ReviewedCommit' ($resultU2.Code -eq 2)
     Check 'controlled failure without -ReviewedCommit' ($resultU2.Record.qualification -eq 'CONTROLLED_FAILURE')
     Check 'failure names the -ReviewedCommit requirement' ($resultU2.Record.failure -match 'requires -ReviewedCommit')
+    $resultU3 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -Preflight -NoOverride -ReviewedCommit $repositorySha
+    Check 'exit 2 for a non-canonical authoritative descriptor' ($resultU3.Code -eq 2)
+    Check 'controlled failure for a non-canonical descriptor' ($resultU3.Record.qualification -eq 'CONTROLLED_FAILURE')
+    Check 'failure names the canonical descriptor requirement' ($resultU3.Record.failure -match 'canonical tracked descriptor')
 
     Write-Host 'Case V: runtime binary changed after the run'
     $runtimeRootV = Join-Path $root 'runtime-v'

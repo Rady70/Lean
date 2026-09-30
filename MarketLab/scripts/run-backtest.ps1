@@ -955,6 +955,10 @@ if ($RunEvidence) {
                 }
                 else {
                     try {
+                        $canonicalCorrectedPath = [IO.Path]::GetFullPath((Join-Path $leanRootPath 'MarketLab\config\corrected-full-history-contract.json'))
+                        if ($correctedContractPathResolved -ne $canonicalCorrectedPath) {
+                            throw "The corrected-full-history descriptor must be the canonical tracked '$canonicalCorrectedPath' from the reviewed checkout (got '$correctedContractPathResolved'); an arbitrary descriptor path cannot authorize the Phase D run."
+                        }
                         $correctedContractSha256 = Get-Sha256Hex $correctedContractPathResolved -LfNormalized
                         $correctedDescriptor = [IO.File]::ReadAllText($correctedContractPathResolved) | ConvertFrom-Json
                         $correctedBaselineRelative = [string](Get-JsonProperty $correctedDescriptor.baselineContract 'path')
@@ -1196,7 +1200,7 @@ if ($RunEvidence) {
         $invocationEvidence = [ordered]@{
             contract = 'marketlab-run-invocation-evidence-v1'
             generatedUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-            runMode = $(if ($null -ne $correctedBuild) { 'corrected-full-history' } else { 'baseline' })
+            runMode = $(if ($null -ne $correctedBuild) { 'corrected-full-history' } elseif ($null -ne $baselineBuild) { 'baseline' } else { 'unbound' })
             leanRoot = $leanRootPath
             configuration = $Configuration
             dotnet = $dotnet

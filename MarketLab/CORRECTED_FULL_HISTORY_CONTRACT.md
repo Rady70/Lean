@@ -97,7 +97,9 @@ established:
 | Source-bound build | `Assert-BaselineBuild` re-verifies the receipt field by field: reviewed commit, source tree, frozen baseline contract hash, algorithm artifact and the complete Release dependency file set |
 | Runtime identity | the receipt's runtime version is pinned on the launcher command line (`dotnet exec --fx-version <version> --roll-forward Disable`); the classifier reconciles the result's `runtimeVersion`/`runtimeDirectory` with the receipt and re-hashes the qualified runtime binary set after the run |
 | Effective parameters | `Assert-CorrectedFullHistoryLaunch` compares the actual resolved inputs against the frozen baseline contract before launch; the classifier compares the persisted invocation evidence and the result's parameter block against the same contract |
+| Descriptor source binding | in authoritative mode both `run-backtest.ps1` and the classifier require the canonical tracked `MarketLab\config\corrected-full-history-contract.json` from the clean reviewed checkout; an arbitrary descriptor path is refused, and synthetic fixtures may vary it only under the explicit non-authoritative override |
 | Model identity | `model.revision = marketlab-single-anchor-broker-liquidation-v1` and `stopOutModel = BrokerLiquidation` in the descriptor; the classifier refuses a result that does not name both |
+| Account/margin identity | the classifier checks the result's `researchMargin.Parameters` directly against the frozen baseline contract: contract size 100, leverage 500, Margin Call 50%, Stop Out 20% (the hedged-margin behavior stays source-bound) |
 | Qualified data-tree identity | the corrected preflight hash-verifies the composition manifest, all 2,332 partition zips, the market-hours and symbol-properties databases and the session map, and anchors the manifest to the replay qualification record, without replaying history; the record is written to `corrected-history-preflight.json` |
 | Session-map identity | the frozen baseline contract's SHA-256 `33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949`; checked in preflight and against the result's `sessionMap.Sha256` |
 | Full date range | the frozen baseline contract's `2019-01-01 .. 2026-06-30`; the current-model verifier checks the effective UTC subscription window against it |
@@ -159,12 +161,19 @@ qualify a Phase D run.
 ## 4. Intended Phase D invocation (not executed)
 
 The exact command is the descriptor's `runProcedure.exactRunCommand`. It is
-reproduced here with `$ReviewedCommit` literal; it must be set to the
-explicitly reviewed and approved full Git SHA of the corrected-full-history
-support revision, after that revision is reviewed and merged. Do not populate
-it automatically from the current HEAD. Only after a separate authorization to
-run Phase D may this command be executed; `run-backtest.ps1` repeats the
-corrected preflight immediately before launch.
+reproduced here with `$ReviewedCommit` literal. The required order is:
+independent review of the exact final PR head, manual dispatch of
+`marketlab-final-validation.yml` on that exact reviewed candidate, confirmation
+that the candidate and dispatched-base identities have not moved and the gate
+is clean, merge (not by the support author), then local `master`
+synchronization. `$ReviewedCommit` must be the resulting merged `master` SHA —
+`Build-SingleAnchorBaseline.ps1`/`Assert-BaselineBuild` require a clean checkout
+whose `HEAD` equals `$ReviewedCommit`, so the Phase D build and run use the
+merged master tree (verified to be the reviewed and gated tree), not the
+pre-merge PR-head SHA. Do not populate `$ReviewedCommit` automatically from the
+current HEAD, and do not dispatch the gate before independent review. Only
+after a separate authorization to run Phase D may this command be executed;
+`run-backtest.ps1` repeats the corrected preflight immediately before launch.
 
 ```powershell
 pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release -Config MarketLab/config/backtesting.json -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy -Parameters "single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,single-anchor-security-type:Cfd,single-anchor-start-date:2019-01-01,single-anchor-end-date:2026-06-30,single-anchor-cash:20000,single-anchor-session-map:marketlab-sessions/xauusd-sessions.json,single-anchor-step-percent:0.25,single-anchor-base-lot:0.10,single-anchor-normal-trade-count:4,single-anchor-hard-be-ceiling-percent:4.478,single-anchor-escape-enabled:true,single-anchor-escape-profit-units:0.05,single-anchor-escape-minimum-open-positions:2,single-anchor-fixed-tp-units:0,single-anchor-trailing-enabled:true,single-anchor-trailing-activation-units:0.50,single-anchor-trailing-drop-units:0.25,single-anchor-commission-buffer:0,single-anchor-point-value-per-lot:100,single-anchor-volume-step:0.01,single-anchor-minimum-volume:0.01,single-anchor-maximum-volume:50,single-anchor-commission-per-lot:0,single-anchor-slippage:0,single-anchor-projected-spread:0.50,single-anchor-buy-swap-per-lot-per-day:0,single-anchor-sell-swap-per-lot-per-day:0,single-anchor-research-account:true,single-anchor-margin-enabled:true" -AllowMissingData -RunEvidence -CorrectedHistoryContract MarketLab\config\corrected-full-history-contract.json -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\output\baseline-build.json
@@ -205,18 +214,33 @@ composition manifest). Three outcomes are possible:
   are normal research observations, not failures.
 - **Exactly evidenced current-model terminal failure.** A run that ends
   through one of the current model's own run-ending conditions is preserved
-  exactly: `completed = false` with the recorded failure; delivery must be
-  the exact qualified prefix ending at the last processed quote, with the
-  partial terminal day verified against the native ZIP prefix; LEAN exit 1 /
-  helper exit 1; exactly one unrelated engine `ERROR::` line, the
-  `SetRuntimeError` line naming the recorded failure's exception type and
-  message; no declared terminal exception. The failed-data requests are
-  classified with the processed horizon as their bound.
+  exactly: `completed = false` with the recorded failure. The kind and
+  condition must be one exact, case-sensitive reviewed pair
+  (`StrategyInvariant`/`HardBreakevenViolatedByFill`,
+  `DataQuality`/`InvalidQuote`, `DataQuality`/`OutOfOrderQuote`,
+  `SessionMap`/`QuoteOutsideMapCoverage`,
+  `AccountSurvival`/`ExecutableMarkUnavailable`,
+  `BrokerLiquidation`/`ForcedCloseFailed`). The faulting quote is bound to the
+  verified execution: the final processed quote for accepted-then-faulted kinds
+  (`StrategyInvariant`, `AccountSurvival`, `BrokerLiquidation`) and the next
+  qualified source quote after the verified delivered prefix for pre-acceptance
+  kinds (`DataQuality`, `SessionMap`); the complete failure quote is persisted
+  in the classification record. Delivery must be the exact qualified prefix
+  ending at the last processed quote, with the partial terminal day verified
+  against the native ZIP prefix; LEAN exit 1 / helper exit 1; exactly one
+  terminal engine `ERROR::` line (the `SetRuntimeError` line naming the recorded
+  failure's exception type and message) and no unrelated engine `ERROR::` lines;
+  no declared terminal exception. The failed-data requests are classified with
+  the processed horizon as their bound: an actual failed request for a
+  source-absent day after the terminal horizon is invalid.
 - **Invalid / infrastructure cases.** Any other ending, a missing or
-  mismatched evidence record, an engine `ERROR::` line beyond the single
-  recorded-failure line, a changed runtime binary, a dirty working tree at
-  launch, or a delivered stream that is neither the full qualified population
-  nor the exact qualified prefix cannot certify Phase D evidence.
+  mismatched evidence record, a terminal kind/condition pair outside the exact
+  reviewed set, a faulting quote that does not match the engine's processed or
+  pre-acceptance semantics, an engine `ERROR::` line beyond the single
+  recorded-failure line, a failed request after the terminal horizon, a changed
+  runtime binary, a dirty working tree at launch, or a delivered stream that is
+  neither the full qualified population nor the exact qualified prefix cannot
+  certify Phase D evidence.
 
 **AccountStopOut is refused for Phase D.** It is the historical terminal
 shape, belongs to the frozen Phase A model, and can never be a Phase D
