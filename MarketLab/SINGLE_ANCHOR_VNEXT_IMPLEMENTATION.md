@@ -1847,7 +1847,7 @@ the corrected economics but no source binding. Neither result is inherited.
   re-run the frozen baseline, re-qualify market data, optimize parameters or
   trigger hosted CI; those remain out of scope for this phase.
 
-## 15. Phase D corrected full-history support (merged and finalized; full-history run not executed)
+## 15. Phase D corrected full-history support (merged and finalized; execution completed 2026-09-30)
 
 Phase D is the corrected untouched full-history SingleAnchor characterization:
 the frozen Phase A strategy, account and data values, unchanged, over the full
@@ -1860,11 +1860,15 @@ status/finalization files, and PR #21 merged as
 `7a24bed76e229505c83775a1d4d0e942853c5c6a`. The merged executable,
 configuration and test content therefore matches the reviewed implementation;
 the complete Git tree differs only by the documented Markdown-only finalization
-delta. **The corrected full-history run has not been executed** and awaits a
-separate explicit authorization. The Phase A historical record (section 13), the Phase B
-implementation and its merged PR #18 (section 14), the reviewed Phase C March
-2020 qualification (section 14.5), the frozen `config/baseline-contract.json`
-and `BASELINE_CONTRACT.md`, and the committed Phase A evidence are unchanged.
+delta. The corrected full-history run **was executed on 2026-09-30** from the
+clean reviewed `master` revision
+`23110c08b03cb9decc9ab48626eda17158063339` and classified `EXPECTED`; the
+execution record is section 16 and
+[CORRECTED_FULL_HISTORY_RESULT.md](CORRECTED_FULL_HISTORY_RESULT.md). The
+Phase A historical record (section 13), the Phase B implementation and its
+merged PR #18 (section 14), the reviewed Phase C March 2020 qualification
+(section 14.5), the frozen `config/baseline-contract.json` and
+`BASELINE_CONTRACT.md`, and the committed Phase A evidence are unchanged.
 
 ### 15.1 Readiness audit
 
@@ -1944,7 +1948,7 @@ A run/evidence readiness mapping of the same items is in
 [CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md)
 section 2.
 
-### 15.3 Intended execution procedure (after separate authorization)
+### 15.3 Execution procedure (used for the 2026-09-30 run)
 
 1. The support implementation passed independent exact-head review
    (`7de848aaf0284d9f8e39d16a8c1b11c85437f759`). Final pre-merge head
@@ -1967,18 +1971,67 @@ section 2.
    `pwsh -File MarketLab\scripts\Get-SingleAnchorBaselineInvocation.ps1 -ReviewedCommit $ReviewedCommit`.
 5. Corrected preflight:
    `pwsh -File MarketLab\scripts\Test-SingleAnchorCorrectedFullHistory.ps1 -Preflight -Contract MarketLab\config\corrected-full-history-contract.json -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\output\baseline-build.json -OutputPath MarketLab\output\corrected-history-preflight.json`.
-6. Only after separate authorization to run Phase D, execute the exact
-   rendered helper command (the descriptor's `runProcedure.exactRunCommand`,
-   reproduced in
+6. The retained execution used the exact rendered helper command (the
+   descriptor's `runProcedure.exactRunCommand`, reproduced in
    [CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md)
-   section 4) and then classify the result with the same classifier's
-   `-RunDirectory` mode. `run-backtest.ps1` repeats the corrected preflight
-   immediately before launch; do not pass `-AllowEngineErrors` or
-   `-ExpectedTerminalException`.
-7. Retain the build receipt, corrected preflight, invocation and outcome
-   evidence, classification, effective parameter block and
-   source/session/delivery provenance with the run.
+   section 4) and classified the result with the same classifier's
+   `-RunDirectory` mode. `run-backtest.ps1` repeated the corrected preflight
+   immediately before launch; `-AllowEngineErrors` and
+   `-ExpectedTerminalException` were not passed.
+7. The build receipt, corrected preflight, invocation and outcome evidence,
+   classification, effective parameter block and source/session/delivery
+   provenance are retained with the run.
 
 The descriptor and its full audit rendering are in
-[CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md);
-executing Phase D still requires a separate explicit authorization.
+[CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md); the
+executed run's record is section 16 and
+[CORRECTED_FULL_HISTORY_RESULT.md](CORRECTED_FULL_HISTORY_RESULT.md).
+
+## 16. Phase D corrected full-history execution (2026-09-30): completed and classified
+
+The corrected untouched full-history characterization was executed on
+2026-09-30 from the clean reviewed `master` revision
+`23110c08b03cb9decc9ab48626eda17158063339` with the corrected-full-history
+contract's exact command (`config/corrected-full-history-contract.json`,
+SHA-256 `d97b3c9b375ed2e53a2af784618a90e4db5e5ab9c627ffc9f0638a8c245cd44f`)
+and the frozen baseline values unchanged. The mandatory corrected preflight
+(source-bound build, descriptor/frozen pins, clean reviewed checkout and
+2,332/2,332 qualified partitions hash-verified) passed before launch, and
+`Test-SingleAnchorCorrectedFullHistory.ps1 -RunDirectory ...` returned
+`EXPECTED` (`invalidCount` 0) after the run.
+
+- **Execution.** LEAN processed the complete qualified stream
+  (2,332 partitions; 413,750,130 delivered/processed quotes,
+  `2019-01-01T23:00:07.151Z .. 2026-06-30T23:59:59.678Z`; global semantic
+  digest `sha256:231cf63850cd033ea8167ab7d0017bdfbd7744f40412c1a899c2b9d98942886a`)
+  in 6,606.3 s, exited 0 with zero engine `ERROR::` lines and the helper
+  exited 0. All 407 failed data requests reconciled exactly (406 expected
+  source-absent calendar days plus the 1 enumerated auxiliary request; zero
+  unexpected).
+- **Result.** 555 legs were opened. Baskets 1..278 closed through the normal
+  strategy paths (207 Trailing, 71 Escape); basket #276 reproduced the
+  reviewed March 2020 sequence exactly (four Stop Out episodes, 30 forced
+  closes, -25,051.42100 realized; later Escape close at
+  `2020-04-13T18:24:10.475` with lifetime +30.65700). Basket #279 was fully
+  broker-liquidated on `2020-06-17T09:32:50.569` (35 forced closes,
+  -25,662.42300; outcome `AllPositionsLiquidated`), taking the final balance
+  to -90.41800 USD. Basket #280 stayed anchored-but-unfunded to the end of the
+  qualified data (2 rejection episodes, 346,942,369 `InsufficientMargin`
+  first-entry attempts). Five Stop Out episodes and 65 forced liquidations
+  were recorded in total, with every forced close's immutable leg identity,
+  executable close and before/after account state persisted in
+  `strategy-results.json`. Margin Call remained distinct from Stop Out (348
+  observations / 23 episodes, zero blocked attempts).
+- **Invariance check.** Every closed basket in the common window
+  (Sequences 1..278) and all four common Stop Out episodes are identical to
+  the tracked reviewed Phase C bounded qualification
+  (`evidence/20260928-phase-b-march-2020/results.json`) in a deep JSON
+  comparison (zero mismatches), so the full run continues the reviewed model
+  without changing the common-window behavior.
+- **Evidence.** The committed compact evidence, with a SHA-256 manifest, is
+  under `evidence/20260930-corrected-full-history/`; the full result record,
+  interpretation and limitations are in
+  [CORRECTED_FULL_HISTORY_RESULT.md](CORRECTED_FULL_HISTORY_RESULT.md). No
+  strategy parameter, account/margin value or liquidation rule changed; the
+  413,750,130-row qualification was not rerun; parameter optimization has not
+  started; Phase E has not started.

@@ -1,0 +1,130 @@
+{
+  "contract": "marketlab-corrected-full-history-run-evidence-v1",
+  "role": "Phase D corrected untouched full-history SingleAnchor characterization under the finalized Phase B broker-forced-liquidation model: the frozen Phase A strategy/account/data values unchanged over the full qualified 2019-01-01..2026-06-30 window, executed and classified EXPECTED",
+  "runDateUtc": "2026-09-30",
+  "reviewedCommit": "23110c08b03cb9decc9ab48626eda17158063339",
+  "baselineContract": "MarketLab/config/baseline-contract.json",
+  "baselineContractSha256": "0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a",
+  "correctedFullHistoryContract": "MarketLab/config/corrected-full-history-contract.json",
+  "correctedFullHistoryContractSha256": "d97b3c9b375ed2e53a2af784618a90e4db5e5ab9c627ffc9f0638a8c245cd44f",
+  "modelRevision": "marketlab-single-anchor-broker-liquidation-v1",
+  "stopOutModel": "BrokerLiquidation",
+  "sourceRunDirectory": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm",
+  "artifacts": [
+    {
+      "path": "baseline-build.json",
+      "sha256": "32c6a110ec9a7e88ff38941174da0c3b198a78ce76e7a0fe752ea389c6de5983",
+      "bytes": 52169,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/baseline-build.json",
+      "role": "source-bound Release build receipt for the reviewed commit (clean reviewed checkout, frozen baseline contract hash, complete runtime dependency set)"
+    },
+    {
+      "path": "corrected-history-preflight.json",
+      "sha256": "6d0156253821204d941a4e17004e3a624823e630d49bf4e88cf1b728c996eadb",
+      "bytes": 2312,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/corrected-history-preflight.json",
+      "role": "mandatory corrected-full-history preflight receipt copied into the run: descriptor and frozen pins, clean reviewed checkout, source-bound build and the complete qualified tree (2,332/2,332 partitions)"
+    },
+    {
+      "path": "marketlab-run-invocation.json",
+      "sha256": "82d2743bfe91dd9b639623ceeec33dd7097477144bcb4c92f19fb678a84d014b",
+      "bytes": 7260,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/marketlab-run-invocation.json",
+      "role": "pre-run invocation evidence: resolved inputs, effective parameter pairs, exact launcher argv, contract/preflight/build hashes, clean repository HEAD and the qualified runtime binary hashes"
+    },
+    {
+      "path": "marketlab-run-outcome.json",
+      "sha256": "7a24975400d7365f043616e5b473c2502824545cab9a654cf5eb72a2bbd44636",
+      "bytes": 52834,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/marketlab-run-outcome.json",
+      "role": "post-run outcome evidence: LEAN/helper exit codes, engine-error audit, data-monitor result, post-run runtime/artifact re-hash and the results SHA-256"
+    },
+    {
+      "path": "corrected-full-history-classification.json",
+      "sha256": "cf187fd8be1acc18147f0d1e0eb6529f51f46b6750904c0ea1e2357a2ce075a5",
+      "bytes": 28820,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/corrected-full-history-classification.json",
+      "role": "authoritative corrected-full-history classification (EXPECTED): current-model full-stream delivery verification (2,332 partitions, 413,750,130 quotes, global semantic digest), outcome shape and failed-data reconciliation (407/407; 0 unexpected)"
+    },
+    {
+      "path": "strategy-results.json",
+      "sha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
+      "bytes": 1602034,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/storage/single-anchor/results.json",
+      "role": "the complete persisted strategy result: completion flag, delivery evidence, every closed basket with LegTrace/LiquidationTrace, Stop Out episodes and forced liquidations, rejection traces, the research account and the final open-basket state"
+    },
+    {
+      "path": "data-monitor-report-20260930233218632.json",
+      "sha256": "22cf9ddcf89042d5d8695b0c891c2966c449fa5ce0a78ecb4501db0658e2eb98",
+      "bytes": 9115,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/data-monitor-report-20260930233218632.json",
+      "role": "engine data-monitor report (2,741 requests: 2,334 succeeded, 407 failed)"
+    },
+    {
+      "path": "failed-data-requests-20260930214213300.txt",
+      "sha256": "8fbe25d6b23f33220557fc23a376df5a69eb042066b2b3cf91088b476e50ee34",
+      "bytes": 19114,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/failed-data-requests-20260930214213300.txt",
+      "role": "the 407 failed data-request lines reconciled by the classifier (406 expected source-absent calendar days + 1 enumerated auxiliary request)"
+    },
+    {
+      "path": "succeeded-data-requests-20260930214213300.txt",
+      "sha256": "a4f3f9a070c3dd0d1e9a246c6c367af1e84d3682405e4d355e6212b75806d5db",
+      "bytes": 109681,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/succeeded-data-requests-20260930214213300.txt",
+      "role": "the succeeded data-request lines"
+    },
+    {
+      "path": "run-parameters.txt",
+      "sha256": "878ffe0998115388339ae8b81d6420ea2ce093df86617ff4a88f854e9578161b",
+      "bytes": 1079,
+      "origin": "MarketLab/output/20260930-214212-SingleAnchorVNextAlgorithm/run-parameters.txt",
+      "role": "the exact 30-value single-anchor-* parameter string passed to the authoritative run"
+    }
+  ],
+  "notCommitted": [
+    {
+      "path": "log.txt",
+      "sha256": "55eeebc91ebc2310611ddceec7a258f97e6db40d1c52e6e1cba15dc0d5cac0bf",
+      "bytes": 483843,
+      "reason": "engine log (473 KB) with per-quote and per-event observations; its strategy-relevant facts are in strategy-results.json and the classification record"
+    },
+    {
+      "path": "SingleAnchorVNextAlgorithm-log.txt",
+      "sha256": "dd8a3f89b14251a2fa0fa4a39dd436288d69823494246c5545d622a31be40560",
+      "bytes": 323090,
+      "reason": "engine algorithm log (316 KB); superseded by strategy-results.json"
+    },
+    {
+      "path": "SingleAnchorVNextAlgorithm.json",
+      "sha256": "5d0ea0bd0800b0b91f3d35525a8f608e6515b336909f5575b39ac9200597b613",
+      "bytes": 1463594,
+      "reason": "LEAN result packet (1.4 MB); LEAN placed no orders, and the strategy facts are in strategy-results.json"
+    },
+    {
+      "path": "SingleAnchorVNextAlgorithm-summary.json",
+      "sha256": "9ba97ca0690154af824dfb9c61636b56efc08802fa5ed13fba017c74706f70e3",
+      "bytes": 23566,
+      "reason": "LEAN summary packet (23 KB); empty trade statistics because the research executor places no LEAN orders"
+    },
+    {
+      "path": "phase-d-run-console.stdout.log",
+      "sha256": "ae67e6c462bb441b5de633359564cafdee882c5cfd9c5e0462b2a0cc91926cb9",
+      "bytes": 400956,
+      "reason": "helper console capture (392 KB); the machine-generated invocation/outcome evidence is authoritative"
+    },
+    {
+      "path": "phase-d-run-console.stderr.log",
+      "sha256": "028478a80a3e2ba2a48dfc0a50982c3c8d99d89699cfa30cddea46dd6994b670",
+      "bytes": 74585,
+      "reason": "helper console capture (73 KB) including LEAN missing-file stderr lines; the engine-error audit is in marketlab-run-outcome.json"
+    }
+  ],
+  "notes": [
+    "Committed artifacts are byte-identical copies of the retained local run artifacts; every hash above was recomputed from the committed files.",
+    "Single authoritative execution: the run processed the complete qualified stream (2,332 partitions, 413,750,130 quotes, first 2019-01-01T23:00:07.151Z, last 2026-06-30T23:59:59.678Z, global semantic digest sha256:231cf63850cd033ea8167ab7d0017bdfbd7744f40412c1a899c2b9d98942886a) with LEAN exit 0, helper exit 0 and zero engine ERROR:: lines.",
+    "The classifier verified the current-model full-stream delivery, the complete provenance chain and all 407 failed data requests (406 expected source-absent calendar days + 1 enumerated auxiliary request; 0 unexpected).",
+    "Behavior-invariance review: every closed basket in the common window (Sequences 1..278) and all four common Stop Out episodes are identical to the tracked reviewed Phase C bounded qualification results.json in a deep JSON comparison (zero mismatches); basket #276 reproduces the reviewed trigger, the 30 forced closes over four episodes (-25,051.42100) and the Escape close at 2020-04-13T18:24:10.475 with lifetime +30.65700.",
+    "The local host retains no independent run ledger; this repository directory is the preserved record of the retained execution."
+  ]
+}

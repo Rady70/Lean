@@ -36,7 +36,9 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `config\corrected-full-history-contract.json` | frozen descriptor of the corrected untouched full-history (Phase D) run: pins the frozen baseline contract, names the finalized Phase B broker-liquidation model and fixes the outcome policy a Phase D classification may accept |
 | `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` | the PR #14 baseline-decision audit, updated: all eight former class-D blockers resolved and the freeze recorded |
 | `BASELINE_RUN_RESULT.md` | the retained first full-history baseline run as historical evidence of the pre-broker-liquidation Stop Out model: run identity, results, limitations and next steps |
+| `CORRECTED_FULL_HISTORY_RESULT.md` | the executed Phase D corrected untouched full-history characterization under the finalized Phase B broker-liquidation model: run identity, gates, execution, Stop Out/forced-liquidation results, the corrected basket #276 acceptance case, the Phase C behavior-invariance check, qualification and limitations |
 | `evidence\20260928-first-full-history-baseline\` | the committed compact first-baseline evidence (build/preflight receipts, invocation/outcome, classifier record, strategy results, data-monitor and failed-request evidence) with a SHA-256 manifest |
+| `evidence\20260930-corrected-full-history\` | the committed compact Phase D execution evidence (build receipt, corrected preflight, invocation/outcome, corrected-full-history classification, strategy results, data-monitor and failed-request evidence) with a SHA-256 manifest |
 | `scripts\Get-SingleAnchorBaselineInvocation.ps1` | reports the baseline contract identity and renders the exact frozen run invocation from the contract |
 | `scripts\Build-SingleAnchorBaseline.ps1` | rebuilds an explicitly reviewed clean revision and records the source, contract and complete runtime dependency identity |
 | `scripts\Test-SingleAnchorBaselineFailedData.ps1` | classifies every failed data request of a baseline run against the frozen contract and the qualified continuous tree |
@@ -703,16 +705,25 @@ status/finalization files, and PR #21 merged as
 the preflight/classifier
 ([`scripts\Test-SingleAnchorCorrectedFullHistory.ps1`](scripts/Test-SingleAnchorCorrectedFullHistory.ps1)),
 the helper's `-CorrectedHistoryContract` evidence mode and the current-model
-terminal-prefix verification provide the authoritative run and evidence path for
-the later authorized corrected full-history characterization of the frozen
-Phase A values under the Phase B broker-liquidation model. The corrected
-full-history run itself has **not** been executed and awaits a separate explicit
-authorization; the Phase A historical record, the Phase B implementation
-(PR #18), the reviewed Phase C March 2020 qualification, the frozen
-`config\baseline-contract.json`, [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)
-and the committed Phase A evidence are unchanged. See
+terminal-prefix verification provide the authoritative run and evidence path.
+The corrected full-history characterization **was executed on 2026-09-30** from
+the clean reviewed `master` revision
+`23110c08b03cb9decc9ab48626eda17158063339` and the classifier returned
+`EXPECTED` (complete qualified stream, 413,750,130 quotes, zero engine errors,
+407/407 failed requests reconciled). The result contains five Stop Out
+episodes and 65 forced liquidations; basket #276 reproduces the reviewed
+March 2020 partial liquidation and later closes by Escape, while basket #279
+is fully broker-liquidated on 2020-06-17 and the final balance is -90.41800
+USD. The full record is
+[CORRECTED_FULL_HISTORY_RESULT.md](CORRECTED_FULL_HISTORY_RESULT.md) and the
+committed compact evidence is under
+`evidence\20260930-corrected-full-history\`. The Phase A historical record, the
+Phase B implementation (PR #18), the reviewed Phase C March 2020 qualification,
+the frozen `config\baseline-contract.json`,
+[BASELINE_CONTRACT.md](BASELINE_CONTRACT.md) and the committed Phase A evidence
+are unchanged. See
 [CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md) and
-section 15 of
+sections 15-16 of
 [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md).
 
 ## 10. When required data is missing

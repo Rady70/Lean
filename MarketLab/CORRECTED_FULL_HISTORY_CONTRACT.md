@@ -1,25 +1,26 @@
 # SingleAnchor corrected untouched full-history contract (Phase D)
 
-Status: **support merged and finalized; corrected full-history run not
-executed**  -  the authoritative run and evidence path for the corrected
-untouched full-history SingleAnchor characterization (Phase D) under the
-finalized Phase B broker-forced-liquidation model. The support implementation
-(the descriptor, the classifier and the helper mode) was independently reviewed
-at exact implementation head `7de848aaf0284d9f8e39d16a8c1b11c85437f759`. The final pre-merge
-PR head `eb026dbd495314137c71b65f735f444e745058d7` added only the three Markdown
-status/finalization files, and PR #21 merged as
+Status: **executed and classified EXPECTED**  -  the authoritative run and
+evidence path for the corrected untouched full-history SingleAnchor
+characterization (Phase D) under the finalized Phase B
+broker-forced-liquidation model. The support implementation (the descriptor,
+the classifier and the helper mode) was independently reviewed at exact
+implementation head `7de848aaf0284d9f8e39d16a8c1b11c85437f759`; the final
+pre-merge PR head `eb026dbd495314137c71b65f735f444e745058d7` added only the
+three Markdown status/finalization files, and PR #21 merged as
 `7a24bed76e229505c83775a1d4d0e942853c5c6a`. Therefore the merged executable,
-configuration and test content matches the reviewed candidate; the complete Git
-tree differs only by that documented Markdown-only finalization delta. The
-corrected full-history characterization itself has **not** been executed and
-still requires a separate explicit authorization.
+configuration and test content matches the reviewed candidate. The corrected
+full-history characterization was executed on **2026-09-30** from the clean
+reviewed `master` revision `23110c08b03cb9decc9ab48626eda17158063339` and the
+classifier returned `EXPECTED`; the result record is
+[CORRECTED_FULL_HISTORY_RESULT.md](CORRECTED_FULL_HISTORY_RESULT.md).
 
 ```text
 Phase A historical pre-liquidation baseline:      preserved; unchanged
 Phase B broker-forced liquidation:                implemented; merged through PR #18
 Phase C focused March 2020 qualification:         reviewed; unchanged
 Phase D corrected full-history support:           merged and finalized (PR #21)
-Phase D corrected full-history run:               NOT RUN (awaiting separate authorization)
+Phase D corrected full-history run:               EXECUTED 2026-09-30; classified EXPECTED
 parameter optimization:                           NOT STARTED
 ```
 
@@ -67,8 +68,11 @@ parameter optimization:                           NOT STARTED
   model. The support implementation (descriptor, classifier and helper mode)
   passed independent review at exact head
   `7de848aaf0284d9f8e39d16a8c1b11c85437f759` and is merged and finalized
-  through Rady70/Lean PR #21; the corrected run has not been executed and
-  awaits a separate explicit authorization.
+  through Rady70/Lean PR #21. The corrected run was executed on 2026-09-30
+  from the clean reviewed `master` revision
+  `23110c08b03cb9decc9ab48626eda17158063339`, classified `EXPECTED` and
+  recorded in
+  [CORRECTED_FULL_HISTORY_RESULT.md](CORRECTED_FULL_HISTORY_RESULT.md).
 
 ## 2. Readiness audit of the pre-existing tooling
 
@@ -168,29 +172,26 @@ of the current implementation's own run-ending kinds: `StrategyInvariant`,
 pre-liquidation model, the current model never raises it, and it can never
 qualify a Phase D run.
 
-## 4. Intended Phase D invocation (not executed)
+## 4. The Phase D invocation (executed 2026-09-30)
 
 The exact command is the descriptor's `runProcedure.exactRunCommand`. It is
-reproduced here with `$ReviewedCommit` literal. The support implementation
+reproduced here with the `$ReviewedCommit` used for the retained execution,
+`23110c08b03cb9decc9ab48626eda17158063339`. The support implementation
 passed independent review at exact implementation head
 `7de848aaf0284d9f8e39d16a8c1b11c85437f759`; the final pre-merge head
 `eb026dbd495314137c71b65f735f444e745058d7` added only the documented Markdown
 status/finalization delta, and PR #21 merged as
-`7a24bed76e229505c83775a1d4d0e942853c5c6a`. For the eventual run, synchronize
-local `master` and verify that no later commit changes the reviewed executable,
-configuration or test implementation without independent review. Set
-`$ReviewedCommit` to the exact clean `master` HEAD that will be built and run.
-The project's current Git rule is Windows-only local validation with **no hosted
-CI before merge**: do not dispatch
-`.github/workflows/marketlab-final-validation.yml` on an unmerged PR head —
-that workflow is an optional, separately authorized hosted confirmation, not a
-Phase D finalization step. `Build-SingleAnchorBaseline.ps1` and
-`Assert-BaselineBuild` require the checkout's `HEAD` to equal
+`7a24bed76e229505c83775a1d4d0e942853c5c6a`. This command was executed once on
+2026-09-30 from that clean reviewed `master`. `Build-SingleAnchorBaseline.ps1`
+and `Assert-BaselineBuild` required the checkout's `HEAD` to equal
 `$ReviewedCommit`, so the source-bound receipt records the actual approved
-source tree used for Phase D. Do not populate `$ReviewedCommit` automatically
-without first verifying the current `master` state. Only after a separate
-authorization to run Phase D may this command be executed; `run-backtest.ps1`
-repeats the corrected preflight immediately before launch.
+source tree used for Phase D; `run-backtest.ps1` repeated the corrected
+preflight immediately before launch and the post-run classifier returned
+`EXPECTED`. Any future re-execution requires its own authorization and must
+re-establish the reviewed state. The project's current Git rule remains
+Windows-only local validation with **no hosted CI before merge**: the optional
+`.github/workflows/marketlab-final-validation.yml` workflow is not a Phase D
+finalization step and was not dispatched.
 
 ```powershell
 pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release -Config MarketLab/config/backtesting.json -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy -Parameters "single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,single-anchor-security-type:Cfd,single-anchor-start-date:2019-01-01,single-anchor-end-date:2026-06-30,single-anchor-cash:20000,single-anchor-session-map:marketlab-sessions/xauusd-sessions.json,single-anchor-step-percent:0.25,single-anchor-base-lot:0.10,single-anchor-normal-trade-count:4,single-anchor-hard-be-ceiling-percent:4.478,single-anchor-escape-enabled:true,single-anchor-escape-profit-units:0.05,single-anchor-escape-minimum-open-positions:2,single-anchor-fixed-tp-units:0,single-anchor-trailing-enabled:true,single-anchor-trailing-activation-units:0.50,single-anchor-trailing-drop-units:0.25,single-anchor-commission-buffer:0,single-anchor-point-value-per-lot:100,single-anchor-volume-step:0.01,single-anchor-minimum-volume:0.01,single-anchor-maximum-volume:50,single-anchor-commission-per-lot:0,single-anchor-slippage:0,single-anchor-projected-spread:0.50,single-anchor-buy-swap-per-lot-per-day:0,single-anchor-sell-swap-per-lot-per-day:0,single-anchor-research-account:true,single-anchor-margin-enabled:true" -AllowMissingData -RunEvidence -CorrectedHistoryContract MarketLab\config\corrected-full-history-contract.json -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\output\baseline-build.json
@@ -272,9 +273,21 @@ contain any number of Stop Out episodes, forced liquidations and fully
 liquidated baskets; none of them makes the run terminal and none may be
 withheld from the characterization.
 
+**Retained result (2026-09-30).** The executed run was classified through the
+**Completed full stream** branch above: the complete qualified population and
+global digest were delivered, LEAN and the helper exited 0, the engine-error
+audit found zero errors, the result named the current model, and all 407
+failed requests reconciled (406 expected source-absent calendar days plus the
+1 enumerated auxiliary request; zero unexpected). The characterization
+contains five Stop Out episodes, 65 forced liquidations and one fully
+broker-liquidated basket; the recorded values, provenance and limitations are
+in [CORRECTED_FULL_HISTORY_RESULT.md](CORRECTED_FULL_HISTORY_RESULT.md) and the
+committed compact evidence is under
+`evidence/20260930-corrected-full-history/`.
+
 ## 6. Explicit non-goals
 
-This support change and the Phase D run it prepares do **not**:
+This support change and the executed Phase D characterization do **not**:
 
 - change any strategy parameter or account/margin value (all 30 frozen
   `single-anchor-*` values remain the frozen baseline contract's);
