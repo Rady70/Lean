@@ -1846,3 +1846,109 @@ the corrected economics but no source binding. Neither result is inherited.
 - The March 2020 qualification is Windows-local execution evidence. It does not
   re-run the frozen baseline, re-qualify market data, optimize parameters or
   trigger hosted CI; those remain out of scope for this phase.
+
+## 15. Phase D corrected full-history support (prepared, not executed)
+
+Phase D is the corrected untouched full-history SingleAnchor characterization:
+the frozen Phase A strategy, account and data values, unchanged, over the full
+qualified `2019-01-01 .. 2026-06-30` window under the finalized Phase B
+broker-forced-liquidation model. This section records the support change
+prepared for independent review. **The corrected full-history run has not been
+executed.** The Phase A historical record (section 13), the Phase B
+implementation and its merged PR #18 (section 14), the reviewed Phase C March
+2020 qualification (section 14.5), the frozen `config/baseline-contract.json`
+and `BASELINE_CONTRACT.md`, and the committed Phase A evidence are unchanged.
+
+### 15.1 Readiness audit
+
+A readiness audit of the pre-existing tooling found that it could not produce
+an authoritative Phase D evidence chain, and this support change closes that
+gap:
+
+- the frozen baseline contract fixes the historical terminal AccountStopOut
+  semantics (`-ExpectedTerminalException
+  MarketLab.SingleAnchor.AccountStopOutException`, terminal Stop Out with no
+  liquidation simulated) and must not be rewritten;
+- `run-backtest.ps1 -RunEvidence -BaselineContract` and the baseline
+  classifier `Test-SingleAnchorBaselineFailedData.ps1` hard-require the
+  AccountStopOut terminal shape and use the historical verifier
+  `Assert-BaselineDelivery`;
+- the Phase B verifier `Assert-BrokerLiquidationDelivery` existed but was not
+  wired into an authoritative run path and refused any terminal failure;
+- no Phase D descriptor existed to pin the current-model identity, the
+  frozen-baseline reference and the outcome policy.
+
+### 15.2 What the support change adds
+
+- `config/corrected-full-history-contract.json`: the frozen immutable Phase D
+  descriptor. It names the finalized Phase B model
+  (`marketlab-single-anchor-broker-liquidation-v1` / `BrokerLiquidation`),
+  pins the frozen baseline contract
+  (`0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a`) and its
+  decision register, carries the exact run command and fixes the outcome
+  policy a Phase D classification may accept. Every effective strategy,
+  account, margin, data, session-map and window value remains the frozen
+  baseline contract's.
+- `scripts/Test-SingleAnchorCorrectedFullHistory.ps1`: the preflight and
+  post-run classification for the corrected run (descriptor and frozen pins,
+  clean reviewed checkout, source-bound build receipt, the complete qualified
+  tree; then current-model delivery, outcome evidence and failed-data
+  reconciliation). Its `-AllowNonAuthoritativeOverride` mode permits
+  synthetic fixtures and is never an authoritative Phase D classification.
+- `scripts/run-backtest.ps1`: the mutually exclusive
+  `-CorrectedHistoryContract` evidence mode, the immediate-before-launch
+  corrected preflight (`-Preflight -CheckOnly`) and the corrected
+  invocation/outcome evidence (`runMode = corrected-full-history`, the
+  descriptor path and hash and the corrected preflight hash). The invocation
+  evidence gains the `runMode` and corrected-descriptor fields for every run
+  (null in baseline mode); the frozen baseline classifier reads named fields
+  only and is unaffected.
+- `scripts/SingleAnchorDelivery.ps1`: `Assert-BrokerLiquidationDelivery` gained
+  `-AllowTerminalFailure`, which verifies a genuinely terminal current-model
+  run as the exact qualified prefix (partial terminal day read from the native
+  ZIP prefix) while the default still requires a completed full stream.
+- `scripts/SingleAnchorBaseline.ps1`: `Assert-CorrectedFullHistoryLaunch`, a
+  guard separate from `Assert-BaselineLaunch` that verifies the corrected
+  descriptor identity, the Phase B model identity, the frozen baseline
+  contract and the exact frozen host/parameter/data inputs with no launch-time
+  terminal exception.
+- `tests/Test-SingleAnchorCorrectedFullHistory.ps1`: the synthetic-fixture test
+  suite for the corrected full-history preflight and classifier. Its run-path
+  cases use `-AllowNonAuthoritativeOverride`, so the authoritative-only checks
+  (clean reviewed checkout, source-bound build receipt, the copied corrected
+  preflight binding, runtime pinning, artifact equality and the exact
+  reconstructed launcher command) are exercised by the real run's mandatory
+  preflight and post-run classification rather than synthetically; Cases U/U2
+  additionally exercise the authoritative data-folder-override and
+  `-ReviewedCommit` gates, and the corrected launch guard and the helper's mode
+  mutual exclusion are covered by `tests/Test-SingleAnchorBaselineGuards.ps1`.
+
+A run/evidence readiness mapping of the same items is in
+[CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md)
+section 2.
+
+### 15.3 Intended execution procedure (after separate authorization)
+
+1. Review and merge the corrected-full-history support revision, then set
+   `$ReviewedCommit` to that explicitly approved full Git SHA.
+2. Build the source-bound receipt:
+   `pwsh -File MarketLab\scripts\Build-SingleAnchorBaseline.ps1 -ReviewedCommit $ReviewedCommit`.
+3. Report the frozen contract identity:
+   `pwsh -File MarketLab\scripts\Get-SingleAnchorBaselineInvocation.ps1 -ReviewedCommit $ReviewedCommit`.
+4. Corrected preflight:
+   `pwsh -File MarketLab\scripts\Test-SingleAnchorCorrectedFullHistory.ps1 -Preflight -Contract MarketLab\config\corrected-full-history-contract.json -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\output\baseline-build.json -OutputPath MarketLab\output\corrected-history-preflight.json`.
+5. Only after separate authorization to run Phase D, execute the exact
+   rendered helper command (the descriptor's `runProcedure.exactRunCommand`,
+   reproduced in
+   [CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md)
+   section 4) and then classify the result with the same classifier's
+   `-RunDirectory` mode. `run-backtest.ps1` repeats the corrected preflight
+   immediately before launch; do not pass `-AllowEngineErrors` or
+   `-ExpectedTerminalException`.
+6. Retain the build receipt, corrected preflight, invocation and outcome
+   evidence, classification, effective parameter block and
+   source/session/delivery provenance with the run.
+
+The descriptor and its full audit rendering are in
+[CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md);
+executing Phase D still requires a separate explicit authorization.

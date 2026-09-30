@@ -125,3 +125,43 @@ function Assert-BaselineLaunch($Contract, [string]$RepoRoot, [string]$Configurat
     $problems = @($checks.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object Key)
     if ($problems.Count -ne 0) { throw ('Frozen baseline invocation mismatch: ' + ($problems -join ', ')) }
 }
+
+# The corrected untouched full-history (Phase D) launch guard. The corrected run executes
+# exactly the frozen baseline contract's host inputs, parameters and data folder; it is not
+# the historical terminal AccountStopOut model, so no launch-time terminal exception is
+# declared. Keeping this separate from Assert-BaselineLaunch means neither guard can ever
+# accept the other model's invocation.
+function Assert-CorrectedFullHistoryLaunch($Corrected, $Baseline, [string]$RepoRoot, [string]$Configuration,
+        [string]$Config, [string]$AlgorithmTypeName, [string]$AlgorithmLanguage,
+        [string]$AlgorithmLocation, [string]$DataFolder, [string]$Parameters,
+        [bool]$AllowMissingData, [bool]$AllowEngineErrors, [string]$ExpectedTerminalException) {
+    if ($Corrected.contract -cne 'marketlab-single-anchor-corrected-full-history-contract-v1' -or
+        $Corrected.status -cne 'frozen' -or $Corrected.immutable -ne $true) {
+        throw 'The corrected-full-history descriptor is not the frozen immutable corrected-full-history contract.'
+    }
+    if ($Corrected.model.revision -cne 'marketlab-single-anchor-broker-liquidation-v1' -or
+        $Corrected.model.stopOutModel -cne 'BrokerLiquidation') {
+        throw 'The corrected-full-history descriptor does not name the finalized Phase B broker-liquidation model.'
+    }
+    if ($Baseline.contract -cne 'marketlab-single-anchor-baseline-contract-v1' -or
+        $Baseline.status -cne 'frozen' -or $Baseline.immutable -ne $true) {
+        throw 'The corrected-full-history descriptor does not reference the frozen immutable baseline contract.'
+    }
+    $hostContract = $Baseline.runHost
+    $pairs = @($Baseline.parameters | ForEach-Object { $_.name + ':' + $_.value }) -join ','
+    $checks = [ordered]@{
+        configuration = $Configuration -ceq $hostContract.buildConfiguration
+        algorithmTypeName = $AlgorithmTypeName -ceq $hostContract.algorithmTypeName
+        algorithmLanguage = $AlgorithmLanguage -ceq $hostContract.algorithmLanguage
+        algorithmLocation = [IO.Path]::GetFullPath($AlgorithmLocation) -eq [IO.Path]::GetFullPath((Join-Path $RepoRoot $hostContract.algorithmLocation))
+        configPath = [IO.Path]::GetFullPath($Config) -eq [IO.Path]::GetFullPath((Join-Path $RepoRoot $hostContract.leanConfig))
+        configHash = (Get-BaselineHash $Config -LfNormalized) -ceq $hostContract.leanConfigSha256LfNormalized
+        dataFolder = [IO.Path]::GetFullPath($DataFolder) -eq [IO.Path]::GetFullPath($Baseline.qualifiedDataIdentity.dataFolder)
+        parameters = $Parameters -ceq $pairs
+        allowMissingData = $AllowMissingData -eq $true
+        allowEngineErrors = $AllowEngineErrors -eq $false
+        terminalException = [string]::IsNullOrEmpty($ExpectedTerminalException)
+    }
+    $problems = @($checks.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object Key)
+    if ($problems.Count -ne 0) { throw ('Corrected full-history invocation mismatch: ' + ($problems -join ', ')) }
+}

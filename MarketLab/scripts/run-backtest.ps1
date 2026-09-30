@@ -168,6 +168,19 @@ run refuses to launch (exit 2).
 With -RunEvidence: path to the authoritative decision register that pins the
 frozen contract hash. See -BaselineContract.
 
+.PARAMETER CorrectedHistoryContract
+With -RunEvidence: path to the frozen corrected-full-history (Phase D) contract.
+Mutually exclusive with -BaselineContract/-BaselineRegister/-ExpectedTerminalException.
+Before LEAN is launched the helper verifies the descriptor, its frozen-baseline
+pin against the actual baseline contract hash and the register pin, the clean
+reviewed checkout, the successful source-bound build receipt, the run inputs
+against the frozen baseline contract (all 30 single-anchor-* values, data folder,
+config) and the complete qualified data tree through
+Test-SingleAnchorCorrectedFullHistory.ps1 -Preflight. The pre-run evidence records
+the descriptor path and LF-normalized SHA-256; the post-run classification uses
+the current Phase B broker-liquidation verifier, never the historical
+pre-liquidation AccountStopOut classifier.
+
 .PARAMETER ExpectedTerminalException
 With -RunEvidence: the fully-qualified name of the one modeled terminal
 strategy exception the run is allowed to end with (the AccountStopOut
@@ -175,7 +188,10 @@ exception for the frozen baseline). The post-run engine-log audit always runs
 when the engine log exists; engine ERROR:: lines whose message contains this
 name are counted separately as the expected terminal exception, so every other
 engine ERROR:: line still counts as an unrelated engine error. The value is
-recorded in the evidence so the classifier can check it.
+recorded in the evidence so the classifier can check it. Not used with
+-CorrectedHistoryContract: under the current broker-liquidation model a Stop Out
+is not terminal, and a genuine current-model failure is classified from the
+recorded failure and its terminal engine log line.
 
 .PARAMETER ReviewedCommit
 With the baseline contract: explicitly reviewed full Git SHA. A clean checkout
@@ -240,7 +256,8 @@ param(
     [string]$ExpectedTerminalException,
     [string]$ReviewedCommit,
     [string]$BuildReceipt,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [string]$CorrectedHistoryContract
 )
 
 Set-StrictMode -Version 2.0
@@ -876,11 +893,15 @@ $baselineContractPathResolved = $null
 $baselineRegisterPathResolved = $null
 $baselineContractSha256 = $null
 $baselineRegisterPin = $null
+$correctedContractPathResolved = $null
+$correctedContractSha256 = $null
 $runtimeBinaryHashes = [ordered]@{}
 $repositoryHead = $null
 $repositoryDirty = $null
 $baselineBuild = $null
 $baselinePreflight = $null
+$correctedBuild = $null
+$correctedPreflight = $null
 if ($RunEvidence) {
     # Repository state: captured in pre-flight so a dirty working tree or a
     # missing Git HEAD stops the run before LEAN launches.
@@ -916,8 +937,55 @@ if ($RunEvidence) {
             $runtimeBinaryHashes[$name] = Get-Sha256Hex $runtimePath
         }
     }
-    if ([string]::IsNullOrWhiteSpace($BaselineContract) -and [string]::IsNullOrWhiteSpace($BaselineRegister)) {
-        Write-WarningLine "-RunEvidence without -BaselineContract/-BaselineRegister: the evidence will not bind a baseline contract identity, so the baseline classifier will refuse the run."
+    if (-not [string]::IsNullOrWhiteSpace($CorrectedHistoryContract)) {
+        # The corrected untouched full-history (Phase D) launch. The descriptor adds the
+        # current broker-liquidation model identity; every effective value stays the frozen
+        # baseline contract's. This branch must never accept the historical terminal model
+        # and the baseline branch below must never accept the corrected model.
+        if (-not [string]::IsNullOrWhiteSpace($BaselineContract) -or -not [string]::IsNullOrWhiteSpace($BaselineRegister) -or
+            -not [string]::IsNullOrWhiteSpace($ExpectedTerminalException)) {
+            $problems.Add('-CorrectedHistoryContract is mutually exclusive with -BaselineContract/-BaselineRegister/-ExpectedTerminalException; pass exactly one model path.')
+        }
+        else {
+            try { $correctedContractPathResolved = ConvertTo-AbsolutePath $CorrectedHistoryContract }
+            catch { $problems.Add("-CorrectedHistoryContract `"$CorrectedHistoryContract`" is not a usable path: $($_.Exception.Message)") }
+            if ($null -ne $correctedContractPathResolved) {
+                if (-not (Test-Path -LiteralPath $correctedContractPathResolved -PathType Leaf)) {
+                    $problems.Add("Corrected-full-history contract `"$correctedContractPathResolved`" does not exist.")
+                }
+                else {
+                    try {
+                        $correctedContractSha256 = Get-Sha256Hex $correctedContractPathResolved -LfNormalized
+                        $correctedDescriptor = [IO.File]::ReadAllText($correctedContractPathResolved) | ConvertFrom-Json
+                        $correctedBaselineRelative = [string](Get-JsonProperty $correctedDescriptor.baselineContract 'path')
+                        $correctedBaselinePin = [string](Get-JsonProperty $correctedDescriptor.baselineContract 'sha256LfNormalized')
+                        $correctedBaselinePath = if ([IO.Path]::IsPathRooted($correctedBaselineRelative)) { [IO.Path]::GetFullPath($correctedBaselineRelative) } else { [IO.Path]::GetFullPath((Join-Path $leanRootPath $correctedBaselineRelative)) }
+                        if (-not (Test-Path -LiteralPath $correctedBaselinePath -PathType Leaf)) { throw "Corrected-full-history contract references baseline contract `"$correctedBaselinePath`" which does not exist." }
+                        $correctedBaselineSha256 = Get-Sha256Hex $correctedBaselinePath -LfNormalized
+                        if ($correctedBaselineSha256 -ne $correctedBaselinePin) {
+                            throw "The corrected-full-history contract pins baseline hash $correctedBaselinePin but the baseline contract at `"$correctedBaselinePath`" hashes to $correctedBaselineSha256."
+                        }
+                        $correctedRegisterRelative = [string](Get-JsonProperty $correctedDescriptor.baselineContract 'registerPath')
+                        $correctedRegisterPath = if ([IO.Path]::IsPathRooted($correctedRegisterRelative)) { [IO.Path]::GetFullPath($correctedRegisterRelative) } else { [IO.Path]::GetFullPath((Join-Path $leanRootPath $correctedRegisterRelative)) }
+                        if (-not (Test-Path -LiteralPath $correctedRegisterPath -PathType Leaf)) { throw "Corrected-full-history contract references register `"$correctedRegisterPath`" which does not exist." }
+                        $correctedRegisterPin = [string](Get-JsonProperty ([IO.File]::ReadAllText($correctedRegisterPath) | ConvertFrom-Json) 'frozenBaselineContractSha256')
+                        if ($correctedRegisterPin -ne $correctedBaselineSha256) {
+                            throw "The register pin $correctedRegisterPin does not match the actual frozen baseline contract hash $correctedBaselineSha256."
+                        }
+                        $frozenBaseline = [IO.File]::ReadAllText($correctedBaselinePath) | ConvertFrom-Json
+                        Assert-CorrectedFullHistoryLaunch $correctedDescriptor $frozenBaseline $leanRootPath $Configuration $configPath `
+                            $AlgorithmTypeName $AlgorithmLanguage $algorithmLocationPath $dataFolderPath ($parameterPairs -join ',') `
+                            ([bool]$AllowMissingData) ([bool]$AllowEngineErrors) $ExpectedTerminalException
+                        if (-not $BuildReceipt) { $BuildReceipt = Join-Path $leanRootPath 'MarketLab\output\baseline-build.json' }
+                        $BuildReceipt = [IO.Path]::GetFullPath($BuildReceipt)
+                        $correctedBuild = Assert-BaselineBuild $BuildReceipt $leanRootPath $ReviewedCommit $dotnet $correctedBaselineSha256
+                    } catch { $problems.Add($_.Exception.Message) }
+                }
+            }
+        }
+    }
+    elseif ([string]::IsNullOrWhiteSpace($BaselineContract) -and [string]::IsNullOrWhiteSpace($BaselineRegister)) {
+        Write-WarningLine "-RunEvidence without -BaselineContract/-BaselineRegister/-CorrectedHistoryContract: the evidence will not bind a contract identity, so no classifier can certify the run."
     }
     elseif ([string]::IsNullOrWhiteSpace($BaselineContract) -or [string]::IsNullOrWhiteSpace($BaselineRegister)) {
         $problems.Add("-BaselineContract and -BaselineRegister must be passed together with -RunEvidence.")
@@ -968,6 +1036,9 @@ if ($RunEvidence) {
 elseif (-not [string]::IsNullOrWhiteSpace($BaselineContract) -or -not [string]::IsNullOrWhiteSpace($BaselineRegister)) {
     $problems.Add("-BaselineContract/-BaselineRegister are only meaningful with -RunEvidence; pass -RunEvidence or omit them.")
 }
+elseif (-not [string]::IsNullOrWhiteSpace($CorrectedHistoryContract)) {
+    $problems.Add("-CorrectedHistoryContract is only meaningful with -RunEvidence; pass -RunEvidence or omit it.")
+}
 
 if ($problems.Count -gt 0) {
     foreach ($problem in $problems) { Write-ErrorLine $problem }
@@ -998,6 +1069,35 @@ if ($null -ne $baselineBuild) {
         exit $script:ExitPreflight
     }
 }
+if ($null -ne $correctedBuild) {
+    # The same immediate-before-launch re-check for the corrected full-history run: the
+    # corrected classifier verifies the descriptor, its frozen-baseline and register pins,
+    # the clean reviewed checkout, the source-bound build receipt and the full qualified tree.
+    $checkArguments = @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'Test-SingleAnchorCorrectedFullHistory.ps1'),
+        '-Preflight', '-CheckOnly', '-Contract', $correctedContractPathResolved,
+        '-ReviewedCommit', $ReviewedCommit, '-BuildReceipt', $BuildReceipt, '-DotnetPath', $dotnet)
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $checkOutput = @(& pwsh @checkArguments 2>&1)
+        $checkExit = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldPreference }
+    if ($checkExit -ne 0) {
+        Write-ErrorLine ("Mandatory corrected-full-history preflight failed; LEAN was not launched. " + ($checkOutput -join "`n"))
+        exit $script:ExitPreflight
+    }
+    try { $correctedPreflight = ($checkOutput -join "`n") | ConvertFrom-Json }
+    catch { Write-ErrorLine 'Mandatory corrected-full-history preflight returned no valid receipt.'; exit $script:ExitPreflight }
+    if ($correctedPreflight.qualification -ne 'PREFLIGHT-PASS' -or $correctedPreflight.authoritative -ne $true -or
+        $correctedPreflight.mode -ne 'corrected-full-history') {
+        Write-ErrorLine 'Mandatory corrected-full-history preflight did not authorize this run.'
+        exit $script:ExitPreflight
+    }
+}
+
+# The verified build whose runtime is pinned on the launcher command line and whose
+# artifact set is re-checked after the run; exactly one of the two modes can set it.
+$runtimePinBuild = if ($null -ne $baselineBuild) { $baselineBuild } elseif ($null -ne $correctedBuild) { $correctedBuild } else { $null }
 
 # ----------------------------------------------------------------------------
 # Run directory and command line
@@ -1032,8 +1132,8 @@ $launcherArgs = @(
 if ($parameterPairs.Count -gt 0) {
     $launcherArgs += @('--parameters', ($parameterPairs -join ','))
 }
-if ($null -ne $baselineBuild) {
-    $launcherArgs = @('exec', '--fx-version', $baselineBuild.runtime.version, '--roll-forward', 'Disable') + $launcherArgs
+if ($null -ne $runtimePinBuild) {
+    $launcherArgs = @('exec', '--fx-version', $runtimePinBuild.runtime.version, '--roll-forward', 'Disable') + $launcherArgs
 }
 $commandLine = Format-CommandLine $dotnet $launcherArgs
 
@@ -1084,13 +1184,19 @@ if ($RunEvidence) {
     $invocationEvidencePath = Join-Path $runDir 'marketlab-run-invocation.json'
     try {
         $evidenceParameters = @($parameterPairs)
-        if ($null -ne $baselineBuild) {
+        if ($null -ne $runtimePinBuild) {
             [IO.File]::WriteAllText((Join-Path $runDir 'baseline-build.json'), [IO.File]::ReadAllText($BuildReceipt), [Text.UTF8Encoding]::new($false))
+        }
+        if ($null -ne $baselineBuild) {
             [IO.File]::WriteAllText((Join-Path $runDir 'baseline-preflight.json'), ($baselinePreflight | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        }
+        if ($null -ne $correctedBuild) {
+            [IO.File]::WriteAllText((Join-Path $runDir 'corrected-history-preflight.json'), ($correctedPreflight | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
         }
         $invocationEvidence = [ordered]@{
             contract = 'marketlab-run-invocation-evidence-v1'
             generatedUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+            runMode = $(if ($null -ne $correctedBuild) { 'corrected-full-history' } else { 'baseline' })
             leanRoot = $leanRootPath
             configuration = $Configuration
             dotnet = $dotnet
@@ -1115,14 +1221,17 @@ if ($RunEvidence) {
             baselineContractSha256 = $baselineContractSha256
             baselineRegisterPath = $baselineRegisterPathResolved
             baselineRegisterPin = $baselineRegisterPin
+            correctedHistoryContractPath = $correctedContractPathResolved
+            correctedHistoryContractSha256 = $correctedContractSha256
             repositoryHead = $repositoryHead
             repositoryDirty = $repositoryDirty
             runtimeBinariesRoot = $launcherDir
             runtimeBinaries = $runtimeBinaryHashes
             expectedTerminalException = $ExpectedTerminalException
             reviewedCommit = $ReviewedCommit
-            buildReceiptSha256 = if ($baselineBuild) { Get-Sha256Hex (Join-Path $runDir 'baseline-build.json') } else { $null }
-            preflightSha256 = if ($baselinePreflight) { Get-Sha256Hex (Join-Path $runDir 'baseline-preflight.json') } else { $null }
+            buildReceiptSha256 = if ($null -ne $runtimePinBuild) { Get-Sha256Hex (Join-Path $runDir 'baseline-build.json') } else { $null }
+            preflightSha256 = if ($null -ne $baselineBuild) { Get-Sha256Hex (Join-Path $runDir 'baseline-preflight.json') } else { $null }
+            correctedHistoryPreflightSha256 = if ($null -ne $correctedBuild) { Get-Sha256Hex (Join-Path $runDir 'corrected-history-preflight.json') } else { $null }
         }
         [System.IO.File]::WriteAllText($invocationEvidencePath, ($invocationEvidence | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
         Write-Info "  run evidence:     $invocationEvidencePath"
@@ -1356,9 +1465,9 @@ if ($RunEvidence) {
             }
         }
         $baselineArtifactsAfter = $null
-        if ($null -ne $baselineBuild) {
-            $baselineArtifactsAfter = Get-BaselineArtifacts $leanRootPath $dotnet $baselineBuild.runtime
-            try { Assert-BaselineArtifactEquality $baselineBuild.artifacts $baselineArtifactsAfter }
+        if ($null -ne $runtimePinBuild) {
+            $baselineArtifactsAfter = Get-BaselineArtifacts $leanRootPath $dotnet $runtimePinBuild.runtime
+            try { Assert-BaselineArtifactEquality $runtimePinBuild.artifacts $baselineArtifactsAfter }
             catch { $runtimeBinariesUnchanged = $false }
         }
         $outcome = [ordered]@{

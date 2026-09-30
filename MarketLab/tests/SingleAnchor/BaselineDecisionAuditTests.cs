@@ -242,6 +242,7 @@ namespace MarketLab.SingleAnchor.Tests
             "RunEvidence",
             "BaselineContract",
             "BaselineRegister",
+            "CorrectedHistoryContract",
             "ExpectedTerminalException",
             "ReviewedCommit",
             "BuildReceipt",
