@@ -86,6 +86,17 @@ audit was performed and found **zero engine `ERROR::` lines**; the post-run
 artifact re-hash was unchanged. The engine's data monitor counted 2,741
 requests: 2,334 succeeded, 407 failed (all reconciled below).
 
+**Operational note (power plan).** To prevent the 2-hour AC standby timeout
+from interrupting the long run, AC standby was temporarily disabled and the
+display timeout was also set to "never" for the duration of the execution.
+The standby timeout was restored to the observed original value of 120
+minutes. The original display-timeout value was **not captured before the
+change and cannot be reconstructed from the machine state**, so the host was
+left at the Windows Balanced-scheme default of 10 minutes after the run. This
+deviation does not affect the run or its evidence (the machine remained awake
+and the execution completed normally). Any future long run must capture every
+modified power-plan value before changing it.
+
 Progress was observed from the engine's `log.txt` by following the latest
 simulated event timestamp and the latest requested source partition; the
 engine does not expose live quote-level progress.
