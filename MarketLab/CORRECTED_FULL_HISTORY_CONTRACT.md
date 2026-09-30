@@ -5,11 +5,14 @@ executed**  -  the authoritative run and evidence path for the corrected
 untouched full-history SingleAnchor characterization (Phase D) under the
 finalized Phase B broker-forced-liquidation model. The support implementation
 (the descriptor, the classifier and the helper mode) was independently reviewed
-at exact head `7de848aaf0284d9f8e39d16a8c1b11c85437f759` and merged and
-finalized through [Rady70/Lean PR #21](https://github.com/Rady70/Lean/pull/21);
-the merge commit is PR #21's `master` merge commit and is a descendant of that
-reviewed head. The corrected full-history characterization itself has **not**
-been executed and still requires a separate explicit authorization.
+at exact implementation head `7de848aaf0284d9f8e39d16a8c1b11c85437f759`. The final pre-merge
+PR head `eb026dbd495314137c71b65f735f444e745058d7` added only the three Markdown
+status/finalization files, and PR #21 merged as
+`7a24bed76e229505c83775a1d4d0e942853c5c6a`. Therefore the merged executable,
+configuration and test content matches the reviewed candidate; the complete Git
+tree differs only by that documented Markdown-only finalization delta. The
+corrected full-history characterization itself has **not** been executed and
+still requires a separate explicit authorization.
 
 ```text
 Phase A historical pre-liquidation baseline:      preserved; unchanged
@@ -168,22 +171,26 @@ qualify a Phase D run.
 ## 4. Intended Phase D invocation (not executed)
 
 The exact command is the descriptor's `runProcedure.exactRunCommand`. It is
-reproduced here with `$ReviewedCommit` literal. The support revision passed
-independent exact-head review (`7de848aaf0284d9f8e39d16a8c1b11c85437f759`) and
-was merged and finalized through PR #21; for the eventual run the remaining
-sequence is local `master` synchronization, verification that the merged
-`master` tree is the reviewed tree, and `$ReviewedCommit` = the merged `master`
-SHA. The project's current Git rule is Windows-only local validation with **no
-hosted CI before merge**: do not dispatch
+reproduced here with `$ReviewedCommit` literal. The support implementation
+passed independent review at exact implementation head
+`7de848aaf0284d9f8e39d16a8c1b11c85437f759`; the final pre-merge head
+`eb026dbd495314137c71b65f735f444e745058d7` added only the documented Markdown
+status/finalization delta, and PR #21 merged as
+`7a24bed76e229505c83775a1d4d0e942853c5c6a`. For the eventual run, synchronize
+local `master` and verify that no later commit changes the reviewed executable,
+configuration or test implementation without independent review. Set
+`$ReviewedCommit` to the exact clean `master` HEAD that will be built and run.
+The project's current Git rule is Windows-only local validation with **no hosted
+CI before merge**: do not dispatch
 `.github/workflows/marketlab-final-validation.yml` on an unmerged PR head —
 that workflow is an optional, separately authorized hosted confirmation, not a
-Phase D finalization step. `$ReviewedCommit` must be the merged `master` SHA —
-`Build-SingleAnchorBaseline.ps1`/`Assert-BaselineBuild` require a clean checkout
-whose `HEAD` equals `$ReviewedCommit`, so the Phase D build and run use the
-merged master tree (verified to be the reviewed tree), not the pre-merge PR-head
-SHA. Do not populate `$ReviewedCommit` automatically from the current HEAD. Only
-after a separate authorization to run Phase D may this command be executed;
-`run-backtest.ps1` repeats the corrected preflight immediately before launch.
+Phase D finalization step. `Build-SingleAnchorBaseline.ps1` and
+`Assert-BaselineBuild` require the checkout's `HEAD` to equal
+`$ReviewedCommit`, so the source-bound receipt records the actual approved
+source tree used for Phase D. Do not populate `$ReviewedCommit` automatically
+without first verifying the current `master` state. Only after a separate
+authorization to run Phase D may this command be executed; `run-backtest.ps1`
+repeats the corrected preflight immediately before launch.
 
 ```powershell
 pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release -Config MarketLab/config/backtesting.json -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy -Parameters "single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,single-anchor-security-type:Cfd,single-anchor-start-date:2019-01-01,single-anchor-end-date:2026-06-30,single-anchor-cash:20000,single-anchor-session-map:marketlab-sessions/xauusd-sessions.json,single-anchor-step-percent:0.25,single-anchor-base-lot:0.10,single-anchor-normal-trade-count:4,single-anchor-hard-be-ceiling-percent:4.478,single-anchor-escape-enabled:true,single-anchor-escape-profit-units:0.05,single-anchor-escape-minimum-open-positions:2,single-anchor-fixed-tp-units:0,single-anchor-trailing-enabled:true,single-anchor-trailing-activation-units:0.50,single-anchor-trailing-drop-units:0.25,single-anchor-commission-buffer:0,single-anchor-point-value-per-lot:100,single-anchor-volume-step:0.01,single-anchor-minimum-volume:0.01,single-anchor-maximum-volume:50,single-anchor-commission-per-lot:0,single-anchor-slippage:0,single-anchor-projected-spread:0.50,single-anchor-buy-swap-per-lot-per-day:0,single-anchor-sell-swap-per-lot-per-day:0,single-anchor-research-account:true,single-anchor-margin-enabled:true" -AllowMissingData -RunEvidence -CorrectedHistoryContract MarketLab\config\corrected-full-history-contract.json -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\output\baseline-build.json

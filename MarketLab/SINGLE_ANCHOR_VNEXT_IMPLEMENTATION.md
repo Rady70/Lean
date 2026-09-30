@@ -1853,11 +1853,15 @@ Phase D is the corrected untouched full-history SingleAnchor characterization:
 the frozen Phase A strategy, account and data values, unchanged, over the full
 qualified `2019-01-01 .. 2026-06-30` window under the finalized Phase B
 broker-forced-liquidation model. This section records the support implementation
-that was independently reviewed at exact head
-`7de848aaf0284d9f8e39d16a8c1b11c85437f759` and merged and finalized through
-Rady70/Lean PR #21 (the merge commit is PR #21's `master` merge commit). **The
-corrected full-history run has not been executed** and awaits a separate
-explicit authorization. The Phase A historical record (section 13), the Phase B
+that was independently reviewed at exact implementation head
+`7de848aaf0284d9f8e39d16a8c1b11c85437f759`. Final pre-merge head
+`eb026dbd495314137c71b65f735f444e745058d7` added only the three Markdown
+status/finalization files, and PR #21 merged as
+`7a24bed76e229505c83775a1d4d0e942853c5c6a`. The merged executable,
+configuration and test content therefore matches the reviewed implementation;
+the complete Git tree differs only by the documented Markdown-only finalization
+delta. **The corrected full-history run has not been executed** and awaits a
+separate explicit authorization. The Phase A historical record (section 13), the Phase B
 implementation and its merged PR #18 (section 14), the reviewed Phase C March
 2020 qualification (section 14.5), the frozen `config/baseline-contract.json`
 and `BASELINE_CONTRACT.md`, and the committed Phase A evidence are unchanged.
@@ -1942,18 +1946,21 @@ section 2.
 
 ### 15.3 Intended execution procedure (after separate authorization)
 
-1. The support revision passed independent exact-head review
-   (`7de848aaf0284d9f8e39d16a8c1b11c85437f759`) and is merged and finalized
-   through PR #21. The project's current Git rule is Windows-only local
-   validation with **no hosted CI before merge**; the optional
-   `marketlab-final-validation.yml` workflow is not a Phase D finalization step
-   and must not be dispatched on an unmerged PR head.
-2. Synchronize local `master` to the merge commit, record the resulting merge
-   SHA and verify the merged `master` tree is the reviewed tree.
-   Set `$ReviewedCommit` to that merged `master` SHA:
-   `Build-SingleAnchorBaseline.ps1`/`Assert-BaselineBuild` require a clean
-   checkout whose `HEAD` equals `$ReviewedCommit`, so the pre-merge PR-head SHA
-   must not be used while sitting on the merged `master`.
+1. The support implementation passed independent exact-head review
+   (`7de848aaf0284d9f8e39d16a8c1b11c85437f759`). Final pre-merge head
+   `eb026dbd495314137c71b65f735f444e745058d7` added only the documented
+   Markdown status/finalization delta, and PR #21 merged as
+   `7a24bed76e229505c83775a1d4d0e942853c5c6a`. The project's current Git
+   rule is Windows-only local validation with **no hosted CI before merge**; the
+   optional `marketlab-final-validation.yml` workflow is not a Phase D
+   finalization step and must not be dispatched on an unmerged PR head.
+2. Synchronize local `master`, record its exact current SHA and verify that no
+   later commit changes the independently reviewed executable, configuration or
+   test implementation without review. Set `$ReviewedCommit` to the exact clean
+   `master` HEAD that will be built and run:
+   `Build-SingleAnchorBaseline.ps1`/`Assert-BaselineBuild` require the
+   checkout's `HEAD` to equal `$ReviewedCommit`, so the source-bound receipt
+   records the actual approved source tree used for Phase D.
 3. Build the source-bound receipt:
    `pwsh -File MarketLab\scripts\Build-SingleAnchorBaseline.ps1 -ReviewedCommit $ReviewedCommit`.
 4. Report the frozen contract identity:

@@ -693,10 +693,12 @@ pre-liquidation observations) -
 not started.
 
 The Phase D corrected full-history support is **merged and finalized** through
-[Rady70/Lean PR #21](https://github.com/Rady70/Lean/pull/21) after independent
-review of exact head `7de848aaf0284d9f8e39d16a8c1b11c85437f759`; the merge
-commit is PR #21's `master` merge commit. The
-corrected-full-history descriptor
+[Rady70/Lean PR #21](https://github.com/Rady70/Lean/pull/21). The executable,
+configuration and test implementation was independently reviewed at exact head
+`7de848aaf0284d9f8e39d16a8c1b11c85437f759`; final pre-merge head
+`eb026dbd495314137c71b65f735f444e745058d7` added only three Markdown
+status/finalization files, and PR #21 merged as
+`7a24bed76e229505c83775a1d4d0e942853c5c6a`. The corrected-full-history descriptor
 ([`config\corrected-full-history-contract.json`](config/corrected-full-history-contract.json)),
 the preflight/classifier
 ([`scripts\Test-SingleAnchorCorrectedFullHistory.ps1`](scripts/Test-SingleAnchorCorrectedFullHistory.ps1)),
