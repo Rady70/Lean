@@ -1847,14 +1847,17 @@ the corrected economics but no source binding. Neither result is inherited.
   re-run the frozen baseline, re-qualify market data, optimize parameters or
   trigger hosted CI; those remain out of scope for this phase.
 
-## 15. Phase D corrected full-history support (prepared, not executed)
+## 15. Phase D corrected full-history support (merged and finalized; full-history run not executed)
 
 Phase D is the corrected untouched full-history SingleAnchor characterization:
 the frozen Phase A strategy, account and data values, unchanged, over the full
 qualified `2019-01-01 .. 2026-06-30` window under the finalized Phase B
-broker-forced-liquidation model. This section records the support change
-prepared for independent review. **The corrected full-history run has not been
-executed.** The Phase A historical record (section 13), the Phase B
+broker-forced-liquidation model. This section records the support implementation
+that was independently reviewed at exact head
+`7de848aaf0284d9f8e39d16a8c1b11c85437f759` and merged and finalized through
+Rady70/Lean PR #21 (the merge commit is PR #21's `master` merge commit). **The
+corrected full-history run has not been executed** and awaits a separate
+explicit authorization. The Phase A historical record (section 13), the Phase B
 implementation and its merged PR #18 (section 14), the reviewed Phase C March
 2020 qualification (section 14.5), the frozen `config/baseline-contract.json`
 and `BASELINE_CONTRACT.md`, and the committed Phase A evidence are unchanged.
@@ -1939,13 +1942,12 @@ section 2.
 
 ### 15.3 Intended execution procedure (after separate authorization)
 
-1. Independent review of the exact final PR head of the corrected-full-history
-   support revision, then merge/finalize (not by the support author) once that
-   review approves the candidate. The project's current Git rule is Windows-only
-   local validation with **no hosted CI before merge**: do not dispatch
-   `marketlab-final-validation.yml` on the unmerged PR head — that workflow is
-   an optional, separately authorized hosted confirmation, not a Phase D
-   finalization step.
+1. The support revision passed independent exact-head review
+   (`7de848aaf0284d9f8e39d16a8c1b11c85437f759`) and is merged and finalized
+   through PR #21. The project's current Git rule is Windows-only local
+   validation with **no hosted CI before merge**; the optional
+   `marketlab-final-validation.yml` workflow is not a Phase D finalization step
+   and must not be dispatched on an unmerged PR head.
 2. Synchronize local `master` to the merge commit, record the resulting merge
    SHA and verify the merged `master` tree is the reviewed tree.
    Set `$ReviewedCommit` to that merged `master` SHA:

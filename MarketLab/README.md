@@ -692,24 +692,26 @@ pre-liquidation observations) -
 [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). Parameter optimization has
 not started.
 
-The Phase D corrected full-history support is prepared for independent review:
-the corrected-full-history descriptor
+The Phase D corrected full-history support is **merged and finalized** through
+[Rady70/Lean PR #21](https://github.com/Rady70/Lean/pull/21) after independent
+review of exact head `7de848aaf0284d9f8e39d16a8c1b11c85437f759`; the merge
+commit is PR #21's `master` merge commit. The
+corrected-full-history descriptor
 ([`config\corrected-full-history-contract.json`](config/corrected-full-history-contract.json)),
 the preflight/classifier
 ([`scripts\Test-SingleAnchorCorrectedFullHistory.ps1`](scripts/Test-SingleAnchorCorrectedFullHistory.ps1)),
 the helper's `-CorrectedHistoryContract` evidence mode and the current-model
-terminal-prefix verification add the authoritative run and evidence path for
+terminal-prefix verification provide the authoritative run and evidence path for
 the later authorized corrected full-history characterization of the frozen
 Phase A values under the Phase B broker-liquidation model. The corrected
-full-history run itself has **not** been executed, and the Phase A historical
-record, the Phase B implementation (PR #18), the reviewed Phase C March 2020
-qualification, the frozen `config\baseline-contract.json`,
-[BASELINE_CONTRACT.md](BASELINE_CONTRACT.md) and the committed Phase A evidence
-are unchanged. See
+full-history run itself has **not** been executed and awaits a separate explicit
+authorization; the Phase A historical record, the Phase B implementation
+(PR #18), the reviewed Phase C March 2020 qualification, the frozen
+`config\baseline-contract.json`, [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)
+and the committed Phase A evidence are unchanged. See
 [CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md) and
 section 15 of
-[SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md);
-executing Phase D requires a separate explicit authorization.
+[SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md).
 
 ## 10. When required data is missing
 
