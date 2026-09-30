@@ -243,7 +243,7 @@ composition manifest). Three outcomes are possible:
   mismatched evidence record, a terminal kind/condition pair outside the exact
   reviewed set, a faulting quote that does not match the engine's processed or
   pre-acceptance semantics, an engine `ERROR::` line beyond the single
-  recorded-failure line, a failed request after the terminal horizon, a changed
+  recorded-failure line, a failed request after the request horizon, a changed
   runtime binary, a dirty working tree at launch, or a delivered stream that is
   neither the full qualified population nor the exact qualified prefix cannot
   certify Phase D evidence.

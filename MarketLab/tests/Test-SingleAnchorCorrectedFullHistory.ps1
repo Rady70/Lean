@@ -14,6 +14,8 @@ paths:
   B BrokerLiquidation/ForcedCloseFailed exact prefix   -> exit 0, EXPECTED (terminal prefix)
   Z AccountSurvival/ExecutableMarkUnavailable prefix   -> exit 0, EXPECTED (other terminal kind)
   Z2 StrategyInvariant/DataQuality/SessionMap prefixes -> exit 0, EXPECTED (remaining terminal kinds)
+  Z3/Z4 mismatched and case-mutated conditions          -> exit 2, controlled failure
+  Z4b/4c case-mutated kinds (processed/pre-acceptance)  -> exit 2, controlled failure (before quote semantics)
   C AccountStopOut terminal kind                       -> exit 2, controlled failure
   D unknown terminal kind                              -> exit 2, controlled failure
   E result names a wrong modelRevision                 -> exit 2, controlled failure
@@ -27,6 +29,7 @@ paths:
   K3 cross-day pre-acceptance fault, Jan 2 requested   -> exit 0, EXPECTED (request horizon = fault day)
   K4 pre-acceptance request beyond the fault horizon   -> exit 1, INVALID (post-horizon request)
   L corrected contract baseline pin mismatch           -> exit 2, controlled failure
+  L2 case-mutated descriptor terminal kind             -> exit 2, controlled failure
   M frozen baseline contract edited after pinning      -> exit 2, controlled failure
   N partition zip modified after the manifest          -> exit 2, controlled failure
   O invocation parametersString mismatch               -> exit 2, controlled failure
@@ -661,6 +664,18 @@ try {
     Check 'exit 2 (case-mutated condition)' ($resultZ4.Code -eq 2)
     Check 'failure names the invalid kind/condition pair (case-mutated)' ($resultZ4.Record.failure -match 'not a valid current-model condition')
 
+    Write-Host 'Case Z4b: case-mutated terminal kinds are refused before quote semantics'
+    $caseZ4b = New-RunCase -Name 'case-z4b-case-mutated-processed-kind' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'brokerliquidation' -FailureCondition 'ForcedCloseFailed' -Through '2019-01-03T12:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultZ4b = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseZ4b
+    Check 'exit 2 (case-mutated processed kind)' ($resultZ4b.Code -eq 2)
+    Check 'controlled failure (case-mutated processed kind)' ($resultZ4b.Record.qualification -eq 'CONTROLLED_FAILURE')
+    Check 'failure names the kind, not the condition (case-mutated processed kind)' ($resultZ4b.Record.failure -match 'not one of the current model''s terminal failure kinds')
+    $caseZ4c = New-RunCase -Name 'case-z4c-case-mutated-preacceptance-kind' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'dataquality' -FailureCondition 'InvalidQuote' -Through '2019-01-03T12:00:00Z' -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultZ4c = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseZ4c
+    Check 'exit 2 (case-mutated pre-acceptance kind)' ($resultZ4c.Code -eq 2)
+    Check 'controlled failure (case-mutated pre-acceptance kind)' ($resultZ4c.Record.qualification -eq 'CONTROLLED_FAILURE')
+    Check 'failure names the kind, not the quote binding (case-mutated pre-acceptance kind)' ($resultZ4c.Record.failure -match 'not one of the current model''s terminal failure kinds')
+
     Write-Host 'Case Z5: wrong failure quotes are refused for both fault semantics'
     $wrongProcessedQuote = [pscustomobject]@{ Time = '2019-01-03T12:00:00.000Z'; Bid = 999; Ask = 100.5 }
     $caseZ5 = New-RunCase -Name 'case-z5-wrong-processed-quote' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'BrokerLiquidation' -FailureCondition 'ForcedCloseFailed' -Through '2019-01-03T12:00:00Z' -FailureQuote $wrongProcessedQuote -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
@@ -792,6 +807,16 @@ try {
     Check 'exit 2' ($resultL.Code -eq 2)
     Check 'qualification CONTROLLED_FAILURE' ($resultL.Record.qualification -eq 'CONTROLLED_FAILURE')
     Check 'failure names the baseline pin' ($resultL.Record.failure -match 'pins baseline hash')
+
+    Write-Host 'Case L2: a case-mutated descriptor terminal kind is refused'
+    $kindMutation = [IO.File]::ReadAllText($script:correctedContractPath) | ConvertFrom-Json
+    $kindMutation.model.terminalFailureKinds = @('brokerliquidation', 'DataQuality', 'SessionMap', 'AccountSurvival', 'StrategyInvariant')
+    $kindMutationPath = Join-Path $root 'corrected-kind-mutation.json'
+    Write-JsonFile $kindMutationPath $kindMutation
+    $resultL2 = Invoke-CorrectedClassifier -ContractPath $kindMutationPath -Preflight
+    Check 'exit 2 (case-mutated descriptor kind)' ($resultL2.Code -eq 2)
+    Check 'controlled failure (case-mutated descriptor kind)' ($resultL2.Record.qualification -eq 'CONTROLLED_FAILURE')
+    Check 'failure names the unknown descriptor kind' ($resultL2.Record.failure -match 'unknown terminal failure kind')
 
     Write-Host 'Case N: partition zip modified after the manifest was built'
     $treeN = New-Tree (Join-Path $root 'data-drift') $presentDays

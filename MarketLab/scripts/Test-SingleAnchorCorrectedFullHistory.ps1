@@ -158,6 +158,11 @@ $script:ConditionsByKind = [ordered]@{
     'AccountSurvival'   = @('ExecutableMarkUnavailable')
     'BrokerLiquidation' = @('ForcedCloseFailed')
 }
+# The canonical exact-case kind names. Ordered-dictionary keys and -contains are case-insensitive
+# in PowerShell, so membership in the maps above must only be consulted after this list has
+# matched the kind case-sensitively; otherwise a case-mutated Kind could bypass the fault-quote
+# semantics dispatch (which is genuinely case-sensitive).
+$script:CanonicalKinds = @('StrategyInvariant', 'DataQuality', 'SessionMap', 'AccountSurvival', 'BrokerLiquidation')
 # Which faults happen after the faulting quote was accepted and counted (so failure.Quote equals
 # the final processed quote), and which are raised before acceptance (DataQuality/SessionMap: the
 # refused quote is not counted and is the next qualified source quote after the delivered prefix).
@@ -334,7 +339,7 @@ foreach ($kind in $terminalKinds) {
     if ([string]$kind -ceq 'AccountStopOut') {
         Fail-Preflight 'the corrected-full-history contract must not list the historical AccountStopOut kind; the current model never raises it.' $outputFullPath $authoritative
     }
-    if (-not $script:TerminalExceptionByKind.Contains([string]$kind)) {
+    if (-not ($script:CanonicalKinds -ccontains ([string]$kind))) {
         Fail-Preflight "the corrected-full-history contract lists unknown terminal failure kind '$kind'." $outputFullPath $authoritative
     }
 }
@@ -1051,7 +1056,7 @@ if ($runTerminated) {
     if ($terminationKind -eq 'AccountStopOut') {
         Fail-Preflight 'the run ended with the historical AccountStopOut condition, which the current model never raises; this is not a corrected full-history outcome.' $outputFullPath $authoritative
     }
-    if (-not $script:TerminalExceptionByKind.Contains($terminationKind) -or -not ($terminalKinds -contains $terminationKind)) {
+    if (-not ($script:CanonicalKinds -ccontains $terminationKind) -or -not ($terminalKinds -ccontains $terminationKind)) {
         Fail-Preflight "the run ended by '$terminationKind', which is not one of the current model's terminal failure kinds ($($terminalKinds -join ', '))." $outputFullPath $authoritative
     }
     $validConditions = @($script:ConditionsByKind[$terminationKind])
@@ -1248,7 +1253,10 @@ if ($runTerminated) {
         Fail-Preflight "the terminal run outcome records $($outcomeEngineMessages.Count) engine ERROR:: message(s); exactly one is expected." $outputFullPath $authoritative
     }
     $terminalMessage = [string]$outcomeEngineMessages[0]
-    if ($terminalMessage -notmatch [regex]::Escape("Context: OnData ${expectedException}: ") -or
+    # The exception type and message binding is case-sensitive Ordinal, like the .NET type name
+    # it verifies; -match/-notmatch are case-insensitive and would accept a mutated type name.
+    $terminalContextMarker = "Context: OnData ${expectedException}: "
+    if ($terminalMessage.IndexOf($terminalContextMarker, [System.StringComparison]::Ordinal) -lt 0 -or
         [string]::IsNullOrWhiteSpace($failureMessage) -or -not $terminalMessage.Contains($failureMessage)) {
         Fail-Preflight "the terminal engine ERROR:: line does not name the recorded failure ('$expectedException'): $terminalMessage" $outputFullPath $authoritative
     }
