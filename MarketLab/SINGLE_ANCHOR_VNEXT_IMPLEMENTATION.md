@@ -1940,14 +1940,14 @@ section 2.
 ### 15.3 Intended execution procedure (after separate authorization)
 
 1. Independent review of the exact final PR head of the corrected-full-history
-   support revision, then manual dispatch of
-   `marketlab-final-validation.yml` on that exact reviewed candidate;
-   confirm the candidate and dispatched-base identities have not moved and the
-   gate is clean, then merge (not by the support author). Do not dispatch the
-   gate before independent review, and do not treat review as a direct
-   precondition for merge.
+   support revision, then merge/finalize (not by the support author) once that
+   review approves the candidate. The project's current Git rule is Windows-only
+   local validation with **no hosted CI before merge**: do not dispatch
+   `marketlab-final-validation.yml` on the unmerged PR head — that workflow is
+   an optional, separately authorized hosted confirmation, not a Phase D
+   finalization step.
 2. Synchronize local `master` to the merge commit, record the resulting merge
-   SHA and verify the merged `master` tree is the reviewed and gated tree.
+   SHA and verify the merged `master` tree is the reviewed tree.
    Set `$ReviewedCommit` to that merged `master` SHA:
    `Build-SingleAnchorBaseline.ps1`/`Assert-BaselineBuild` require a clean
    checkout whose `HEAD` equals `$ReviewedCommit`, so the pre-merge PR-head SHA

@@ -162,18 +162,20 @@ qualify a Phase D run.
 
 The exact command is the descriptor's `runProcedure.exactRunCommand`. It is
 reproduced here with `$ReviewedCommit` literal. The required order is:
-independent review of the exact final PR head, manual dispatch of
-`marketlab-final-validation.yml` on that exact reviewed candidate, confirmation
-that the candidate and dispatched-base identities have not moved and the gate
-is clean, merge (not by the support author), then local `master`
-synchronization. `$ReviewedCommit` must be the resulting merged `master` SHA —
-`Build-SingleAnchorBaseline.ps1`/`Assert-BaselineBuild` require a clean checkout
-whose `HEAD` equals `$ReviewedCommit`, so the Phase D build and run use the
-merged master tree (verified to be the reviewed and gated tree), not the
+independent review of the exact final PR head, then merge/finalize (not by the
+support author) once that review approves the candidate, then local `master`
+synchronization. The project's current Git rule is Windows-only local
+validation with **no hosted CI before merge**: do not dispatch
+`.github/workflows/marketlab-final-validation.yml` on the unmerged PR head —
+that workflow is an optional, separately authorized hosted confirmation, not a
+Phase D finalization step. `$ReviewedCommit` must be the resulting merged
+`master` SHA — `Build-SingleAnchorBaseline.ps1`/`Assert-BaselineBuild` require a
+clean checkout whose `HEAD` equals `$ReviewedCommit`, so the Phase D build and
+run use the merged master tree (verified to be the reviewed tree), not the
 pre-merge PR-head SHA. Do not populate `$ReviewedCommit` automatically from the
-current HEAD, and do not dispatch the gate before independent review. Only
-after a separate authorization to run Phase D may this command be executed;
-`run-backtest.ps1` repeats the corrected preflight immediately before launch.
+current HEAD. Only after a separate authorization to run Phase D may this
+command be executed; `run-backtest.ps1` repeats the corrected preflight
+immediately before launch.
 
 ```powershell
 pwsh -File MarketLab\scripts\run-backtest.ps1 -Configuration Release -Config MarketLab/config/backtesting.json -AlgorithmTypeName SingleAnchorVNextAlgorithm -AlgorithmLanguage CSharp -AlgorithmLocation MarketLab\src\SingleAnchor\bin\Release\MarketLab.SingleAnchor.dll -DataFolder E:\MarketLab\data\lean\xauusd-dukascopy -Parameters "single-anchor-symbol:XAUUSD,single-anchor-market:dukascopy,single-anchor-security-type:Cfd,single-anchor-start-date:2019-01-01,single-anchor-end-date:2026-06-30,single-anchor-cash:20000,single-anchor-session-map:marketlab-sessions/xauusd-sessions.json,single-anchor-step-percent:0.25,single-anchor-base-lot:0.10,single-anchor-normal-trade-count:4,single-anchor-hard-be-ceiling-percent:4.478,single-anchor-escape-enabled:true,single-anchor-escape-profit-units:0.05,single-anchor-escape-minimum-open-positions:2,single-anchor-fixed-tp-units:0,single-anchor-trailing-enabled:true,single-anchor-trailing-activation-units:0.50,single-anchor-trailing-drop-units:0.25,single-anchor-commission-buffer:0,single-anchor-point-value-per-lot:100,single-anchor-volume-step:0.01,single-anchor-minimum-volume:0.01,single-anchor-maximum-volume:50,single-anchor-commission-per-lot:0,single-anchor-slippage:0,single-anchor-projected-spread:0.50,single-anchor-buy-swap-per-lot-per-day:0,single-anchor-sell-swap-per-lot-per-day:0,single-anchor-research-account:true,single-anchor-margin-enabled:true" -AllowMissingData -RunEvidence -CorrectedHistoryContract MarketLab\config\corrected-full-history-contract.json -ReviewedCommit $ReviewedCommit -BuildReceipt MarketLab\output\baseline-build.json
@@ -231,8 +233,12 @@ composition manifest). Three outcomes are possible:
   terminal engine `ERROR::` line (the `SetRuntimeError` line naming the recorded
   failure's exception type and message) and no unrelated engine `ERROR::` lines;
   no declared terminal exception. The failed-data requests are classified with
-  the processed horizon as their bound: an actual failed request for a
-  source-absent day after the terminal horizon is invalid.
+  the request horizon as their bound: the last processed day for
+  accepted-then-faulted kinds and the verified faulting quote's day for
+  pre-acceptance kinds (the feed had to advance through the intervening calendar
+  days); an actual failed request for a source-absent day after that horizon is
+  invalid. The classification record retains both horizons explicitly
+  (`deliveredPrefixEndDay` and `requestHorizonEndDay`).
 - **Invalid / infrastructure cases.** Any other ending, a missing or
   mismatched evidence record, a terminal kind/condition pair outside the exact
   reviewed set, a faulting quote that does not match the engine's processed or

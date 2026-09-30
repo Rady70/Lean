@@ -44,10 +44,13 @@ AccountStopOut result shape and is never used to certify a Phase D run.
      verified prefix for pre-acceptance kinds. AccountStopOut is refused: it belongs to the
      historical model.
 6. Every failed data request is classified against the frozen window, the qualified tree and the
-   run's processed horizon (a completed run's horizon is the full window; a terminal run's is its
-   last processed day). A source-absent calendar day inside the horizon that was never requested,
-   a post-horizon failed request, a failed request for a qualified partition, an out-of-window or
-   unknown request, an accounting mismatch or a contract/evidence mismatch invalidates the run.
+   run's request horizon (a completed run's is the full window; a terminal run's is its last
+   processed day for accepted-then-faulted kinds, or the verified faulting quote's day for
+   pre-acceptance kinds, because the feed had to advance through the intervening calendar days to
+   reach the refused quote). A source-absent calendar day inside the horizon that was never
+   requested, a post-horizon failed request, a failed request for a qualified partition, an
+   out-of-window or unknown request, an accounting mismatch or a contract/evidence mismatch
+   invalidates the run.
 
 The -Preflight -CheckOnly mode is the exact non-result-dependent stage run-backtest.ps1 invokes
 immediately before launching the corrected run; only result-dependent checks remain for the
@@ -1040,7 +1043,8 @@ $terminationKind = ''
 $terminationCondition = ''
 $failureQuoteObject = $null
 $failureQuoteSource = ''
-$coverageEndDay = $endDate
+$deliveredPrefixEndDay = $endDate
+$requestHorizonEndDay = $endDate
 if ($runTerminated) {
     $terminationKind = [string](Get-PropertyOrNull $failure 'Kind')
     $terminationCondition = [string](Get-PropertyOrNull $failure 'Condition')
@@ -1123,22 +1127,36 @@ if ($runTerminated) {
         }
         $failureQuoteSource = 'next-qualified-source-quote'
     }
-    $coverageEndDay = $parsedLastProcessed.Date
-    if ($coverageEndDay -lt $startDate) { $coverageEndDay = $startDate }
-    if ($coverageEndDay -gt $endDate) { $coverageEndDay = $endDate }
+    $deliveredPrefixEndDay = $parsedLastProcessed.Date
+    if ($deliveredPrefixEndDay -lt $startDate) { $deliveredPrefixEndDay = $startDate }
+    if ($deliveredPrefixEndDay -gt $endDate) { $deliveredPrefixEndDay = $endDate }
+    if ($script:PreAcceptanceFaultKinds -ccontains $terminationKind) {
+        # A pre-acceptance fault can occur on a later day than the delivered prefix: the data
+        # feed had to advance through every calendar day between the last processed quote and
+        # the refused quote to reach it, so failed source-absent requests up to the verified
+        # faulting quote's day are legitimate. The delivered prefix itself still ends at
+        # $deliveredPrefixEndDay; the request horizon is the faulting quote's day.
+        $requestHorizonEndDay = $parsedFailureQuote.Date
+    }
+    else {
+        $requestHorizonEndDay = $parsedLastProcessed.Date
+    }
+    if ($requestHorizonEndDay -lt $startDate) { $requestHorizonEndDay = $startDate }
+    if ($requestHorizonEndDay -gt $endDate) { $requestHorizonEndDay = $endDate }
 }
 else {
     if ($deliveryVerification.mode -cne 'phase-b-full-stream') {
         Fail-Preflight "a completed corrected run must deliver the full qualified stream (verifier mode '$($deliveryVerification.mode)')." $outputFullPath $authoritative
     }
 }
-$coverageEndText = $coverageEndDay.ToString('yyyy-MM-dd')
+$deliveredPrefixEndText = $deliveredPrefixEndDay.ToString('yyyy-MM-dd')
+$requestHorizonEndText = $requestHorizonEndDay.ToString('yyyy-MM-dd')
 
 $expectedAbsentWithinHorizon = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
 $absentDaysAfterTermination = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
 foreach ($absent in $expectedAbsentDays) {
     $absentDate = [System.DateTime]::ParseExact($absent, 'yyyyMMdd', $invariant)
-    if ($absentDate -le $coverageEndDay) { [void]$expectedAbsentWithinHorizon.Add($absent) }
+    if ($absentDate -le $requestHorizonEndDay) { [void]$expectedAbsentWithinHorizon.Add($absent) }
     else { [void]$absentDaysAfterTermination.Add($absent) }
 }
 
@@ -1298,9 +1316,9 @@ foreach ($line in $failedLines) {
             try { $parsedDay = [System.DateTime]::ParseExact($dayText, 'yyyyMMdd', $invariant) }
             catch { $parsedDay = [System.DateTime]::MinValue }
             if ($parsedDay -ne [System.DateTime]::MinValue -and $parsedDay -ge $startDate -and $parsedDay -le $endDate) {
-                if ($runTerminated -and $parsedDay -gt $coverageEndDay) {
+                if ($runTerminated -and $parsedDay -gt $requestHorizonEndDay) {
                     $category = 'unexpected-post-horizon-request'
-                    $detail = "the run terminated on $coverageEndText before this day was ever processed; a post-horizon failed request cannot be an expected source-absent day"
+                    $detail = "the run's verified data requests advanced only through $requestHorizonEndText; this day is beyond the fault/request horizon"
                 }
                 else {
                     $category = 'expected-source-absent-calendar-day'
@@ -1445,7 +1463,8 @@ $record['terminationCondition'] = $terminationCondition
 $record['failureQuote'] = $failureQuoteObject
 $record['failureQuoteSource'] = $failureQuoteSource
 $record['failureMessage'] = Get-PropertyOrNull $failure 'Message'
-$record['coverageEndDay'] = $coverageEndText
+$record['deliveredPrefixEndDay'] = $deliveredPrefixEndText
+$record['requestHorizonEndDay'] = $requestHorizonEndText
 $record['expectedSourceAbsentDayCount'] = $expectedAbsentDays.Count
 $record['expectedSourceAbsentDayCountWithinHorizon'] = $expectedAbsentWithinHorizon.Count
 $record['sourceAbsentDaysAfterTermination'] = $absentDaysAfterTermination.Count
@@ -1474,7 +1493,7 @@ Write-InfoLine "run directory:                  $runPath"
 Write-InfoLine "qualified tree:                 $verifiedPartitionCount/$partitionCount partitions hash-verified against the composition manifest"
 Write-InfoLine "run outcome:                    completed=$(-not $runTerminated) leanExit=$outcomeLeanExit helperExit=$outcomeHelperExit engineErrors=$outcomeEngineCount"
 if ($runTerminated) {
-    Write-InfoLine "termination:                    $terminationKind / $terminationCondition at $coverageEndText"
+    Write-InfoLine "termination:                    $terminationKind / $terminationCondition; delivered prefix ends $deliveredPrefixEndText, request horizon $requestHorizonEndText"
 }
 Write-InfoLine "failed requests (lines/distinct): $($failedLines.Count) / $distinctFailedRequestCount (data-monitor count $monitorFailedCount)"
 Write-InfoLine "expected source-absent days:      $($expectedAbsentDays.Count) derived from the qualified tree"

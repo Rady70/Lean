@@ -23,6 +23,9 @@ paths:
   I failed request for an existing qualified partition -> exit 1, INVALID
   J absent day not requested within the horizon        -> exit 1, INVALID
   K absent day after the terminated horizon            -> exit 0, EXPECTED (recorded absence)
+  K2 actual post-horizon request (processed fault)     -> exit 1, INVALID (post-horizon request)
+  K3 cross-day pre-acceptance fault, Jan 2 requested   -> exit 0, EXPECTED (request horizon = fault day)
+  K4 pre-acceptance request beyond the fault horizon   -> exit 1, INVALID (post-horizon request)
   L corrected contract baseline pin mismatch           -> exit 2, controlled failure
   M frozen baseline contract edited after pinning      -> exit 2, controlled failure
   N partition zip modified after the manifest          -> exit 2, controlled failure
@@ -610,7 +613,8 @@ try {
     Check 'terminationKind BrokerLiquidation' ((Get-PropertyValue $resultB.Record @('terminationKind')) -eq 'BrokerLiquidation')
     Check 'delivery mode phase-b-terminal-prefix' ((Get-PropertyValue $resultB.Record @('deliveryVerification', 'mode')) -eq 'phase-b-terminal-prefix')
     Check 'terminalDayPrefixRead true' ((Get-PropertyValue $resultB.Record @('deliveryVerification', 'terminalDayPrefixRead')) -eq $true)
-    Check 'coverageEndDay is the terminal day' ((Get-PropertyValue $resultB.Record @('coverageEndDay')) -eq '2019-01-03')
+    Check 'deliveredPrefixEndDay is the terminal day' ((Get-PropertyValue $resultB.Record @('deliveredPrefixEndDay')) -eq '2019-01-03')
+    Check 'requestHorizonEndDay is the terminal day (processed fault)' ((Get-PropertyValue $resultB.Record @('requestHorizonEndDay')) -eq '2019-01-03')
     Check 'terminationCondition ForcedCloseFailed' ((Get-PropertyValue $resultB.Record @('terminationCondition')) -eq 'ForcedCloseFailed')
     Check 'failureQuoteSource is the final processed quote' ((Get-PropertyValue $resultB.Record @('failureQuoteSource')) -eq 'final-processed-quote')
     Check 'complete failure quote persisted' ((Get-PropertyValue $resultB.Record @('failureQuote', 'Bid')) -eq 100 -and (Get-PropertyValue $resultB.Record @('failureQuote', 'Ask')) -eq 100.5)
@@ -746,7 +750,8 @@ try {
     Check 'exit 0' ($resultK.Code -eq 0)
     Check 'qualification EXPECTED' ((Get-PropertyValue $resultK.Record @('qualification')) -eq 'EXPECTED')
     Check 'runTerminated true' ((Get-PropertyValue $resultK.Record @('runTerminated')) -eq $true)
-    Check 'coverageEndDay is the terminal day' ((Get-PropertyValue $resultK.Record @('coverageEndDay')) -eq '2019-01-01')
+    Check 'deliveredPrefixEndDay is the terminal day' ((Get-PropertyValue $resultK.Record @('deliveredPrefixEndDay')) -eq '2019-01-01')
+    Check 'requestHorizonEndDay is the processed day (processed fault)' ((Get-PropertyValue $resultK.Record @('requestHorizonEndDay')) -eq '2019-01-01')
     Check 'one absent day after termination' ((Get-PropertyValue $resultK.Record @('sourceAbsentDaysAfterTermination')) -eq 1)
 
     Write-Host 'Case K2: an actual failed request after the terminal horizon is refused'
@@ -756,6 +761,27 @@ try {
     Check 'qualification INVALID' ($resultK2.Record.qualification -eq 'INVALID')
     Check 'post-horizon request classified as unexpected' ($resultK2.Record.occurrencesByCategory.'unexpected-post-horizon-request' -eq 1)
     Check 'post-horizon request leaves zero expected absent requests' ($resultK2.Record.occurrencesByCategory.'expected-source-absent-calendar-day' -eq 0)
+
+    Write-Host 'Case K3: a cross-day pre-acceptance fault accepts the intervening expected absence'
+    $jan3FirstSourceQuote = [pscustomobject]@{ Time = '2019-01-03T12:00:00.000Z'; Bid = 100; Ask = 100.5 }
+    $caseK3 = New-RunCase -Name 'case-k3-cross-day-preacceptance' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'SessionMap' -FailureCondition 'QuoteOutsideMapCoverage' -Through '2019-01-01T13:00:00Z' -FailureQuote $jan3FirstSourceQuote -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultK3 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseK3
+    Check 'exit 0 (cross-day pre-acceptance)' ($resultK3.Code -eq 0)
+    Check 'qualification EXPECTED (cross-day pre-acceptance)' ($resultK3.Record.qualification -eq 'EXPECTED')
+    Check 'failureQuoteSource next-qualified-source-quote (cross-day)' ((Get-PropertyValue $resultK3.Record @('failureQuoteSource')) -eq 'next-qualified-source-quote')
+    Check 'delivered prefix ends 2019-01-01' ((Get-PropertyValue $resultK3.Record @('deliveredPrefixEndDay')) -eq '2019-01-01')
+    Check 'request horizon extends to the verified fault day' ((Get-PropertyValue $resultK3.Record @('requestHorizonEndDay')) -eq '2019-01-03')
+    Check 'intervening absent day is expected' ($resultK3.Record.occurrencesByCategory.'expected-source-absent-calendar-day' -eq 1)
+    Check 'no absence recorded after the request horizon' ((Get-PropertyValue $resultK3.Record @('sourceAbsentDaysAfterTermination')) -eq 0)
+
+    Write-Host 'Case K4: a failed request beyond a pre-acceptance fault horizon is refused'
+    $jan1SecondSourceQuote = [pscustomobject]@{ Time = '2019-01-01T13:00:00.000Z'; Bid = 101; Ask = 101.5 }
+    $caseK4 = New-RunCase -Name 'case-k4-preacceptance-beyond-horizon' -DataFolder $dataRoot -FailedLines @($absentRequest, $auxiliaryRequest) -MonitorCount 2 -FailureKind 'DataQuality' -FailureCondition 'InvalidQuote' -Through '2019-01-01T12:00:00Z' -FailureQuote $jan1SecondSourceQuote -RuntimeRoot $runtimeRoot -RuntimeHashes $runtimeHashes
+    $resultK4 = Invoke-CorrectedClassifier -ContractPath $script:correctedContractPath -CaseDirectory $caseK4
+    Check 'exit 1 (pre-acceptance beyond horizon)' ($resultK4.Code -eq 1)
+    Check 'qualification INVALID (pre-acceptance beyond horizon)' ($resultK4.Record.qualification -eq 'INVALID')
+    Check 'beyond-horizon pre-acceptance request is unexpected' ($resultK4.Record.occurrencesByCategory.'unexpected-post-horizon-request' -eq 1)
+    Check 'request horizon stays at the fault day' ((Get-PropertyValue $resultK4.Record @('requestHorizonEndDay')) -eq '2019-01-01')
 
     Write-Host 'Case L: corrected contract baseline pin mismatch'
     $pinMismatch = [IO.File]::ReadAllText($script:correctedContractPath) | ConvertFrom-Json
