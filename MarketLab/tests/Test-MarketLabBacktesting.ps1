@@ -556,6 +556,25 @@ try {
             Assert-NotContains $logText ' ERROR:: ' 'smoke: clean run has no engine ERROR:: line'
         }
 
+        # -RunEvidence without a contract identity writes the invocation evidence and must label
+        # the run mode neutrally ('unbound'), not as the frozen historical baseline ('baseline').
+        $evidenceOutput = Join-Path $script:TempRoot 'run-evidence-output'
+        $evidenceSmoke = Invoke-Helper @('-OutputRoot', $evidenceOutput, '-RunEvidence')
+        Assert-Equal 0 $evidenceSmoke.ExitCode 'run-evidence smoke: helper exit code 0'
+        $evidenceRunDirs = @()
+        if (Test-Path -LiteralPath $evidenceOutput -PathType Container) {
+            $evidenceRunDirs = @(Get-ChildItem -LiteralPath $evidenceOutput -Directory)
+        }
+        Assert-Equal 1 $evidenceRunDirs.Count 'run-evidence smoke: exactly one run directory created'
+        if ($evidenceRunDirs.Count -eq 1) {
+            $invocationEvidencePath = Join-Path $evidenceRunDirs[0].FullName 'marketlab-run-invocation.json'
+            Assert-True (Test-Path -LiteralPath $invocationEvidencePath -PathType Leaf) 'run-evidence smoke: invocation evidence exists'
+            if (Test-Path -LiteralPath $invocationEvidencePath -PathType Leaf) {
+                $invocationEvidence = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($invocationEvidencePath))
+                Assert-Equal 'unbound' ([string](Get-JsonProperty $invocationEvidence 'runMode')) 'run-evidence smoke: an unbound run is labeled unbound'
+            }
+        }
+
         # --------------------------------------------------------------------
         # Damaged data files: LEAN logs an ERROR:: and exits 0 (Batch C cases
         # F2a, F2c); the helper must turn that into exit code 4. A missing file

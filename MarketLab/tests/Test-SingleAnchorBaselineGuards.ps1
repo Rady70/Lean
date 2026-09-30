@@ -57,6 +57,74 @@ try {
     Check ($LASTEXITCODE -eq 2) 'Actual helper must reject changed baseline inputs'
     Check (($output -join ' ') -match 'Frozen baseline invocation mismatch: parameters') 'The helper must validate actual parameters, independently of source/build failures'
 } finally { $ErrorActionPreference = $previousPreference }
+# --- Corrected full-history launch guard and helper mode (Phase D support) -----
+$corrected = [IO.File]::ReadAllText((Join-Path $repo 'MarketLab\config\corrected-full-history-contract.json')) | ConvertFrom-Json
+$correctedLaunch = @{
+    Corrected = $corrected; Baseline = $contract; RepoRoot = $repo; Configuration = 'Release'
+    Config = Join-Path $repo $contract.runHost.leanConfig
+    AlgorithmTypeName = 'SingleAnchorVNextAlgorithm'; AlgorithmLanguage = 'CSharp'
+    AlgorithmLocation = Join-Path $repo $contract.runHost.algorithmLocation
+    DataFolder = $contract.qualifiedDataIdentity.dataFolder
+    Parameters = @($contract.parameters | ForEach-Object { $_.name + ':' + $_.value }) -join ','
+    AllowMissingData = $true; AllowEngineErrors = $false; ExpectedTerminalException = ''
+}
+Assert-CorrectedFullHistoryLaunch @correctedLaunch
+Check $true 'Canonical corrected full-history launch'
+$correctedMutations = @{
+    Parameters = $correctedLaunch.Parameters.Replace('single-anchor-step-percent:0.25', 'single-anchor-step-percent:0.30')
+    ExpectedTerminalException = 'MarketLab.SingleAnchor.AccountStopOutException'
+    AllowMissingData = $false; AllowEngineErrors = $true
+    DataFolder = Join-Path $repo 'Data'
+}
+foreach ($key in $correctedMutations.Keys) {
+    $copy = $correctedLaunch.Clone()
+    $copy[$key] = $correctedMutations[$key]
+    Refused { Assert-CorrectedFullHistoryLaunch @copy } 'Corrected full-history invocation mismatch'
+}
+$wrongModel = $correctedLaunch.Clone()
+$wrongModel.Corrected = ($corrected | ConvertTo-Json -Depth 10 | ConvertFrom-Json)
+$wrongModel.Corrected.model.revision = 'marketlab-single-anchor-other-model'
+Refused { Assert-CorrectedFullHistoryLaunch @wrongModel } 'does not name the finalized Phase B broker-liquidation model'
+$wrongContract = $correctedLaunch.Clone()
+$wrongContract.Corrected = ($corrected | ConvertTo-Json -Depth 10 | ConvertFrom-Json)
+$wrongContract.Corrected.contract = 'not-the-corrected-contract'
+Refused { Assert-CorrectedFullHistoryLaunch @wrongContract } 'not the frozen immutable corrected-full-history contract'
+
+# The helper entry point: the corrected mode requires -RunEvidence and is mutually exclusive
+# with the frozen baseline contract path. Neither call needs to reach the build/preflight stage.
+$correctedContractPath = Join-Path $repo 'MarketLab\config\corrected-full-history-contract.json'
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $withoutEvidence = @(& pwsh -NoProfile -File (Join-Path $repo 'MarketLab\scripts\run-backtest.ps1') `
+        -Configuration Release -AlgorithmTypeName $correctedLaunch.AlgorithmTypeName `
+        -AlgorithmLocation $correctedLaunch.AlgorithmLocation -DataFolder $correctedLaunch.DataFolder `
+        -Parameters $correctedLaunch.Parameters -AllowMissingData -DryRun `
+        -CorrectedHistoryContract $correctedContractPath 2>&1)
+    Check ($LASTEXITCODE -eq 2) 'CorrectedHistoryContract without -RunEvidence must be refused'
+    Check (($withoutEvidence -join ' ') -match 'only meaningful with -RunEvidence') 'The refusal names the -RunEvidence requirement'
+    $mixedModes = @(& pwsh -NoProfile -File (Join-Path $repo 'MarketLab\scripts\run-backtest.ps1') `
+        -Configuration Release -AlgorithmTypeName $correctedLaunch.AlgorithmTypeName `
+        -AlgorithmLocation $correctedLaunch.AlgorithmLocation -DataFolder $correctedLaunch.DataFolder `
+        -Parameters $correctedLaunch.Parameters -AllowMissingData -RunEvidence -DryRun `
+        -CorrectedHistoryContract $correctedContractPath `
+        -BaselineContract (Join-Path $repo 'MarketLab\config\baseline-contract.json') `
+        -BaselineRegister (Join-Path $repo 'MarketLab\config\baseline-decision-audit.json') 2>&1)
+    Check ($LASTEXITCODE -eq 2) 'CorrectedHistoryContract with the baseline contract must be refused'
+    Check (($mixedModes -join ' ') -match 'mutually exclusive') 'The refusal names the mutual exclusion'
+    $copiedDescriptor = Join-Path $env:TEMP ('marketlab-corrected-descriptor-copy-' + [guid]::NewGuid().ToString('N') + '.json')
+    Copy-Item -LiteralPath $correctedContractPath -Destination $copiedDescriptor
+    try {
+        $nonCanonical = @(& pwsh -NoProfile -File (Join-Path $repo 'MarketLab\scripts\run-backtest.ps1') `
+            -Configuration Release -AlgorithmTypeName $correctedLaunch.AlgorithmTypeName `
+            -AlgorithmLocation $correctedLaunch.AlgorithmLocation -DataFolder $correctedLaunch.DataFolder `
+            -Parameters $correctedLaunch.Parameters -AllowMissingData -RunEvidence -DryRun `
+            -CorrectedHistoryContract $copiedDescriptor -ReviewedCommit ('a' * 40) 2>&1)
+        Check ($LASTEXITCODE -eq 2) 'A non-canonical corrected descriptor must be refused'
+        Check (($nonCanonical -join ' ') -match 'canonical tracked') 'The refusal names the canonical descriptor requirement'
+    } finally { Remove-Item -LiteralPath $copiedDescriptor -Force -ErrorAction SilentlyContinue }
+} finally { $ErrorActionPreference = $previousErrorActionPreference }
+
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('marketlab-baseline-guards-' + [guid]::NewGuid().ToString('N'))
 try {
     $testRepo = Join-Path $temp 'repo'

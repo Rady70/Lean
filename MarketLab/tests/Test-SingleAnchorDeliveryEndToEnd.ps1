@@ -95,6 +95,55 @@ try {
             Check ($result.forcedLiquidations -eq 0 -and $result.basketsLiquidated -eq 0) 'A healthy account liquidates nothing'
             $failed = @(Get-ChildItem -LiteralPath $run[0].FullName -Filter 'failed-data-requests-*.txt' | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
             Check ($failed -notmatch '20260701_quote.zip') 'UTC end window must not request a July 1 partition'
+
+            # Current-model terminal-prefix verification on the same real ZIP: truncate the
+            # completed stream to its first quote, record a current-model failure and require
+            # the delivery verifier to accept the exact qualified prefix only when the terminal
+            # mode is explicit, and to refuse a drifted prefix.
+            $prefix = Get-BaselineNativePrefix $zipPath '2026-06-30' 1
+            $terminalResult = [IO.File]::ReadAllText((Join-Path $run[0].FullName 'storage\single-anchor\results.json')) | ConvertFrom-Json
+            $terminalResult.completed = $false
+            $terminalResult.failure = [pscustomobject]@{ Kind = 'BrokerLiquidation'; Condition = 'ForcedCloseFailed'; Quote = $prefix.lastQuote; Message = 'synthetic terminal failure' }
+            $terminalResult.quoteTicksProcessed = 1
+            $terminalResult.strategyEligibleQuotes = 1
+            $terminalResult.quoteOnlyQuotes = 0
+            $terminalResult.delivered.quote_count = 1
+            $terminalResult.delivered.semantic_digest = $prefix.digest
+            $terminalResult.delivered.first_canonical_utc = $prefix.lastQuote.Time
+            $terminalResult.delivered.last_canonical_utc = $prefix.lastQuote.Time
+            $terminalResult.delivered.last_quote = $prefix.lastQuote
+            $terminalResult.delivered.per_partition.'2026-06-30'.quote_count = 1
+            $terminalResult.delivered.per_partition.'2026-06-30'.semantic_digest = $prefix.digest
+            $terminalResult.lastProcessedQuote = $prefix.lastQuote
+            $terminalVerified = Assert-BrokerLiquidationDelivery $terminalResult $manifest $identity $data -AllowTerminalFailure
+            Check ($terminalVerified.mode -eq 'phase-b-terminal-prefix' -and $terminalVerified.terminalDayPrefixRead -eq $true -and $terminalVerified.failureKind -ceq 'BrokerLiquidation') 'A terminal current-model result verifies as the exact qualified prefix'
+            $terminalRefused = $false
+            try { Assert-BrokerLiquidationDelivery $terminalResult $manifest $identity $data | Out-Null } catch { $terminalRefused = $true }
+            Check $terminalRefused 'Without -AllowTerminalFailure a terminal result is refused'
+            $terminalResult.delivered.per_partition.'2026-06-30'.semantic_digest = 'sha256:' + ('0' * 64)
+            $driftRefused = $false
+            try { Assert-BrokerLiquidationDelivery $terminalResult $manifest $identity $data -AllowTerminalFailure | Out-Null } catch { $driftRefused = $true }
+            Check $driftRefused 'A terminal prefix that does not match the native ZIP prefix is refused'
+
+            # A terminal result that ends exactly on a fully delivered partition is accepted with
+            # no partial-day read; the global digest stays unverified in terminal mode.
+            $fullDayTerminal = [IO.File]::ReadAllText((Join-Path $run[0].FullName 'storage\single-anchor\results.json')) | ConvertFrom-Json
+            $fullDayTerminal.completed = $false
+            $fullDayTerminal.failure = [pscustomobject]@{ Kind = 'AccountSurvival'; Condition = 'ExecutableMarkUnavailable'; Quote = $fullDayTerminal.lastProcessedQuote; Message = 'synthetic terminal failure' }
+            $fullDayVerified = Assert-BrokerLiquidationDelivery $fullDayTerminal $manifest $identity $data -AllowTerminalFailure
+            Check ($fullDayVerified.mode -eq 'phase-b-terminal-prefix' -and $fullDayVerified.terminalDayPrefixRead -eq $false -and $fullDayVerified.globalSemanticDigestVerified -eq $false) 'A terminal result on a complete partition verifies without a partial-day read'
+
+            foreach ($case in @(
+                @{ name = 'completed=false without a failure record'; mutate = { param($r) $r.completed = $false; $r.failure = $null } },
+                @{ name = 'completed=true with a failure record'; mutate = { param($r) $r.failure = [pscustomobject]@{ Kind = 'BrokerLiquidation'; Condition = 'ForcedCloseFailed'; Quote = $r.lastProcessedQuote; Message = 'x' } } },
+                @{ name = 'a non-boolean completed flag'; mutate = { param($r) $r.completed = 'true' } },
+                @{ name = 'a terminal failure without a kind'; mutate = { param($r) $r.completed = $false; $r.failure = [pscustomobject]@{ Kind = ''; Condition = 'ForcedCloseFailed'; Quote = $r.lastProcessedQuote; Message = 'x' } } })) {
+                $contradiction = [IO.File]::ReadAllText((Join-Path $run[0].FullName 'storage\single-anchor\results.json')) | ConvertFrom-Json
+                & $case.mutate $contradiction
+                $refused = $false
+                try { Assert-BrokerLiquidationDelivery $contradiction $manifest $identity $data -AllowTerminalFailure | Out-Null } catch { $refused = $true }
+                Check $refused ("A terminal result with " + $case.name + " is refused")
+            }
         }
     }
 }

@@ -33,18 +33,21 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `BASELINE_CONTRACT.md` | the human-auditable immutable baseline contract: the exact frozen values, the baseline contract identity and the exact future run invocation |
 | `config\baseline-contract.json` | canonical machine-readable frozen baseline configuration (the single source of truth for the first untouched baseline's effective values) |
 | `config\baseline-decision-audit.json` | resolved decision register: every baseline field's class, value and authority, bound to the frozen contract |
+| `config\corrected-full-history-contract.json` | frozen descriptor of the corrected untouched full-history (Phase D) run: pins the frozen baseline contract, names the finalized Phase B broker-liquidation model and fixes the outcome policy a Phase D classification may accept |
 | `BASELINE_CONFIGURATION_FREEZE_AUDIT.md` | the PR #14 baseline-decision audit, updated: all eight former class-D blockers resolved and the freeze recorded |
 | `BASELINE_RUN_RESULT.md` | the retained first full-history baseline run as historical evidence of the pre-broker-liquidation Stop Out model: run identity, results, limitations and next steps |
 | `evidence\20260928-first-full-history-baseline\` | the committed compact first-baseline evidence (build/preflight receipts, invocation/outcome, classifier record, strategy results, data-monitor and failed-request evidence) with a SHA-256 manifest |
 | `scripts\Get-SingleAnchorBaselineInvocation.ps1` | reports the baseline contract identity and renders the exact frozen run invocation from the contract |
 | `scripts\Build-SingleAnchorBaseline.ps1` | rebuilds an explicitly reviewed clean revision and records the source, contract and complete runtime dependency identity |
 | `scripts\Test-SingleAnchorBaselineFailedData.ps1` | classifies every failed data request of a baseline run against the frozen contract and the qualified continuous tree |
+| `scripts\Test-SingleAnchorCorrectedFullHistory.ps1` | preflight and post-run classification of the corrected full-history (Phase D) run: descriptor and frozen pins, source-bound build, complete qualified tree, current-model delivery (full stream or exact terminal prefix) and failed-data reconciliation |
 | `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
 | `tests\SingleAnchor\BaselineDecisionAuditTests.cs` | the Windows-local drift check for the audit register, the implementation defaults and the PR #13 evidence |
 | `tests\SingleAnchor\BaselineContractTests.cs` | the Windows-local checks for the frozen contract: completeness, values, identity, invocation, data/margin identity and run policy |
 | `tests\Test-SingleAnchorBaselineFailedData.ps1` | synthetic-fixture tests for the failed-data classifier (invocation evidence, composition-manifest tree verification, data-monitor reconciliation, termination whitelist and mutation cases) |
 | `tests\Test-SingleAnchorBaselineInvocation.ps1` | tests that the invocation reporter refuses a contract whose hash is not the register's frozen pin |
+| `tests\Test-SingleAnchorCorrectedFullHistory.ps1` | synthetic-fixture tests for the corrected full-history preflight and classifier |
 | `tools\historical-data\` | offline source qualification, exact-decimal native LEAN tick conversion and the actual LEAN replay probe (PR 1); see its [README](tools/historical-data/README.md) and [provenance](tools/historical-data/PROVENANCE.md) |
 | `tools\research-account-probe\` | paired per-quote throughput and allocation probe for the PR 2 research account |
 | `.gitignore` | ignores `output\` (generated runs) |
@@ -688,6 +691,27 @@ not simulated, so the recorded open positions and floating loss are
 pre-liquidation observations) -
 [BASELINE_RUN_RESULT.md](BASELINE_RUN_RESULT.md). Parameter optimization has
 not started.
+
+The Phase D corrected full-history support is **merged and finalized** through
+[Rady70/Lean PR #21](https://github.com/Rady70/Lean/pull/21) after independent
+review of exact head `7de848aaf0284d9f8e39d16a8c1b11c85437f759`; the merge
+commit is PR #21's `master` merge commit. The
+corrected-full-history descriptor
+([`config\corrected-full-history-contract.json`](config/corrected-full-history-contract.json)),
+the preflight/classifier
+([`scripts\Test-SingleAnchorCorrectedFullHistory.ps1`](scripts/Test-SingleAnchorCorrectedFullHistory.ps1)),
+the helper's `-CorrectedHistoryContract` evidence mode and the current-model
+terminal-prefix verification provide the authoritative run and evidence path for
+the later authorized corrected full-history characterization of the frozen
+Phase A values under the Phase B broker-liquidation model. The corrected
+full-history run itself has **not** been executed and awaits a separate explicit
+authorization; the Phase A historical record, the Phase B implementation
+(PR #18), the reviewed Phase C March 2020 qualification, the frozen
+`config\baseline-contract.json`, [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md)
+and the committed Phase A evidence are unchanged. See
+[CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md) and
+section 15 of
+[SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md).
 
 ## 10. When required data is missing
 

@@ -53,6 +53,38 @@ function Get-BaselineNativePrefix([string]$Path, [string]$Day, [long]$Count) {
     }
 }
 
+function Get-BaselineNativeNextQuote([string]$Path, [string]$Day, [long]$Skip) {
+    # The native quote row immediately after a verified prefix of $Skip rows in the named day
+    # partition, as the unchanged LEAN engine would next deliver it. Returns $null when the
+    # partition carries no further row. Purely a read-side identity binding for a terminal
+    # pre-acceptance fault (DataQuality/SessionMap): the refused quote was offered after the
+    # processed prefix and never became the last processed quote.
+    if ($Skip -lt 0) { throw 'A native skip count must be non-negative.' }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($Path)
+    $reader = $null
+    try {
+        $member = $Day.Replace('-', '') + '_xauusd_tick_quote.csv'
+        if ($archive.Entries.Count -ne 1 -or $archive.Entries[0].FullName -cne $member) {
+            throw 'The native partition has an unexpected member layout.'
+        }
+        $reader = [IO.StreamReader]::new($archive.Entries[0].Open())
+        for ([long]$ordinal = 0; $ordinal -lt $Skip; $ordinal++) {
+            if ($null -eq $reader.ReadLine()) { return $null }
+        }
+        $line = $reader.ReadLine()
+        if ($null -eq $line) { return $null }
+        $cells = $line.Split(',')
+        if ($cells.Length -ne 3) { throw 'Invalid native quote row in the partition.' }
+        $midnight = [DateTime]::SpecifyKind([DateTime]::ParseExact($Day, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture), [DateTimeKind]::Utc)
+        $time = $midnight.AddTicks(([long]$cells[0]) * [TimeSpan]::TicksPerMillisecond)
+        return [pscustomobject]@{ Time = $time; Bid = [decimal]::Parse($cells[1], [Globalization.CultureInfo]::InvariantCulture); Ask = [decimal]::Parse($cells[2], [Globalization.CultureInfo]::InvariantCulture) }
+    } finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+        $archive.Dispose()
+    }
+}
+
 function Assert-BaselineDelivery($Results, $Manifest, $Identity, [string]$DataFolder) {
     if ($Results.completed -isnot [bool]) { throw 'The strategy completed flag must be present and boolean.' }
     $terminal = $null -ne $Results.failure
@@ -126,18 +158,34 @@ function Assert-BaselineDelivery($Results, $Manifest, $Identity, [string]$DataFo
     return [pscustomobject]@{ mode = $(if ($terminal) { 'qualified-prefix' } else { 'qualified-full-stream' }); quoteCount = $count; partitions = $actualDays.Count; terminalDayPrefixRead = $partial }
 }
 
-function Assert-BrokerLiquidationDelivery($Results, $Manifest, $Identity, [string]$DataFolder) {
+function Assert-BrokerLiquidationDelivery($Results, $Manifest, $Identity, [string]$DataFolder, [switch]$AllowTerminalFailure) {
     # Current-model (Phase B) delivery verification. Deliberately separate from the frozen
     # pre-liquidation Assert-BaselineDelivery above, so the historical verifier stays strictly
     # bound to the AccountStopOut result shape and the two model revisions are never conflated.
     # The identifier check is explicit: a result must name its broker model.
+    # Without -AllowTerminalFailure the run must be a completed full qualified stream.
+    # With -AllowTerminalFailure a run that carries completed=false and a recorded failure is
+    # verified as the exact qualified prefix ending at its last processed quote; every preceding
+    # partition must match and the partial terminal day is checked against its native ZIP prefix.
     if ($null -eq $Results.modelRevision -or $Results.modelRevision -cne 'marketlab-single-anchor-broker-liquidation-v1') {
         throw "Not a Phase B broker-liquidation result: modelRevision is '$($Results.modelRevision)'."
     }
     if ($Results.stopOutModel -cne 'BrokerLiquidation') {
         throw "Not a Phase B broker-liquidation result: stopOutModel is '$($Results.stopOutModel)'."
     }
-    if ($Results.completed -ne $true -or $null -ne $Results.failure) {
+    if ($Results.completed -isnot [bool]) { throw 'The strategy completed flag must be present and boolean.' }
+    $hasFailure = $null -ne $Results.failure
+    $terminal = $false
+    if ($AllowTerminalFailure) {
+        if ($Results.completed -eq $false -and $hasFailure) {
+            if ([string]::IsNullOrWhiteSpace([string]$Results.failure.Kind)) { throw 'The terminal failure record carries no kind.' }
+            $terminal = $true
+        }
+        elseif ($Results.completed -ne $true -or $hasFailure) {
+            throw 'The completed flag and the failure record contradict each other.'
+        }
+    }
+    elseif ($Results.completed -ne $true -or $hasFailure) {
         throw 'A Phase B qualification run must complete without a terminal failure.'
     }
     if ($Results.algorithmTimeZone -cne 'UTC' -or $Results.quoteTimeZone -cne 'UTC') { throw 'The qualification algorithm and quote clocks must both be UTC.' }
@@ -163,24 +211,46 @@ function Assert-BrokerLiquidationDelivery($Results, $Manifest, $Identity, [strin
     }
     Assert-BaselineQuoteEqual $delivered.last_quote $Results.lastProcessedQuote
     if ((ConvertTo-BaselineUtc $delivered.last_quote.Time) -ne $last) { throw 'The delivered final timestamp contradicts its last quote.' }
-    $expectedDays = @($Manifest.semantic.per_partition.PSObject.Properties.Name | Sort-Object)
+    $lastDay = $last.ToString('yyyy-MM-dd')
+    if ($terminal) {
+        $expectedDays = @($Manifest.semantic.per_partition.PSObject.Properties.Name | Where-Object { $_ -cle $lastDay } | Sort-Object)
+    }
+    else {
+        $expectedDays = @($Manifest.semantic.per_partition.PSObject.Properties.Name | Sort-Object)
+    }
     $actualDays = @($delivered.per_partition.PSObject.Properties.Name | Sort-Object)
-    if (($expectedDays -join ',') -cne ($actualDays -join ',')) { throw 'The delivered partition set is not the qualified full stream.' }
+    if (($expectedDays -join ',') -cne ($actualDays -join ',')) { throw 'The delivered partition set is not the qualified full stream or terminal prefix.' }
+    if ($actualDays -cnotcontains $lastDay) { throw 'The final processed quote has no delivered qualified partition.' }
     [long]$total = 0
+    $partial = $false
     foreach ($day in $actualDays) {
         $expected = $Manifest.semantic.per_partition.$day
         $actual = $delivered.per_partition.$day
         if ([string]$actual.quote_count -cnotmatch '^[1-9]\d*$') { throw "Invalid delivered partition count: $day" }
         $total += [long]$actual.quote_count
-        if ([long]$actual.quote_count -ne [long]$expected.accepted_row_count -or $actual.semantic_digest -cne $expected.semantic_digest) {
+        if ($terminal -and $day -ceq $lastDay -and [long]$actual.quote_count -lt [long]$expected.accepted_row_count) {
+            $partial = $true
+            $native = @($Manifest.native.partitions | Where-Object { [IO.Path]::GetFileName($_.zip_relative_path) -ceq ($day.Replace('-', '') + '_quote.zip') })
+            if ($native.Count -ne 1) { throw 'Cannot resolve the terminal native partition.' }
+            $prefix = Get-BaselineNativePrefix (Join-Path $DataFolder $native[0].zip_relative_path) $day ([long]$actual.quote_count)
+            if ($prefix.digest -cne $actual.semantic_digest) { throw 'The terminal-day delivery is not the exact qualified quote prefix.' }
+            Assert-BaselineQuoteEqual $prefix.lastQuote $delivered.last_quote
+        }
+        elseif ([long]$actual.quote_count -ne [long]$expected.accepted_row_count -or $actual.semantic_digest -cne $expected.semantic_digest) {
             throw "Delivered count/digest differs from the qualified partition: $day"
         }
     }
     if ($total -ne $count) { throw 'Partition quote counts do not sum to the processed count.' }
+    if ($terminal) {
+        # The terminal prefix's global delivered semantic digest is recorded but deliberately not
+        # independently recomputed here: the verified identity is the per-partition set and the
+        # native terminal-day ZIP prefix, not a global ordinal digest that a prefix cannot reuse.
+        return [pscustomobject]@{ mode = 'phase-b-terminal-prefix'; quoteCount = $count; partitions = $actualDays.Count; terminalDayPrefixRead = $partial; failureKind = [string]$Results.failure.Kind; globalSemanticDigestVerified = $false }
+    }
     if ($count -ne [long]$Identity.continuousHistoryQuoteCount -or
         $delivered.semantic_digest -cne $Identity.continuousHistorySemanticDigest -or
         $last -ne (ConvertTo-BaselineUtc $Identity.continuousHistoryLastQuoteUtc)) {
         throw 'A Phase B qualification run must deliver the full qualified stream.'
     }
-    return [pscustomobject]@{ mode = 'phase-b-full-stream'; quoteCount = $count; partitions = $actualDays.Count }
+    return [pscustomobject]@{ mode = 'phase-b-full-stream'; quoteCount = $count; partitions = $actualDays.Count; terminalDayPrefixRead = $false; globalSemanticDigestVerified = $true }
 }
