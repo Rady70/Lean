@@ -6,8 +6,10 @@ import argparse
 import json
 import os
 import sys
+from datetime import date
 from pathlib import Path
 
+from .candles import generate_candles
 from .csv_source import CsvSourceConfig
 from .continuous import (
     build_continuous_record,
@@ -245,6 +247,32 @@ def _verify_continuous_parser(subparsers) -> None:
         "--force", action="store_true", help="replace an existing continuous qualification record"
     )
     parser.add_argument("--json", action="store_true", help="print the record JSON to stdout")
+
+
+def _candles_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "candles",
+        help="derive a deterministic monthly M1 candle cache from the qualified native "
+        "quote history",
+    )
+    parser.add_argument(
+        "--data-folder",
+        required=True,
+        help="qualified native data tree root holding cfd\\dukascopy\\tick\\xauusd",
+    )
+    parser.add_argument(
+        "--out",
+        required=True,
+        help="output directory for the derived xauusd-m1-YYYY-MM.csv files and manifest.json",
+    )
+    parser.add_argument(
+        "--start",
+        help="first native partition date to include (YYYY-MM-DD, inclusive)",
+    )
+    parser.add_argument(
+        "--end",
+        help="last native partition date to include (YYYY-MM-DD, inclusive)",
+    )
 
 
 def _read_failed_requests(path: Path) -> list[str]:
@@ -566,6 +594,42 @@ def _run_verify_continuous(args) -> int:
     return 1
 
 
+def _run_candles(args) -> int:
+    try:
+        start = date.fromisoformat(args.start) if args.start else None
+        end = date.fromisoformat(args.end) if args.end else None
+    except ValueError as error:
+        print(f"ERROR: --start/--end must be YYYY-MM-DD dates: {error}", file=sys.stderr)
+        return 2
+    outcome = generate_candles(
+        Path(args.data_folder),
+        Path(args.out),
+        start=start,
+        end=end,
+    )
+    for failure in outcome.failures:
+        print(f"FAIL: {failure}", file=sys.stderr)
+    if outcome.manifest is not None and outcome.manifest_path is not None:
+        totals = outcome.manifest["totals"]
+        print(
+            f"partitions: {totals['partitions']}; source rows: {totals['source_rows']}; "
+            f"candle rows: {totals['candle_rows']}; candle bytes: {totals['candle_bytes']}"
+        )
+        print(
+            f"window: {outcome.manifest['start_date']} .. {outcome.manifest['end_date']}; "
+            f"candle files: {len(outcome.manifest['files'])}"
+        )
+        print(f"content_sha256: {outcome.manifest['content_sha256']}")
+        print(f"manifest: {outcome.manifest_path}")
+    if outcome.exit_code == 2:
+        print("candles: configuration error; nothing was written", file=sys.stderr)
+    elif outcome.exit_code == 0:
+        print("candles: PASS")
+    else:
+        print("candles: FAIL", file=sys.stderr)
+    return outcome.exit_code
+
+
 def _run_qualify(args) -> int:
     config = CsvSourceConfig(
         delimiter=args.delimiter,
@@ -738,6 +802,7 @@ def main(argv=None) -> int:
     _summarize_history_parser(subparsers)
     _compose_history_parser(subparsers)
     _verify_continuous_parser(subparsers)
+    _candles_parser(subparsers)
     args = parser.parse_args(argv)
     if args.command == "prepare-identity":
         return _run_prepare_identity(args)
@@ -751,6 +816,8 @@ def main(argv=None) -> int:
         return _run_compose_history(args)
     if args.command == "verify-continuous":
         return _run_verify_continuous(args)
+    if args.command == "candles":
+        return _run_candles(args)
     parser.error(f"unknown command {args.command!r}")
     return 2
 

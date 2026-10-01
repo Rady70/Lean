@@ -433,7 +433,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (260 tests)
+# Python offline tool (274 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -672,6 +672,54 @@ the manifest file itself to the replay qualification record
 `overall_qualification = PASS` and `continuous.composition_sha256` equal to the
 actual manifest hash). The first untouched full-history baseline has **not**
 been run and parameter research has **not** started.
+
+### candles
+
+`python -m marketlab_historical_data candles` derives a deterministic monthly
+M1 candle cache from the qualified native partitions above:
+
+```powershell
+python -m marketlab_historical_data candles `
+    --data-folder E:\MarketLab\data\lean\xauusd-dukascopy `
+    --out E:\MarketLab\data\lean\xauusd-m1 `
+    --start 2019-01-01 --end 2026-06-30
+```
+
+`--data-folder` is the qualified tree root and `--out` is a directory outside
+it (writing into the source tree, or onto a `manifest.json` from a different
+contract, is refused); `--start`/`--end` are inclusive native partition-date
+bounds, so a source row outside the requested window is never read or
+counted. A quote that is not a positive uncrossed bid/ask is refused, and a
+qualified composition that names a non-UTC `data_time_zone` is refused because
+the native timestamps are local-midnight offsets and the UTC-minute contract
+only holds for the UTC tree. The derivation contract
+(`marketlab-xauusd-m1-candle-cache-v1`) is: the price is
+`mid = (bid + ask) / 2` computed exactly with `decimal.Decimal` and rendered
+in canonical fixed-point text; the bucket is the UTC minute and the candle
+time is the minute start as `YYYY-MM-DDTHH:MM:00.000Z`; open/close are the
+first/last mid of the minute in source order (equal timestamps keep source
+order), high/low are the maximum/minimum mid, and `ticks` counts the quote
+rows; only minutes with at least one quote are emitted - absent minutes are
+never filled, interpolated or zero-valued (`empty_minutes: absent`). Each
+UTF-8 (no BOM) `xauusd-m1-YYYY-MM.csv` has the header
+`time,open,high,low,close,ticks` and LF line endings.
+
+`manifest.json` in the output directory is deterministic: no wall clock, no
+output path, monthly files sorted by name. It carries the contract and basis
+fields, the composition and session-map SHA-256s read from the source tree (a
+composition that exists but cannot be parsed as identity evidence is recorded
+as an `identity_error` and does not block generation), the effective inclusive
+window, totals (partitions, source rows, candle rows, candle bytes) and one
+record per file (`name`, `rows`, `bytes`, `sha256` of the exact bytes, first
+and last candle). `content_sha256` is the SHA-256 over the ordered
+`name\0sha256\0bytes\n` rows (one UTF-8 row per file, ascending by name). The
+command returns 0 on success, 1 for a refusal or unreadable native data, and 2
+for a configuration error, and it never writes into `--data-folder`.
+
+Candles are derived visualization/index data. Executions, events and account
+snapshots remain the authoritative LEAN output, and the qualified native
+partitions (section 10) remain the qualified source: the cache does not
+re-qualify, replace or override either.
 
 ## 11. Provenance of adapted retired code
 
