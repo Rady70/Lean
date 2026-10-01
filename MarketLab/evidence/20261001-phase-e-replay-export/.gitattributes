@@ -1,0 +1,4 @@
+# Preserve the Phase E replay-export run artifacts exactly as produced.
+# The repository's global "* text=auto" rule must not normalize these bytes:
+# the committed blobs are the cryptographic identity recorded in manifest.json.
+* -text

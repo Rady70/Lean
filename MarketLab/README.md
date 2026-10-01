@@ -728,6 +728,27 @@ are unchanged. See
 sections 15-16 of
 [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md).
 
+The Phase E authoritative replay export is **implemented and ready for
+independent review on branch `marketlab/single-anchor-phase-e-replay-export`**.
+The export run executed the same frozen corrected-full-history command from the
+clean reviewed revision
+`c29770ef78a9ad85e3061460bde3ff664e764048`; the classifier returned `EXPECTED`
+(`invalidCount` 0) and the run's `results.json` is **byte-identical** to the
+Phase D artifact
+(`bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad`). The
+emitted package (`marketlab-single-anchor-replay-package-v1`, package SHA-256
+`8f77bdd16dc06593f87af5fe84b761f2f0a9e0ff7b4ee2f33956e6a1837f6a00`) contains
+1,454 authoritative events, 1,452 exact event account snapshots and 98,866
+bounded periodic samples; the package verifier
+(`scripts\Test-SingleAnchorReplayPackage.ps1`) returned PASS with 1,537 checks
+on the exact run with the Phase D binding enforced. The result record is
+[PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md), the compact
+evidence is under `MarketLab\evidence\20261001-phase-e-replay-export\` and the
+package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). The derived M1
+candle-cache generator (`candles`) is part of the same change. Parameter
+optimization remains not started, and the LuxAlgo and Fincept phases (F-I) have
+not started.
+
 ## 10. When required data is missing
 
 LEAN does not fail on missing local data files: the subscription simply

@@ -2035,3 +2035,71 @@ and the frozen baseline values unchanged. The mandatory corrected preflight
   strategy parameter, account/margin value or liquidation rule changed; the
   413,750,130-row qualification was not rerun; parameter optimization has not
   started; Phase E has not started.
+
+## 17. Phase E authoritative replay export (2026-10-01): implemented and qualified
+
+**Status: implemented and qualified on the branch; ready for independent
+review. Phase F-I have not started.**
+
+- **What was added (additive; no strategy/account semantics changed).**
+  `src/SingleAnchor/ReplayPackage.cs` defines the package contract
+  `marketlab-single-anchor-replay-package-v1`, the canonical UTC/decimal text
+  and hashing. `src/SingleAnchor/ReplayRecorder.cs` observes the engine's
+  existing events and the research account's existing observations and builds
+  `events.jsonl`, per-year `telemetry-YYYY.jsonl` and `manifest.json` under the
+  run's `single-anchor/replay/` object-store directory.
+  `SingleAnchorVNextAlgorithm.cs` wires the recorder as the engine's observer
+  only after the account itself has observed the same event (the account stays
+  the engine's risk guard) and saves the package after `results.json`.
+  `ResearchAccount.cs` gains four read-only accessors
+  (`CurrentUsedMargin`, `CurrentFreeMargin`, `CurrentMarginLevelPercent`,
+  `MarginCallActive`) used only by the recorder. The recorder is fault-guarded:
+  a recorder defect refuses the package build instead of aborting the run.
+- **Validation and the Phase D binding.** The export run executed the frozen
+  corrected-full-history command from the clean Phase E revision
+  `c29770ef78a9ad85e3061460bde3ff664e764048`; the corrected-full-history
+  classifier returned `EXPECTED` (exit 0, `invalidCount` 0) and the run's
+  `storage/single-anchor/results.json` is **byte-identical** to the Phase D
+  artifact
+  (`bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad`).
+  `scripts/Test-SingleAnchorReplayPackage.ps1` verified the package on that
+  exact run with the binding enforced: **PASS, 1,537 checks**, package SHA-256
+  `8f77bdd16dc06593f87af5fe84b761f2f0a9e0ff7b4ee2f33956e6a1837f6a00`.
+- **Package contents.** 1,454 events (280 anchors, 555 entries, 278 strategy
+  exits, 1 basket liquidation, 5 Stop Out triggers, 65 forced liquidations,
+  11 hard-BE activations, 207 trailing activations, 23 Margin Call enter/leave
+  pairs, 2 rejection episodes plus 2 run-end recaps, run start/end), 1,452 exact
+  per-event account snapshots and 98,866 bounded periodic samples in four
+  telemetry shards; every decimal is an exact JSON string.
+- **Determinism.** Two identical bounded executions over 2019-01-01..2019-01-03
+  produced byte-identical `results.json`, `events.jsonl`,
+  `telemetry-2019.jsonl` and `manifest.json`
+  (package SHA-256 `2e1865159d7eb0de095c50865c90df5a9eace5b41b555c6b396acde274e24957`).
+  The frozen model is reproducible byte-for-byte at that bounded scope, and the
+  full run additionally reproduced the Phase D result exactly.
+- **Tests.** 310/310 C# tests (9 new replay recorder tests plus a multi-year
+  shard test), PowerShell guards 40/40, invocation 12/12, failed-data 97/97,
+  availability 12/12, corrected-classifier 160/160, delivery end-to-end 40
+  checks, and 274/274 Python historical-data tests (the additive `candles`
+  subcommand derives the deterministic monthly M1 cache with positive/uncrossed
+  quote validation and a UTC data-time-zone precondition).
+- **Derived M1 candle cache.** The full cache was generated into
+  `E:\MarketLab\data\lean\xauusd-m1-candles`: 90 monthly CSVs, 2,332 partitions
+  and 413,750,130 source rows read, 2,655,664 candle rows, 172,160,895 bytes,
+  `content_sha256`
+  `ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d`. Because
+  the local command runner terminates a single command at about one hour, the
+  cache was produced in four contiguous ranges and merged byte-for-byte with a
+  verification script that recomputed the generator's manifest recipe; monthly
+  output is range-independent and the merged first (`2019-01`) and last
+  (`2026-06`) months were re-generated as single-range runs and are
+  byte-identical. The committed cache manifest is
+  `evidence/20261001-phase-e-replay-export/candle-cache-manifest.json`.
+- **Evidence and records.** Compact evidence with a SHA-256 manifest is under
+  `evidence/20261001-phase-e-replay-export/`; the result record is
+  [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md) and the
+  package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). The full telemetry
+  shards, engine logs, result packets and the candle cache remain local run
+  artifacts identified by hash. The Phase A-D evidence is unchanged, the
+  413,750,130-row qualification was not rerun, no parameter was optimized and
+  no hosted CI was dispatched.
