@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -33,6 +34,7 @@ namespace MarketLab.SingleAnchor.Tests
                 Engine.EntryOpened += Recorder.OnEntryOpened;
                 Engine.EntryRejected += Recorder.OnEntryRejected;
                 Engine.HardBreakevenViolated += Recorder.OnHardBreakevenViolated;
+                Engine.HardBreakevenActivated += Recorder.OnHardBreakevenActivated;
                 Engine.TrailingActivated += Recorder.OnTrailingActivated;
                 Engine.BasketClosed += Recorder.OnBasketClosed;
                 Engine.BasketCloseFailed += Recorder.OnBasketCloseFailed;
@@ -326,30 +328,70 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That((int)forcedSnapshot["openPositions"]!, Is.EqualTo(0));
         }
 
-        [Test]
-        public void HardBreakevenActivationIsPublishedBeforeTheEntryItEnabled()
+        /// <summary>Anchors and places the four arithmetic legs; the next required side is BUY (trade 5).</summary>
+        private static void FeedFourArithmeticLegs(RecorderHarness h)
         {
-            // Four arithmetic legs (BUY, SELL, BUY, SELL), then the required fifth side activates hard-BE.
-            var h = new RecorderHarness(Harness.Defaults(), 10000m);
             h.Feed(1999.9m, 2000.1m);   // anchor
             h.Feed(2019.8m, 2020m);     // trade 1 BUY
             h.Feed(1980m, 1980.2m);     // trade 2 SELL
             h.Feed(2019.8m, 2020m);     // trade 3 BUY
             h.Feed(1980m, 1980.2m);     // trade 4 SELL
-            h.Feed(2019.8m, 2020m);     // trade 5 BUY tail: hard-BE mode activates
+        }
+
+        [Test]
+        public void HardBreakevenActivationSnapshotIsThePreAttemptStateAndTheEntrySnapshotIsPostEntry()
+        {
+            var h = new RecorderHarness(Harness.Defaults(), 10000m);
+            FeedFourArithmeticLegs(h);
+            h.Feed(2019.8m, 2020m);     // trade 5 BUY tail: hard-BE mode activates, then the leg enters
             var package = h.Build();
 
-            var types = Events(package).Select(e => (string)e["type"]!).ToList();
-            var activation = types.IndexOf("hard_breakeven_activated");
-            Assert.That(activation, Is.GreaterThanOrEqualTo(0), "the tail attempt activates the hard-BE mode");
-            Assert.That(types[activation + 1], Is.EqualTo("entry_executed").Or.EqualTo("entry_rejected"), "activation precedes the attempt it enabled");
-            if (types[activation + 1] == "entry_executed")
-            {
-                var entry = Events(package).Skip(activation + 1).First();
-                Assert.That((int)entry["tradeNumber"]!, Is.EqualTo(5));
-                Assert.That((string)entry["regime"]!, Is.EqualTo("HardBreakeven"));
-                Assert.That(entry["hardBreakevenTarget"], Is.Not.Null.And.Not.EqualTo(JValue.CreateNull()));
-            }
+            var events = Events(package);
+            var types = events.Select(e => (string)e["type"]!).ToList();
+            var activationIndex = types.IndexOf("hard_breakeven_activated");
+            Assert.That(activationIndex, Is.GreaterThanOrEqualTo(0), "the tail attempt activates the hard-BE mode");
+            Assert.That(types[activationIndex + 1], Is.EqualTo("entry_executed"), "activation precedes the entry it enabled");
+            var activation = events[activationIndex];
+            var entry = events[activationIndex + 1];
+            Assert.That((int)activation["tradeNumber"]!, Is.EqualTo(5));
+            Assert.That((int)entry["tradeNumber"]!, Is.EqualTo(5));
+            Assert.That((string)entry["regime"]!, Is.EqualTo("HardBreakeven"));
+            Assert.That(entry["hardBreakevenTarget"], Is.Not.Null.And.Not.EqualTo(JValue.CreateNull()));
+
+            // The activation snapshot is taken at the transition, before the tail leg exists;
+            // the entry snapshot is taken after the leg entered the account.
+            var snapshots = Telemetry(package).Where(t => (string)t["kind"]! == "event").ToList();
+            var activationSnapshot = snapshots.Single(t => (long?)t["eventId"] == (long)activation["id"]!);
+            var entrySnapshot = snapshots.Single(t => (long?)t["eventId"] == (long)entry["id"]!);
+            Assert.That((int)activationSnapshot["openPositions"]!, Is.EqualTo(4), "activation is pre-attempt");
+            Assert.That((int)entrySnapshot["openPositions"]!, Is.EqualTo(5), "the entry is post-fill");
+            Assert.That(Convert.ToDecimal((string)activationSnapshot["grossLots"]!), Is.LessThan(Convert.ToDecimal((string)entrySnapshot["grossLots"]!)));
+            Assert.That((string)activationSnapshot["balance"]!, Is.EqualTo((string)entrySnapshot["balance"]!), "a fill does not realize P/L");
+        }
+
+        [Test]
+        public void HardBreakevenActivationWithAnInfeasibleTailKeepsThePreAttemptSnapshot()
+        {
+            // The first four lots fit; the trade-5 requirement (about 0.06) exceeds the maximum,
+            // so the activation is followed by a rejection, never by a fill.
+            var h = new RecorderHarness(Harness.Defaults() with { MaximumVolume = 0.05m }, 10000m);
+            FeedFourArithmeticLegs(h);
+            h.Feed(2019.8m, 2020m);
+            var package = h.Build();
+
+            var events = Events(package);
+            var types = events.Select(e => (string)e["type"]!).ToList();
+            var activationIndex = types.IndexOf("hard_breakeven_activated");
+            Assert.That(activationIndex, Is.GreaterThanOrEqualTo(0));
+            Assert.That(types[activationIndex + 1], Is.EqualTo("entry_rejected"));
+            var activation = events[activationIndex];
+            var rejection = events[activationIndex + 1];
+            Assert.That((string)rejection["reason"]!, Is.EqualTo("HardBreakevenInfeasible"));
+            var snapshots = Telemetry(package).Where(t => (string)t["kind"]! == "event").ToList();
+            var activationSnapshot = snapshots.Single(t => (long?)t["eventId"] == (long)activation["id"]!);
+            var rejectionSnapshot = snapshots.Single(t => (long?)t["eventId"] == (long)rejection["id"]!);
+            Assert.That((int)activationSnapshot["openPositions"]!, Is.EqualTo(4));
+            Assert.That((int)rejectionSnapshot["openPositions"]!, Is.EqualTo(4), "a rejected attempt adds no leg");
         }
 
         [Test]
@@ -513,6 +555,69 @@ namespace MarketLab.SingleAnchor.Tests
             h.Feed(2030m, 2030.2m);
             h.Feed(2050m, 2050.2m);
             h.Feed(2045m, 2045.2m);
+        }
+    }
+
+    /// <summary>
+    /// The fail-closed publication contract: payload files first, the manifest only after every
+    /// payload persisted, and no manifest at all after a payload failure.
+    /// </summary>
+    [TestFixture]
+    public class ReplayPackagePublisherTests
+    {
+        private static ReplayPackageFile File(string name, string content)
+        {
+            return new ReplayPackageFile(
+                ReplayPackage.Directory + "/" + name,
+                name,
+                null,
+                content,
+                ReplayPackage.Sha256Hex(content),
+                Encoding.UTF8.GetByteCount(content),
+                ReplayPackage.CountLines(content));
+        }
+
+        [Test]
+        public void PayloadsAreSavedBeforeTheManifest()
+        {
+            var files = new[] { File("events.jsonl", "a\n"), File("telemetry-2019.jsonl", "b\n"), File("manifest.json", "{}\n") };
+            var saved = new List<string>();
+            var published = ReplayPackagePublisher.Publish(files, (key, bytes) =>
+            {
+                saved.Add(key);
+                return true;
+            }, out var failedKey);
+
+            Assert.That(published, Is.True);
+            Assert.That(failedKey, Is.Null);
+            Assert.That(saved, Has.Count.EqualTo(3));
+            Assert.That(saved[saved.Count - 1], Does.EndWith("manifest.json"), "the manifest is published last");
+        }
+
+        [Test]
+        public void AFailedPayloadSuppressesTheManifest()
+        {
+            var files = new[] { File("events.jsonl", "a\n"), File("telemetry-2019.jsonl", "b\n"), File("manifest.json", "{}\n") };
+            var attempted = new List<string>();
+            var published = ReplayPackagePublisher.Publish(files, (key, bytes) =>
+            {
+                attempted.Add(key);
+                return !key.EndsWith("telemetry-2019.jsonl");
+            }, out var failedKey);
+
+            Assert.That(published, Is.False);
+            Assert.That(failedKey, Does.EndWith("telemetry-2019.jsonl"));
+            Assert.That(attempted.Any(key => key.EndsWith("manifest.json")), Is.False, "no manifest after a payload failure");
+        }
+
+        [Test]
+        public void AFailedManifestIsReported()
+        {
+            var files = new[] { File("events.jsonl", "a\n"), File("manifest.json", "{}\n") };
+            var published = ReplayPackagePublisher.Publish(files, (key, bytes) => !key.EndsWith("manifest.json"), out var failedKey);
+
+            Assert.That(published, Is.False);
+            Assert.That(failedKey, Does.EndWith("manifest.json"));
         }
     }
 }

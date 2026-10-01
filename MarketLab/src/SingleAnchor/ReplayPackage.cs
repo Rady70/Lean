@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using Newtonsoft.Json;
@@ -199,6 +200,51 @@ namespace MarketLab.SingleAnchor
         string Sha256,
         int Bytes,
         int Lines);
+
+    /// <summary>
+    /// Fail-closed publication of a built package: every payload file is saved first and the
+    /// manifest is saved only after all payloads persisted, so a manifest can never advertise a
+    /// package whose payload is missing or partial. The save delegate returns false on failure.
+    /// </summary>
+    public static class ReplayPackagePublisher
+    {
+        /// <summary>
+        /// Publishes <paramref name="files"/> through <paramref name="save"/>. Returns true only
+        /// when every payload and the manifest itself were persisted; on failure
+        /// <paramref name="failedKey"/> names the first file that did not persist and the manifest
+        /// is not attempted for a payload failure.
+        /// </summary>
+        public static bool Publish(IReadOnlyList<ReplayPackageFile> files, Func<string, byte[], bool> save, out string? failedKey)
+        {
+            if (files == null) throw new ArgumentNullException(nameof(files));
+            if (save == null) throw new ArgumentNullException(nameof(save));
+            failedKey = null;
+            var manifest = files.FirstOrDefault(file => file.Name == ReplayPackage.ManifestFile);
+            foreach (var file in files)
+            {
+                if (file.Name == ReplayPackage.ManifestFile)
+                {
+                    continue;
+                }
+                if (!save(file.Key, Encoding.UTF8.GetBytes(file.Content)))
+                {
+                    failedKey = file.Key;
+                    return false;
+                }
+            }
+            if (manifest == null)
+            {
+                failedKey = ReplayPackage.Directory + "/" + ReplayPackage.ManifestFile;
+                return false;
+            }
+            if (!save(manifest.Key, Encoding.UTF8.GetBytes(manifest.Content)))
+            {
+                failedKey = manifest.Key;
+                return false;
+            }
+            return true;
+        }
+    }
 
     /// <summary>A complete built package: every file (manifest last) plus its counts and fingerprint.</summary>
     public sealed record ReplayPackageResult(

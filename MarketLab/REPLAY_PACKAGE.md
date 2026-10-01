@@ -136,11 +136,25 @@ over the native source or over the authoritative LEAN events.
 `MarketLab/scripts/Test-SingleAnchorReplayPackage.ps1` is the Phase E evidence
 gate. It re-hashes every payload file against the manifest, recomputes the
 package fingerprint, verifies the manifest against the run's `results.json`
-(identity and every counter), verifies event ids/order/counts against the
-authoritative counters, verifies exact-decimal strings in events and telemetry,
-verifies event-snapshot coverage and the periodic bound, and (with
-`-ExpectedResultsSha256`) enforces the Phase D binding. It writes
-`replay-package-verification.json` and exits 0 only on PASS.
+(identity, parameters, margin parameters, session map, delivered stream and
+every counter), and then compares the replay stream itself against the
+authoritative `results.json` structures: every anchor against `AnchorEvent`,
+every surviving entry against `LegTrace`, every forced liquidation against
+`researchMargin.StopOutEpisodes[].Liquidations` (including before/after account
+state and same-quote ordering), every Stop Out against its episode, every
+rejection against `RejectionTrace`/summaries, every hard-BE activation against
+the first tail leg/attempt, and the run-end counters/snapshot against the final
+account and margin state. It also verifies event ids/order/counts, exact-decimal
+strings in events and telemetry, event-snapshot coverage, the actual
+`telemetryIntervalSeconds` periodic rule while positions are open, and (with
+`-ExpectedResultsSha256`) the Phase D binding. `tests\Test-SingleAnchorReplayPackageVerifier.ps1`
+drives 11 mutation cases (changed trade number, fill price, forced-liquidation
+ordinal/price, Stop Out time, same-quote reorder, manifest identity, file hash,
+deleted event, deleted snapshot and an over-frequent periodic sample); each must
+be rejected. The verifier writes `replay-package-verification.json` and exits 0
+only on PASS. A mutation of the committed event values that preserves all
+hashes and counts is caught by the parity comparison, not only by the
+repository's own replay of the same code.
 
 ```powershell
 pwsh -File MarketLab\scripts\Test-SingleAnchorReplayPackage.ps1 `

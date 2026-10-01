@@ -530,15 +530,18 @@ namespace MarketLab.SingleAnchor
                 ["openBasket"] = CurrentBasketSnapshot()
             };
             var settings = new JsonSerializerSettings { Formatting = Formatting.Indented, Converters = { new StringEnumConverter() } };
-            if (ObjectStore.SaveJson(ResultsKey, results, settings: settings))
+            var resultsSaved = ObjectStore.SaveJson(ResultsKey, results, settings: settings);
+            if (resultsSaved)
             {
                 Log($"SingleAnchor results written to the object store as {ResultsKey}.");
+                // Phase E: the replay package is additive output of the authoritative run; it is
+                // only attempted after the authoritative results themselves persisted.
+                WriteReplayPackage(failure);
             }
             else
             {
-                Error($"SingleAnchor results could not be written to the object store as {ResultsKey}.");
+                Error($"SingleAnchor results could not be written to the object store as {ResultsKey}; the replay package is not attempted because it is only meaningful next to the authoritative result.");
             }
-            WriteReplayPackage(failure);
         }
 
         /// <summary>
@@ -559,6 +562,7 @@ namespace MarketLab.SingleAnchor
             _engine.EntryOpened += _replay.OnEntryOpened;
             _engine.EntryRejected += _replay.OnEntryRejected;
             _engine.HardBreakevenViolated += _replay.OnHardBreakevenViolated;
+            _engine.HardBreakevenActivated += _replay.OnHardBreakevenActivated;
             _engine.TrailingActivated += _replay.OnTrailingActivated;
             _engine.BasketClosed += _replay.OnBasketClosed;
             _engine.BasketCloseFailed += _replay.OnBasketCloseFailed;
@@ -648,15 +652,20 @@ namespace MarketLab.SingleAnchor
                     new ReplayDeliveryIdentity(delivery.QuoteCount, delivery.SemanticDigest, delivery.FirstCanonicalUtc, delivery.LastCanonicalUtc),
                     rejections);
                 var package = _replay.BuildPackage(runEnd);
-                var saved = 0;
-                foreach (var file in package.Files)
+                // Fail closed: the manifest is published only after every payload persisted, so the
+                // object store can never contain a manifest advertising an incomplete package.
+                var published = ReplayPackagePublisher.Publish(
+                    package.Files,
+                    (key, bytes) => ObjectStore.SaveBytes(key, bytes),
+                    out var failedKey);
+                if (published)
                 {
-                    if (ObjectStore.SaveBytes(file.Key, Encoding.UTF8.GetBytes(file.Content)))
-                    {
-                        saved++;
-                    }
+                    Log($"SingleAnchor replay package: {package.EventCount} event(s), {package.EventSnapshotCount} event snapshot(s), {package.PeriodicSampleCount} periodic sample(s), {package.Files.Count} file(s) written, package sha256 {package.PackageSha256}.");
                 }
-                Log($"SingleAnchor replay package: {package.EventCount} event(s), {package.EventSnapshotCount} event snapshot(s), {package.PeriodicSampleCount} periodic sample(s), {saved}/{package.Files.Count} file(s) written, package sha256 {package.PackageSha256}.");
+                else
+                {
+                    Error($"SingleAnchor replay package could not be persisted in full (first failed file: {failedKey}); the package manifest was not published, so no incomplete package is advertised. Package sha256 would have been {package.PackageSha256}.");
+                }
             }
             catch (Exception error)
             {

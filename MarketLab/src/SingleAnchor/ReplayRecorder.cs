@@ -39,7 +39,6 @@ namespace MarketLab.SingleAnchor
         private ReplayPackageResult? _result;
         private long _eventId;
         private long _pendingEventId;
-        private bool _hardBreakevenActivated;
         private bool _marginCallActive;
         private Quote? _pendingCloseQuote;
         private DateTime? _nextPeriodicSample;
@@ -258,7 +257,6 @@ namespace MarketLab.SingleAnchor
             if (_faulted) return;
             try
             {
-                _hardBreakevenActivated = false;
                 _pendingEventId = AddAnchorEvent(e);
             }
             catch (Exception error)
@@ -288,7 +286,6 @@ namespace MarketLab.SingleAnchor
             if (_faulted) return;
             try
             {
-                ActivateHardBreakevenIfNeeded(e.Basket, e.Leg.TradeNumber, e.Quote);
                 var id = AddEntryEvent(e);
                 AddSnapshot("event", id, e.Quote.Time, _quoteSequence());
             }
@@ -304,7 +301,6 @@ namespace MarketLab.SingleAnchor
             if (_faulted) return;
             try
             {
-                ActivateHardBreakevenIfNeeded(e.Basket, e.Rejection.TradeNumber, e.Quote);
                 var id = AddEntryRejectedEvent(e);
                 AddSnapshot("event", id, e.Quote.Time, _quoteSequence());
             }
@@ -320,8 +316,33 @@ namespace MarketLab.SingleAnchor
             if (_faulted) return;
             try
             {
-                ActivateHardBreakevenIfNeeded(e.Basket, e.Leg.TradeNumber, e.Quote);
                 var id = AddHardBreakevenViolatedEvent(e);
+                AddSnapshot("event", id, e.Quote.Time, _quoteSequence());
+            }
+            catch (Exception error)
+            {
+                Fault(error);
+            }
+        }
+
+        /// <summary>
+        /// The basket entered hard-BE mode at the first tail attempt. The engine publishes this
+        /// before sizing/placing that attempt, so the snapshot is the exact pre-attempt state.
+        /// </summary>
+        public void OnHardBreakevenActivated(HardBreakevenActivatedEvent e)
+        {
+            if (_faulted) return;
+            try
+            {
+                var line = new JsonLine();
+                line.Text("type", "hard_breakeven_activated");
+                line.Number("basket", e.Basket.Sequence);
+                line.Number("tradeNumber", e.TradeNumber);
+                line.Time("time", e.Quote.Time);
+                line.Number("quoteSequence", _quoteSequence());
+                line.Text("lowerTarget", ReplayPackage.FormatDecimal(e.Basket.LowerTarget));
+                line.Text("upperTarget", ReplayPackage.FormatDecimal(e.Basket.UpperTarget));
+                var id = AddEvent("hard_breakeven_activated", line.ToLine());
                 AddSnapshot("event", id, e.Quote.Time, _quoteSequence());
             }
             catch (Exception error)
@@ -506,25 +527,6 @@ namespace MarketLab.SingleAnchor
             line.Text("lowerTarget", ReplayPackage.FormatDecimal(anchor.LowerTarget));
             line.Text("upperTarget", ReplayPackage.FormatDecimal(anchor.UpperTarget));
             return AddEvent("basket_anchored", line.ToLine());
-        }
-
-        private void ActivateHardBreakevenIfNeeded(Basket basket, int tradeNumber, in Quote quote)
-        {
-            if (_hardBreakevenActivated || !basket.HardBreakevenModeActive)
-            {
-                return;
-            }
-            _hardBreakevenActivated = true;
-            var line = new JsonLine();
-            line.Text("type", "hard_breakeven_activated");
-            line.Number("basket", basket.Sequence);
-            line.Number("tradeNumber", tradeNumber);
-            line.Time("time", quote.Time);
-            line.Number("quoteSequence", _quoteSequence());
-            line.Text("lowerTarget", ReplayPackage.FormatDecimal(basket.LowerTarget));
-            line.Text("upperTarget", ReplayPackage.FormatDecimal(basket.UpperTarget));
-            var id = AddEvent("hard_breakeven_activated", line.ToLine());
-            AddSnapshot("event", id, quote.Time, _quoteSequence());
         }
 
         private long AddEntryEvent(EntryOpenedEvent e)

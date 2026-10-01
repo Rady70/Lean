@@ -19,7 +19,15 @@ authoritative persisted result of the run:
   * every significant event has exactly one telemetry snapshot (the run-end entry_rejection_summary
     recaps deliberately have none), periodic samples exist only while positions are open and every
     account decimal is an exact JSON string (never a JSON number);
-  * telemetry times are non-decreasing in shard order.
+  * telemetry times are non-decreasing in manifest shard order and consecutive periodic samples are
+    at least manifest.telemetryIntervalSeconds apart while positions stay open;
+  * every authoritative payload structure is compared, field by field, against the event stream:
+    anchors, entries, strategy exits, forced liquidations, Stop Out episodes, rejection episodes,
+    hard-BE activations, the run-end identity/counters/delivery and the run-end account snapshot.
+
+The payload parity comparison is tolerant about representation (JSON number vs exact decimal
+string, result timestamps with or without the trailing 'Z') but exact about value, case and
+ordering. It compares at most 200 accumulated failures and appends a truncation note afterwards.
 
 With -ExpectedResultsSha256 the verifier also enforces the Phase D binding: the run's persisted
 results.json must hash to the finalized Phase D artifact. A mismatch fails the gate and is
@@ -38,16 +46,32 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$failures = New-Object System.Collections.Generic.List[string]
-$checks = 0
+$script:failures = New-Object System.Collections.Generic.List[string]
+$script:checks = 0
+$script:parityChecks = 0
+$script:maxFailures = 200
+$script:failuresTruncated = $false
 
 function Add-Failure([string]$message) {
-    [void]$script:failures.Add($message)
+    if ($script:failures.Count -lt $script:maxFailures) {
+        [void]$script:failures.Add($message)
+    }
+    elseif (-not $script:failuresTruncated) {
+        $script:failuresTruncated = $true
+        [void]$script:failures.Add("additional failures were truncated after the $($script:maxFailures)-failure cap")
+    }
 }
 
 function Test-Check([bool]$condition, [string]$message) {
     $script:checks++
     if (-not $condition) { Add-Failure $message }
+}
+
+# A payload-parity comparison: it is a regular check plus it is counted as a parity comparison so
+# the verification record proves that payload parity was actually evaluated.
+function Test-ParityCheck([bool]$condition, [string]$message) {
+    $script:parityChecks++
+    Test-Check $condition $message
 }
 
 function Get-Sha256([string]$path) {
@@ -83,11 +107,48 @@ function Convert-UtcTime([object]$value, [string]$field) {
     }
 }
 
+# The authoritative results.json writes DateTime values without the trailing 'Z'. Depending on the
+# host, ConvertFrom-Json reads such a value as a DateTime (Windows PowerShell 5.1) or keeps the raw
+# text (the exact reader below on PowerShell 7). Both forms are the same UTC instant.
+function Convert-ResultTime([object]$value, [string]$field) {
+    if ($null -eq $value) { throw "the field '$field' is null" }
+    if ($value -is [datetime]) {
+        $time = [datetime]$value
+        if ($time.Kind -eq [System.DateTimeKind]::Utc) { return $time }
+        if ($time.Kind -eq [System.DateTimeKind]::Local) { return $time.ToUniversalTime() }
+        return [datetime]::SpecifyKind($time, [System.DateTimeKind]::Utc)
+    }
+    if ($value -isnot [string]) { throw "the field '$field' is not a timestamp" }
+    $text = [string]$value
+    if ($text.EndsWith('Z')) { return (Convert-UtcTime $text $field) }
+    try {
+        return [datetime]::Parse(
+            $text,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+    }
+    catch {
+        throw "the authoritative field '$field' is not a timestamp: '$value'"
+    }
+}
+
 function Get-Property([object]$object, [string]$name) {
     if ($null -eq $object) { return $null }
     $property = $object.PSObject.Properties[$name]
     if ($null -eq $property) { return $null }
     return $property.Value
+}
+
+function Has-Property([object]$object, [string]$name) {
+    if ($null -eq $object) { return $false }
+    return ($null -ne $object.PSObject.Properties[$name])
+}
+
+# Returns the events of one type in stream order. Kept as a function (not a scriptblock) because
+# PowerShell refuses to wrap a hashtable-indexed List in @() inside a scriptblock.
+function Get-EventsOfType([string]$name) {
+    if ($script:eventsByType.ContainsKey($name)) { return $script:eventsByType[$name] }
+    return @()
 }
 
 function Read-JsonLines([string]$path) {
@@ -102,6 +163,154 @@ function Read-JsonLines([string]$path) {
         }
     }
     return $rows
+}
+
+# ---- Exact JSON reader -----------------------------------------------------
+# Windows PowerShell 5.1's ConvertFrom-Json reads JSON fractional numbers as System.Decimal and
+# keeps every emitted digit. PowerShell 7's ConvertFrom-Json reads them as System.Double and loses
+# precision beyond ~15 significant digits, which would make the exact-decimal parity comparison
+# impossible. On PowerShell 7 the reader below uses System.Text.Json and converts every JSON number
+# from its raw text with [decimal]::Parse, so both hosts expose the same authoritative values.
+
+$script:systemTextJson = $false
+try {
+    Add-Type -AssemblyName 'System.Text.Json' -ErrorAction Stop
+    $script:systemTextJson = ($null -ne ('System.Text.Json.JsonDocument' -as [type]))
+}
+catch {
+    $script:systemTextJson = $false
+}
+
+function ConvertFrom-ExactJsonElement([object]$element) {
+    $kind = [string]$element.ValueKind
+    if ($kind -eq 'Object') {
+        $properties = [ordered]@{}
+        foreach ($property in $element.EnumerateObject()) {
+            $properties[$property.Name] = ConvertFrom-ExactJsonElement $property.Value
+        }
+        return [pscustomobject]$properties
+    }
+    if ($kind -eq 'Array') {
+        $items = New-Object System.Collections.Generic.List[object]
+        foreach ($item in $element.EnumerateArray()) {
+            [void]$items.Add((ConvertFrom-ExactJsonElement $item))
+        }
+        return ,$items.ToArray()
+    }
+    if ($kind -eq 'String') { return $element.GetString() }
+    if ($kind -eq 'Number') {
+        $raw = $element.GetRawText()
+        try {
+            return [decimal]::Parse(
+                $raw,
+                [System.Globalization.NumberStyles]::Float,
+                [System.Globalization.CultureInfo]::InvariantCulture)
+        }
+        catch {
+            return [double]::Parse(
+                $raw,
+                [System.Globalization.NumberStyles]::Float,
+                [System.Globalization.CultureInfo]::InvariantCulture)
+        }
+    }
+    if ($kind -eq 'True') { return $true }
+    if ($kind -eq 'False') { return $false }
+    return $null
+}
+
+function Read-ExactJson([string]$path) {
+    $text = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+    if ($script:systemTextJson) {
+        $document = [System.Text.Json.JsonDocument]::Parse($text)
+        try { return ConvertFrom-ExactJsonElement $document.RootElement }
+        finally { $document.Dispose() }
+    }
+    return ($text | ConvertFrom-Json)
+}
+
+# ---- Tolerant value comparison ---------------------------------------------
+
+function Convert-JsonDecimal([object]$value, [string]$where) {
+    if ($null -eq $value) { return $null }
+    if ($value -is [decimal]) { return [decimal]$value }
+    if ($value -is [double] -or $value -is [single]) { return [decimal]$value }
+    if ($value -is [int] -or $value -is [long] -or $value -is [int16] -or $value -is [int64] -or $value -is [byte]) {
+        return [decimal]$value
+    }
+    if ($value -is [string]) {
+        $text = ([string]$value).Trim()
+        try {
+            return [decimal]::Parse(
+                $text,
+                [System.Globalization.NumberStyles]::Float,
+                [System.Globalization.CultureInfo]::InvariantCulture)
+        }
+        catch {
+            Add-Failure "$where is not a canonical decimal: '$value'"
+            return $null
+        }
+    }
+    Add-Failure "$where has an unsupported numeric type $($value.GetType().Name)"
+    return $null
+}
+
+function Test-TextParity([object]$actual, [object]$expected, [string]$where) {
+    $script:parityChecks++
+    $script:checks++
+    if ($null -eq $actual -and $null -eq $expected) { return }
+    $left = if ($null -eq $actual) { '<null>' } else { [string]$actual }
+    $right = if ($null -eq $expected) { '<null>' } else { [string]$expected }
+    if ($left -cne $right) {
+        Add-Failure "$where parity: package '$left' does not equal authoritative '$right'"
+    }
+}
+
+function Test-NumberParity([object]$actual, [object]$expected, [string]$where) {
+    $script:parityChecks++
+    $script:checks++
+    if ($null -eq $actual -and $null -eq $expected) { return }
+    if ($null -eq $actual -or $null -eq $expected) {
+        Add-Failure "$where parity: null mismatch (package '$actual', authoritative '$expected')"
+        return
+    }
+    $left = Convert-JsonDecimal $actual $where
+    $right = Convert-JsonDecimal $expected $where
+    if ($null -eq $left -or $null -eq $right) { return }
+    if ($left -ne $right) {
+        Add-Failure "$where parity: package '$([string]$actual)' does not equal authoritative '$([string]$expected)'"
+    }
+}
+
+function Test-BoolParity([object]$actual, [object]$expected, [string]$where) {
+    $script:parityChecks++
+    $script:checks++
+    if ($null -eq $actual -and $null -eq $expected) { return }
+    if ($null -eq $actual -or $null -eq $expected) {
+        Add-Failure "$where parity: null mismatch (package '$actual', authoritative '$expected')"
+        return
+    }
+    $left = [System.Convert]::ToBoolean($actual)
+    $right = [System.Convert]::ToBoolean($expected)
+    if ($left -ne $right) {
+        Add-Failure "$where parity: package '$left' does not equal authoritative '$right'"
+    }
+}
+
+function Test-TimeParity([object]$actual, [object]$expected, [string]$where) {
+    $script:parityChecks++
+    $script:checks++
+    if ($null -eq $actual -and $null -eq $expected) { return }
+    if ($null -eq $actual -or $null -eq $expected) {
+        Add-Failure "$where parity: null time mismatch (package '$actual', authoritative '$expected')"
+        return
+    }
+    $left = $null
+    $right = $null
+    try { $left = Convert-UtcTime $actual "$where (package)" } catch { Add-Failure $_.Exception.Message; return }
+    try { $right = Convert-ResultTime $expected "$where (authoritative)" } catch { Add-Failure $_.Exception.Message; return }
+    if ($left -ne $right) {
+        Add-Failure "$where parity: package time '$($left.ToString('o'))' does not equal authoritative time '$($right.ToString('o'))'"
+    }
 }
 
 function Assert-ExactString([object]$object, [string]$name, [string]$where, [bool]$required = $false) {
@@ -150,12 +359,12 @@ try {
             "the run's results.json hash $resultsSha256 does not match the expected Phase D artifact $($ExpectedResultsSha256.ToLowerInvariant())"
     }
 
-    $results = [System.IO.File]::ReadAllText($resultsPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    $results = Read-ExactJson $resultsPath
     $manifestPath = Join-Path $replayDirectory 'manifest.json'
     $eventsPath = Join-Path $replayDirectory 'events.jsonl'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { Write-Error "manifest.json is missing"; exit 1 }
     if (-not (Test-Path -LiteralPath $eventsPath -PathType Leaf)) { Write-Error "events.jsonl is missing"; exit 1 }
-    $manifest = [System.IO.File]::ReadAllText($manifestPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    $manifest = Read-ExactJson $manifestPath
 
     Test-Check ((Get-Property $manifest 'contract') -eq 'marketlab-single-anchor-replay-package-v1') `
         "the manifest contract is not marketlab-single-anchor-replay-package-v1"
@@ -172,20 +381,85 @@ try {
     Test-Check ((Get-Property $manifest 'endDate') -ceq (Get-Property $results 'endDate')) `
         "manifest.endDate does not match results.endDate"
 
+    # ---- Manifest parameter and session provenance parity ----
+    $manifestParameters = Get-Property $manifest 'parameters'
+    $resultParameters = Get-Property $results 'parameters'
+    if ($null -eq $manifestParameters -or $null -eq $resultParameters) {
+        Add-Failure "manifest.parameters or results.parameters is missing"
+    }
+    else {
+        $parameterNames = @($manifestParameters.PSObject.Properties | ForEach-Object { $_.Name })
+        Test-ParityCheck ($parameterNames.Count -eq 21) "manifest.parameters has $($parameterNames.Count) fields, expected 21"
+        foreach ($property in $manifestParameters.PSObject.Properties) {
+            $resultValue = Get-Property $resultParameters $property.Name
+            if ($null -eq $resultValue) { Add-Failure "results.parameters.$($property.Name) is missing"; continue }
+            if ($property.Value -is [bool] -or $resultValue -is [bool]) {
+                Test-BoolParity $property.Value $resultValue "manifest.parameters.$($property.Name)"
+            }
+            else {
+                Test-NumberParity $property.Value $resultValue "manifest.parameters.$($property.Name)"
+            }
+        }
+        foreach ($property in $resultParameters.PSObject.Properties) {
+            if ($null -eq (Get-Property $manifestParameters $property.Name)) {
+                Add-Failure "manifest.parameters.$($property.Name) is missing"
+            }
+        }
+    }
+
+    $manifestMarginParameters = Get-Property $manifest 'marginParameters'
+    $resultMarginParameters = Get-Property (Get-Property $results 'researchMargin') 'Parameters'
+    if ($null -eq $manifestMarginParameters -or $null -eq $resultMarginParameters) {
+        Add-Failure "manifest.marginParameters or researchMargin.Parameters is missing"
+    }
+    else {
+        $marginParameterNames = @($manifestMarginParameters.PSObject.Properties | ForEach-Object { $_.Name })
+        Test-ParityCheck ($marginParameterNames.Count -eq 4) "manifest.marginParameters has $($marginParameterNames.Count) fields, expected 4"
+        foreach ($property in $manifestMarginParameters.PSObject.Properties) {
+            $resultValue = Get-Property $resultMarginParameters $property.Name
+            if ($null -eq $resultValue) { Add-Failure "researchMargin.Parameters.$($property.Name) is missing"; continue }
+            Test-NumberParity $property.Value $resultValue "manifest.marginParameters.$($property.Name)"
+        }
+        foreach ($property in $resultMarginParameters.PSObject.Properties) {
+            if ($null -eq (Get-Property $manifestMarginParameters $property.Name)) {
+                Add-Failure "manifest.marginParameters.$($property.Name) is missing"
+            }
+        }
+    }
+
     $manifestSession = Get-Property $manifest 'sessionMap'
     $resultSession = Get-Property $results 'sessionMap'
     if ($null -ne $manifestSession -and $null -ne $resultSession) {
-        Test-Check ((Get-Property $manifestSession 'Sha256') -ceq (Get-Property $resultSession 'Sha256')) `
-            "manifest.sessionMap.Sha256 does not match results.sessionMap.Sha256"
+        Test-TextParity (Get-Property $manifestSession 'Map') (Get-Property $resultSession 'Map') "manifest.sessionMap.Map"
+        Test-TextParity (Get-Property $manifestSession 'Sha256') (Get-Property $resultSession 'Sha256') "manifest.sessionMap.Sha256"
+        Test-TextParity (Get-Property $manifestSession 'Symbol') (Get-Property $resultSession 'Symbol') "manifest.sessionMap.Symbol"
+        Test-TextParity (Get-Property $manifestSession 'JunctionTimeZone') (Get-Property $resultSession 'JunctionTimeZone') "manifest.sessionMap.JunctionTimeZone"
+        Test-NumberParity (Get-Property $manifestSession 'Sessions') (Get-Property $resultSession 'Sessions') "manifest.sessionMap.Sessions"
+        Test-NumberParity (Get-Property $manifestSession 'SourceFileCount') (Get-Property $resultSession 'SourceFileCount') "manifest.sessionMap.SourceFileCount"
+        Test-NumberParity (Get-Property $manifestSession 'SourceRowCount') (Get-Property $resultSession 'SourceRowCount') "manifest.sessionMap.SourceRowCount"
+        Test-BoolParity (Get-Property $manifestSession 'FinalSessionEndObservable') (Get-Property $resultSession 'FinalSessionEndObservable') "manifest.sessionMap.FinalSessionEndObservable"
+        Test-TextParity (Get-Property $manifestSession 'SourceSha256Aggregate') (Get-Property $resultSession 'SourceSha256Aggregate') "manifest.sessionMap.SourceSha256Aggregate"
+        Test-TextParity (Get-Property $manifestSession 'FirstSessionStartUtc') (Get-Property $resultSession 'FirstSessionStartUtc') "manifest.sessionMap.FirstSessionStartUtc"
+        Test-TextParity (Get-Property $manifestSession 'SourceFirstQuoteUtc') (Get-Property $resultSession 'SourceFirstQuoteUtc') "manifest.sessionMap.SourceFirstQuoteUtc"
+        # The manifest names the coverage end "SourceLastQuoteUtc"; the result names it
+        # "SourceCoverageEndUtc". The recorder writes the same instant under both names.
+        Test-TimeParity (Get-Property $manifestSession 'SourceLastQuoteUtc') (Get-Property $resultSession 'SourceCoverageEndUtc') "manifest.sessionMap.SourceLastQuoteUtc"
+    }
+    elseif ($null -ne $manifestSession -or $null -ne $resultSession) {
+        Add-Failure "manifest.sessionMap and results.sessionMap are not both present"
     }
 
     $manifestDelivered = Get-Property $manifest 'delivered'
     $resultDelivered = Get-Property $results 'delivered'
     if ($null -ne $manifestDelivered -and $null -ne $resultDelivered) {
-        Test-Check ((Get-Property $manifestDelivered 'quoteCount') -eq (Get-Property $resultDelivered 'quote_count')) `
-            "manifest.delivered.quoteCount does not match results.delivered.quote_count"
-        Test-Check ((Get-Property $manifestDelivered 'semanticDigest') -ceq (Get-Property $resultDelivered 'semantic_digest')) `
-            "manifest.delivered.semanticDigest does not match results.delivered.semantic_digest"
+        Test-NumberParity (Get-Property $manifestDelivered 'quoteCount') (Get-Property $resultDelivered 'quote_count') `
+            "manifest.delivered.quoteCount"
+        Test-TextParity (Get-Property $manifestDelivered 'semanticDigest') (Get-Property $resultDelivered 'semantic_digest') `
+            "manifest.delivered.semanticDigest"
+        Test-TimeParity (Get-Property $manifestDelivered 'firstCanonicalUtc') (Get-Property $resultDelivered 'first_canonical_utc') `
+            "manifest.delivered.firstCanonicalUtc"
+        Test-TimeParity (Get-Property $manifestDelivered 'lastCanonicalUtc') (Get-Property $resultDelivered 'last_canonical_utc') `
+            "manifest.delivered.lastCanonicalUtc"
     }
 
     $manifestCounters = Get-Property $manifest 'counters'
@@ -241,6 +515,7 @@ try {
     $events = @(Read-JsonLines $eventsPath)
     Test-Check ($events.Count -gt 0) "events.jsonl is empty"
     $eventCounts = @{}
+    $eventsByType = @{}
     $significantIds = New-Object System.Collections.Generic.List[long]
     $previousEventTime = $null
     for ($i = 0; $i -lt $events.Count; $i++) {
@@ -251,6 +526,10 @@ try {
         if ([string]::IsNullOrWhiteSpace([string]$type)) { Add-Failure "event $($i + 1) has no type"; continue }
         if ($eventCounts.ContainsKey([string]$type)) { $eventCounts[[string]$type] = $eventCounts[[string]$type] + 1 }
         else { $eventCounts[[string]$type] = 1 }
+        if (-not $eventsByType.ContainsKey([string]$type)) {
+            $eventsByType[[string]$type] = New-Object System.Collections.Generic.List[object]
+        }
+        [void]$eventsByType[[string]$type].Add($event)
         if ([string]$type -eq 'entry_rejection_summary') {
             foreach ($field in @('firstTime', 'lastTime')) {
                 try { [void](Convert-UtcTime (Get-Property $event $field) "events[$i].$field") }
@@ -289,6 +568,7 @@ try {
         if ($eventCounts.ContainsKey($name)) { return [int]$eventCounts[$name] }
         return 0
     }
+
     $anchors = & $countOf 'basket_anchored'
     $expectedAnchors = [int](Get-Property $results 'basketsClosed') + [int](Get-Property $results 'basketsLiquidated') + $(if ($null -ne (Get-Property $results 'openBasket')) { 1 } else { 0 })
     Test-Check ($anchors -eq $expectedAnchors) "basket_anchored count $anchors does not match the closed/liquidated/open baskets $expectedAnchors"
@@ -299,6 +579,7 @@ try {
     Test-Check ((& $countOf 'entry_rejected') -eq [int](Get-Property $results 'distinctRejectedEntries')) "entry_rejected count does not match results.distinctRejectedEntries"
 
     $margin = Get-Property $results 'researchMargin'
+    $episodes = @()
     if ($null -ne $margin) {
         $episodes = @(Get-Property $margin 'StopOutEpisodes')
         Test-Check ((& $countOf 'stop_out_triggered') -eq $episodes.Count) "stop_out_triggered count does not match the recorded Stop Out episodes"
@@ -324,15 +605,27 @@ try {
         'margin_call_entered' = @('bid', 'ask', 'balance', 'equity', 'usedMargin')
         'margin_call_left'    = @('bid', 'ask', 'balance', 'equity', 'usedMargin')
     }
+    $eventNullableDecimalFields = @{
+        'entry_executed'     = @('rawRequestedLot', 'exactRequiredLot', 'hardBreakevenTarget', 'targetSpread', 'targetBid', 'targetAsk', 'existingProfitAtTarget', 'marginalProfitPerLot', 'projectedProfitAfter')
+        'stop_out_triggered' = @('marginLevelPercent')
+        'forced_liquidation' = @('rawRequestedLot', 'exactRequiredLot', 'beforeFreeMargin', 'beforeMarginLevelPercent', 'afterFreeMargin', 'afterMarginLevelPercent')
+    }
     foreach ($event in $events) {
         $type = [string](Get-Property $event 'type')
-        if (-not $eventDecimalFields.ContainsKey($type)) { continue }
-        foreach ($field in $eventDecimalFields[$type]) {
-            Assert-ExactString $event $field "event[$type]" $true
+        if ($eventDecimalFields.ContainsKey($type)) {
+            foreach ($field in $eventDecimalFields[$type]) {
+                Assert-ExactString $event $field "event[$type]" $true
+            }
+        }
+        if ($eventNullableDecimalFields.ContainsKey($type)) {
+            foreach ($field in $eventNullableDecimalFields[$type]) {
+                Assert-ExactString $event $field "event[$type]" $false
+            }
         }
     }
 
-    # run_ended must carry the same outcome counters as the authoritative result.
+    # run_ended must carry the same outcome counters, delivery identity and time as the
+    # authoritative result.
     foreach ($name in @('quoteTicksProcessed', 'quoteOnlyQuotes', 'strategyEligibleQuotes', 'legsOpened',
             'basketsClosed', 'basketsLiquidated', 'forcedLiquidations', 'distinctRejectedEntries',
             'rejectedEntryAttempts', 'skippedFirstEntryQuotes')) {
@@ -344,47 +637,484 @@ try {
     $runEndedRealized = Get-Property $runEnded 'engineRealizedProfit'
     if ($null -eq $runEndedRealized) { Add-Failure "run_ended.engineRealizedProfit is missing" }
     else { Test-Check ([decimal]$runEndedRealized -eq [decimal](Get-Property $results 'realizedProfit')) "run_ended.engineRealizedProfit does not match results.realizedProfit" }
+    if ($null -ne $resultDelivered) {
+        Test-NumberParity (Get-Property $runEnded 'deliveryQuoteCount') (Get-Property $resultDelivered 'quote_count') "run_ended.deliveryQuoteCount"
+        Test-TextParity (Get-Property $runEnded 'deliverySemanticDigest') (Get-Property $resultDelivered 'semantic_digest') "run_ended.deliverySemanticDigest"
+        Test-TimeParity (Get-Property $runEnded 'deliveryFirstUtc') (Get-Property $resultDelivered 'first_canonical_utc') "run_ended.deliveryFirstUtc"
+        Test-TimeParity (Get-Property $runEnded 'deliveryLastUtc') (Get-Property $resultDelivered 'last_canonical_utc') "run_ended.deliveryLastUtc"
+    }
+    Test-BoolParity (Get-Property $runEnded 'completed') (Get-Property $results 'completed') "run_ended.completed"
+    $lastProcessed = Get-Property $results 'lastProcessedQuote'
+    if ($null -ne $lastProcessed -and $null -ne (Get-Property $lastProcessed 'Time')) {
+        Test-TimeParity (Get-Property $runEnded 'time') (Get-Property $lastProcessed 'Time') "run_ended.time"
+    }
+    else {
+        $fallbackStart = Get-Property $results 'startUtc'
+        if ($null -eq $fallbackStart) { $fallbackStart = Get-Property $manifest 'startUtc' }
+        Test-TimeParity (Get-Property $runEnded 'time') $fallbackStart "run_ended.time"
+    }
+
+    # ---- Authoritative payload parity ----
+    # Every comparison below is a check and is counted in parityChecks. Numeric values compare via
+    # [decimal] (the exact JSON reader above keeps every authoritative digit on both hosts), text
+    # compares case-sensitively and timestamps compare via the UTC parser.
+
+    # run_started identity.
+    $runStarted = $events[0]
+    foreach ($field in @('modelRevision', 'stopOutModel', 'symbol', 'market', 'startDate', 'endDate', 'quoteTimeZone')) {
+        Test-TextParity (Get-Property $runStarted $field) (Get-Property $results $field) "run_started.$field"
+    }
+
+    # A. Anchors: one basket_anchored event per closed basket plus the open basket, in strictly
+    # ascending basket order, with every anchor field equal to the authoritative AnchorEvent.
+    $anchoredEvents = @(Get-EventsOfType 'basket_anchored')
+    $expectedBasketRecords = New-Object System.Collections.Generic.List[object]
+    foreach ($basketRecord in @(Get-Property $results 'closedBaskets')) { [void]$expectedBasketRecords.Add($basketRecord) }
+    $openBasket = Get-Property $results 'openBasket'
+    if ($null -ne $openBasket) { [void]$expectedBasketRecords.Add($openBasket) }
+
+    Test-ParityCheck ($anchoredEvents.Count -eq $expectedBasketRecords.Count) `
+        "basket_anchored parity: the package has $($anchoredEvents.Count) anchors but the result has $($expectedBasketRecords.Count) closed/open baskets"
+    $actualAnchorOrder = @($anchoredEvents | ForEach-Object { [string]([long](Get-Property $_ 'basket')) })
+    $expectedAnchorOrder = @($expectedBasketRecords | ForEach-Object { [string]([long](Get-Property $_ 'Sequence')) })
+    Test-ParityCheck (($actualAnchorOrder -join ',') -eq ($expectedAnchorOrder -join ',')) `
+        "basket_anchored parity: the anchored basket sequence $($actualAnchorOrder -join ',') does not equal the closed plus open sequence $($expectedAnchorOrder -join ',')"
+    $ascending = $true
+    for ($i = 1; $i -lt $anchoredEvents.Count; $i++) {
+        if ([long](Get-Property $anchoredEvents[$i] 'basket') -le [long](Get-Property $anchoredEvents[$i - 1] 'basket')) { $ascending = $false }
+    }
+    Test-Check $ascending "the anchored basket-number sequence is not strictly ascending"
+    for ($i = 0; $i -lt [Math]::Min($anchoredEvents.Count, $expectedBasketRecords.Count); $i++) {
+        $event = $anchoredEvents[$i]
+        $basketRecord = $expectedBasketRecords[$i]
+        $sequence = [long](Get-Property $basketRecord 'Sequence')
+        $anchor = Get-Property $basketRecord 'AnchorEvent'
+        Test-NumberParity (Get-Property $event 'basket') $sequence "basket_anchored[$sequence].basket"
+        Test-NumberParity (Get-Property $event 'quoteSequence') (Get-Property $anchor 'QuoteSequence') "basket_anchored[$sequence].quoteSequence"
+        Test-TimeParity (Get-Property $event 'time') (Get-Property $anchor 'Time') "basket_anchored[$sequence].time"
+        foreach ($pair in @(@('bid', 'Bid'), @('ask', 'Ask'), @('anchor', 'Anchor'), @('step', 'Step'),
+                @('upper', 'Upper'), @('lower', 'Lower'), @('lowerTarget', 'LowerTarget'), @('upperTarget', 'UpperTarget'))) {
+            Test-NumberParity (Get-Property $event $pair[0]) (Get-Property $anchor $pair[1]) "basket_anchored[$sequence].$($pair[0])"
+        }
+    }
+
+    # B. Entries: every LegTrace row of every closed basket and of the open basket must have a
+    # matching entry_executed event with equal decision/fill/sizing fields, and the events of one
+    # basket must appear in the same order as that basket's LegTrace. Liquidated legs stay in the
+    # authoritative LiquidationTrace (the engine removes them from LegTrace when they are closed
+    # with the basket); their entry events are compared on the identity fields the trace carries,
+    # and the forced-close fields are compared by parity D. The total entry-event count must equal
+    # the full authoritative entry population (LegTrace plus LiquidationTrace rows).
+    $entryEvents = @(Get-EventsOfType 'entry_executed')
+    $entryEventByKey = @{}
+    foreach ($event in $entryEvents) {
+        $key = ([string]([long](Get-Property $event 'basket'))) + '/' + ([string]([long](Get-Property $event 'tradeNumber')))
+        if ($entryEventByKey.ContainsKey($key)) { Add-Failure "duplicate entry_executed event for basket/trade $key" }
+        else { $entryEventByKey[$key] = $event }
+    }
+    $entryTraceRows = 0
+    $legTraceRows = 0
+    foreach ($basketRecord in $expectedBasketRecords) {
+        $sequence = [long](Get-Property $basketRecord 'Sequence')
+        $legRows = @(Get-Property $basketRecord 'LegTrace')
+        $liquidationRows = @(Get-Property $basketRecord 'LiquidationTrace')
+        $entryTraceRows += $legRows.Count + $liquidationRows.Count
+        $legTraceRows += $legRows.Count
+
+        $legTradeNumbers = @{}
+        foreach ($legRow in $legRows) { $legTradeNumbers[[long](Get-Property $legRow 'TradeNumber')] = $true }
+        $basketEntryEvents = @($entryEvents | Where-Object {
+                [long](Get-Property $_ 'basket') -eq $sequence -and $legTradeNumbers.ContainsKey([long](Get-Property $_ 'tradeNumber'))
+            })
+        $actualEntryOrder = @($basketEntryEvents | ForEach-Object { [string]([long](Get-Property $_ 'tradeNumber')) })
+        $expectedEntryOrder = @($legRows | ForEach-Object { [string]([long](Get-Property $_ 'TradeNumber')) })
+        Test-ParityCheck (($actualEntryOrder -join ',') -eq ($expectedEntryOrder -join ',')) `
+            "entry_executed parity: basket $sequence entries appear as $($actualEntryOrder -join ',') but its LegTrace order is $($expectedEntryOrder -join ',')"
+
+        foreach ($legRow in $legRows) {
+            $tradeNumber = [long](Get-Property $legRow 'TradeNumber')
+            $key = "$sequence/$tradeNumber"
+            if (-not $entryEventByKey.ContainsKey($key)) { Add-Failure "entry_executed parity: no event for basket $sequence leg $tradeNumber"; continue }
+            $event = $entryEventByKey[$key]
+            Test-NumberParity (Get-Property $event 'quoteSequence') (Get-Property $legRow 'QuoteSequence') "entry_executed[$key].quoteSequence"
+            Test-TimeParity (Get-Property $event 'time') (Get-Property $legRow 'Time') "entry_executed[$key].time"
+            Test-TextParity (Get-Property $event 'side') (Get-Property $legRow 'Side') "entry_executed[$key].side"
+            Test-TextParity (Get-Property $event 'regime') (Get-Property $legRow 'Regime') "entry_executed[$key].regime"
+            foreach ($pair in @(@('decisionBid', 'DecisionBid'), @('decisionAsk', 'DecisionAsk'), @('placedLot', 'PlacedLot'),
+                    @('fillPrice', 'FillPrice'), @('rawRequestedLot', 'RawRequestedLot'), @('exactRequiredLot', 'ExactRequiredLot'),
+                    @('normalizedRequiredLot', 'NormalizedRequiredLot'), @('hardBreakevenTarget', 'HardBreakevenTarget'),
+                    @('targetSpread', 'TargetSpread'), @('targetBid', 'TargetBid'), @('targetAsk', 'TargetAsk'),
+                    @('existingProfitAtTarget', 'ExistingProfitAtTarget'), @('marginalProfitPerLot', 'MarginalProfitPerLot'),
+                    @('projectedProfitAfter', 'ProjectedProfitAfter'))) {
+                Test-NumberParity (Get-Property $event $pair[0]) (Get-Property $legRow $pair[1]) "entry_executed[$key].$($pair[0])"
+            }
+        }
+        foreach ($liquidationRow in $liquidationRows) {
+            $tradeNumber = [long](Get-Property $liquidationRow 'TradeNumber')
+            $key = "$sequence/$tradeNumber"
+            if (-not $entryEventByKey.ContainsKey($key)) { Add-Failure "entry_executed parity: no event for liquidated basket $sequence leg $tradeNumber"; continue }
+            $event = $entryEventByKey[$key]
+            Test-TimeParity (Get-Property $event 'time') (Get-Property $liquidationRow 'EntryTime') "entry_executed[liquidation $key].time"
+            Test-TextParity (Get-Property $event 'side') (Get-Property $liquidationRow 'Side') "entry_executed[liquidation $key].side"
+            Test-TextParity (Get-Property $event 'regime') (Get-Property $liquidationRow 'Regime') "entry_executed[liquidation $key].regime"
+            foreach ($pair in @(@('placedLot', 'PlacedLot'), @('fillPrice', 'EntryPrice'), @('rawRequestedLot', 'RawRequestedLot'),
+                    @('exactRequiredLot', 'ExactRequiredLot'), @('normalizedRequiredLot', 'NormalizedRequiredLot'))) {
+                Test-NumberParity (Get-Property $event $pair[0]) (Get-Property $liquidationRow $pair[1]) "entry_executed[liquidation $key].$($pair[0])"
+            }
+        }
+    }
+    Test-ParityCheck ($entryEvents.Count -eq $entryTraceRows) `
+        "entry_executed parity: the package has $($entryEvents.Count) entries but the authoritative LegTrace plus LiquidationTrace population is $entryTraceRows (LegTrace rows: $legTraceRows)"
+
+    # C. Strategy exits: the closed baskets that were not broker-liquidated, in closing order,
+    # each with a strategy_exit event whose close fields, realized figures and lots all agree.
+    $closedBasketRecords = @(Get-Property $results 'closedBaskets')
+    $nonLiquidatedClosed = @($closedBasketRecords | Where-Object { ([string](Get-Property $_ 'Reason')) -cne 'BrokerLiquidation' })
+    $previousClosedTime = $null
+    foreach ($basketRecord in $nonLiquidatedClosed) {
+        $closedTime = Convert-ResultTime (Get-Property $basketRecord 'ClosedTime') "closedBaskets[$([long](Get-Property $basketRecord 'Sequence'))].ClosedTime"
+        if ($null -ne $previousClosedTime -and $closedTime -lt $previousClosedTime) {
+            Add-Failure "the authoritative closed baskets are not in closing order at basket $([long](Get-Property $basketRecord 'Sequence'))"
+        }
+        $previousClosedTime = $closedTime
+    }
+    $strategyExitEvents = @(Get-EventsOfType 'strategy_exit')
+    Test-ParityCheck ($strategyExitEvents.Count -eq $nonLiquidatedClosed.Count) `
+        "strategy_exit parity: the package has $($strategyExitEvents.Count) strategy exits but the authoritative non-liquidated closed-basket count is $($nonLiquidatedClosed.Count)"
+    $actualExitOrder = @($strategyExitEvents | ForEach-Object { [string]([long](Get-Property $_ 'basket')) })
+    $expectedExitOrder = @($nonLiquidatedClosed | ForEach-Object { [string]([long](Get-Property $_ 'Sequence')) })
+    Test-ParityCheck (($actualExitOrder -join ',') -eq ($expectedExitOrder -join ',')) `
+        "strategy_exit parity: the package close order $($actualExitOrder -join ',') does not equal the authoritative closing order $($expectedExitOrder -join ',')"
+    for ($i = 0; $i -lt [Math]::Min($strategyExitEvents.Count, $nonLiquidatedClosed.Count); $i++) {
+        $event = $strategyExitEvents[$i]
+        $basketRecord = $nonLiquidatedClosed[$i]
+        $sequence = [long](Get-Property $basketRecord 'Sequence')
+        Test-TextParity (Get-Property $event 'reason') (Get-Property $basketRecord 'Reason') "strategy_exit[$sequence].reason"
+        Test-TimeParity (Get-Property $event 'time') (Get-Property $basketRecord 'ClosedTime') "strategy_exit[$sequence].time"
+        Test-BoolParity (Get-Property $event 'hardBreakevenModeActive') (Get-Property $basketRecord 'HardBreakevenModeActive') "strategy_exit[$sequence].hardBreakevenModeActive"
+        foreach ($pair in @(@('quoteSequence', 'CloseQuoteSequence'), @('bid', 'CloseBid'), @('ask', 'CloseAsk'), @('anchor', 'Anchor'),
+                @('legs', 'Legs'), @('buyLots', 'BuyLots'), @('sellLots', 'SellLots'), @('grossLots', 'GrossLots'), @('netLots', 'NetLots'),
+                @('rawProfit', 'RawProfit'), @('exitProfit', 'ExitProfit'), @('threshold', 'Threshold'),
+                @('buyClosePrice', 'BuyClosePrice'), @('sellClosePrice', 'SellClosePrice'), @('commission', 'Commission'),
+                @('realizedProfit', 'RealizedProfit'), @('liquidatedRealizedProfit', 'LiquidatedRealizedProfit'),
+                @('liquidatedPositions', 'LiquidatedPositions'), @('historicalEntries', 'HistoricalEntries'))) {
+            Test-NumberParity (Get-Property $event $pair[0]) (Get-Property $basketRecord $pair[1]) "strategy_exit[$sequence].$($pair[0])"
+        }
+    }
+
+    # The fully broker-liquidated baskets close with the same BasketCloseRecord shape.
+    $liquidatedClosed = @($closedBasketRecords | Where-Object { ([string](Get-Property $_ 'Reason')) -ceq 'BrokerLiquidation' })
+    $basketLiquidatedEvents = @(Get-EventsOfType 'basket_liquidated')
+    Test-ParityCheck ($basketLiquidatedEvents.Count -eq $liquidatedClosed.Count) `
+        "basket_liquidated parity: the package has $($basketLiquidatedEvents.Count) liquidated closes but the authoritative count is $($liquidatedClosed.Count)"
+    $actualLiquidatedOrder = @($basketLiquidatedEvents | ForEach-Object { [string]([long](Get-Property $_ 'basket')) })
+    $expectedLiquidatedOrder = @($liquidatedClosed | ForEach-Object { [string]([long](Get-Property $_ 'Sequence')) })
+    Test-ParityCheck (($actualLiquidatedOrder -join ',') -eq ($expectedLiquidatedOrder -join ',')) `
+        "basket_liquidated parity: $($actualLiquidatedOrder -join ',') does not equal $($expectedLiquidatedOrder -join ',')"
+    for ($i = 0; $i -lt [Math]::Min($basketLiquidatedEvents.Count, $liquidatedClosed.Count); $i++) {
+        $event = $basketLiquidatedEvents[$i]
+        $basketRecord = $liquidatedClosed[$i]
+        $sequence = [long](Get-Property $basketRecord 'Sequence')
+        Test-TextParity (Get-Property $event 'reason') (Get-Property $basketRecord 'Reason') "basket_liquidated[$sequence].reason"
+        Test-TimeParity (Get-Property $event 'time') (Get-Property $basketRecord 'ClosedTime') "basket_liquidated[$sequence].time"
+        Test-BoolParity (Get-Property $event 'hardBreakevenModeActive') (Get-Property $basketRecord 'HardBreakevenModeActive') "basket_liquidated[$sequence].hardBreakevenModeActive"
+        foreach ($pair in @(@('quoteSequence', 'CloseQuoteSequence'), @('bid', 'CloseBid'), @('ask', 'CloseAsk'), @('anchor', 'Anchor'),
+                @('legs', 'Legs'), @('buyLots', 'BuyLots'), @('sellLots', 'SellLots'), @('grossLots', 'GrossLots'), @('netLots', 'NetLots'),
+                @('rawProfit', 'RawProfit'), @('exitProfit', 'ExitProfit'), @('threshold', 'Threshold'),
+                @('buyClosePrice', 'BuyClosePrice'), @('sellClosePrice', 'SellClosePrice'), @('commission', 'Commission'),
+                @('realizedProfit', 'RealizedProfit'), @('liquidatedRealizedProfit', 'LiquidatedRealizedProfit'),
+                @('liquidatedPositions', 'LiquidatedPositions'), @('historicalEntries', 'HistoricalEntries'))) {
+            Test-NumberParity (Get-Property $event $pair[0]) (Get-Property $basketRecord $pair[1]) "basket_liquidated[$sequence].$($pair[0])"
+        }
+    }
+
+    # D. Forced liquidations: the Stop Out episodes' liquidations, flattened in episode and
+    # liquidation order, must match the forced_liquidation events one for one and in stream order.
+    # This includes the same-quote liquidation order and the exact before/after account state.
+    $liquidationRecords = New-Object System.Collections.Generic.List[object]
+    foreach ($episodeRecord in @($episodes)) {
+        foreach ($liquidationRecord in @(Get-Property $episodeRecord 'Liquidations')) {
+            [void]$liquidationRecords.Add($liquidationRecord)
+        }
+    }
+    $forcedLiquidationEvents = @(Get-EventsOfType 'forced_liquidation')
+    Test-ParityCheck ($forcedLiquidationEvents.Count -eq $liquidationRecords.Count) `
+        "forced_liquidation parity: the package has $($forcedLiquidationEvents.Count) events but the authoritative flattened liquidation count is $($liquidationRecords.Count)"
+    for ($i = 0; $i -lt [Math]::Min($forcedLiquidationEvents.Count, $liquidationRecords.Count); $i++) {
+        $event = $forcedLiquidationEvents[$i]
+        $liquidationRecord = $liquidationRecords[$i]
+        $leg = Get-Property $liquidationRecord 'Leg'
+        $identity = "$([long](Get-Property $leg 'Basket'))/$([long](Get-Property $leg 'Ordinal'))"
+        Test-TimeParity (Get-Property $event 'time') (Get-Property $leg 'LiquidationTime') "forced_liquidation[$identity].time"
+        foreach ($pair in @(@('basket', 'Basket', 'number'), @('ordinal', 'Ordinal', 'number'), @('tradeNumber', 'TradeNumber', 'number'),
+                @('side', 'Side', 'text'), @('placedLot', 'PlacedLot', 'number'), @('entryPrice', 'EntryPrice', 'number'),
+                @('entryTime', 'EntryTime', 'time'), @('regime', 'Regime', 'text'), @('rawRequestedLot', 'RawRequestedLot', 'number'),
+                @('exactRequiredLot', 'ExactRequiredLot', 'number'), @('normalizedRequiredLot', 'NormalizedRequiredLot', 'number'),
+                @('liquidationTime', 'LiquidationTime', 'time'), @('triggerTime', 'TriggerTime', 'time'),
+                @('triggerQuoteSequence', 'TriggerQuoteSequence', 'number'), @('triggerBid', 'TriggerBid', 'number'),
+                @('triggerAsk', 'TriggerAsk', 'number'), @('closePrice', 'ClosePrice', 'number'), @('commission', 'Commission', 'number'),
+                @('realizedProfit', 'RealizedProfit', 'number'), @('reason', 'Reason', 'text'))) {
+            $where = "forced_liquidation[$identity].$($pair[1])"
+            if ($pair[2] -eq 'time') { Test-TimeParity (Get-Property $event $pair[0]) (Get-Property $leg $pair[1]) $where }
+            elseif ($pair[2] -eq 'text') { Test-TextParity (Get-Property $event $pair[0]) (Get-Property $leg $pair[1]) $where }
+            else { Test-NumberParity (Get-Property $event $pair[0]) (Get-Property $leg $pair[1]) $where }
+        }
+        foreach ($sideName in @('before', 'after')) {
+            if ($sideName -eq 'before') { $snapshot = Get-Property $liquidationRecord 'Before' } else { $snapshot = Get-Property $liquidationRecord 'After' }
+            foreach ($field in @('Balance', 'FloatingProfit', 'Equity', 'UsedMargin', 'FreeMargin', 'MarginLevelPercent', 'OpenPositions')) {
+                Test-NumberParity (Get-Property $event ($sideName + $field)) (Get-Property $snapshot $field) "forced_liquidation[$identity].$($sideName + $field)"
+            }
+        }
+    }
+
+    # E. Stop Out: the stop_out_triggered events in order against the authoritative episodes:
+    # basket, reason, trigger quote and the exact AtTrigger account state. The committed
+    # stop_out_triggered payload (REPLAY_PACKAGE.md section 3, ReplayRecorder.AddStopOutEvent)
+    # carries those fields; if a package extends the payload with the episode's Outcome,
+    # ResolvedTime and AfterLiquidation, those are compared as well.
+    $stopOutEvents = @(Get-EventsOfType 'stop_out_triggered')
+    Test-ParityCheck ($stopOutEvents.Count -eq $episodes.Count) `
+        "stop_out_triggered parity: the package has $($stopOutEvents.Count) events but the authoritative episode count is $($episodes.Count)"
+    $stopOutExtendedFields = @('outcome', 'resolvedTime', 'afterBalance', 'afterFloatingProfit', 'afterEquity',
+        'afterUsedMargin', 'afterFreeMargin', 'afterMarginLevelPercent', 'afterOpenPositions')
+    for ($i = 0; $i -lt [Math]::Min($stopOutEvents.Count, $episodes.Count); $i++) {
+        $event = $stopOutEvents[$i]
+        $episodeRecord = $episodes[$i]
+        $sequence = [long](Get-Property $episodeRecord 'Basket')
+        $atTrigger = Get-Property $episodeRecord 'AtTrigger'
+        Test-NumberParity (Get-Property $event 'basket') $sequence "stop_out_triggered[$sequence].basket"
+        Test-TextParity (Get-Property $event 'reason') (Get-Property $episodeRecord 'Reason') "stop_out_triggered[$sequence].reason"
+        Test-NumberParity (Get-Property $event 'quoteSequence') (Get-Property $episodeRecord 'TriggerQuoteSequence') "stop_out_triggered[$sequence].quoteSequence"
+        Test-TimeParity (Get-Property $event 'time') (Get-Property $episodeRecord 'TriggerTime') "stop_out_triggered[$sequence].time"
+        Test-NumberParity (Get-Property $event 'bid') (Get-Property $episodeRecord 'TriggerBid') "stop_out_triggered[$sequence].bid"
+        Test-NumberParity (Get-Property $event 'ask') (Get-Property $episodeRecord 'TriggerAsk') "stop_out_triggered[$sequence].ask"
+        foreach ($pair in @(@('balance', 'Balance'), @('floatingProfit', 'FloatingProfit'), @('equity', 'Equity'),
+                @('usedMargin', 'UsedMargin'), @('freeMargin', 'FreeMargin'), @('marginLevelPercent', 'MarginLevelPercent'),
+                @('openPositions', 'OpenPositions'))) {
+            Test-NumberParity (Get-Property $event $pair[0]) (Get-Property $atTrigger $pair[1]) "stop_out_triggered[$sequence].AtTrigger.$($pair[1])"
+        }
+        $hasExtendedPayload = $false
+        foreach ($field in $stopOutExtendedFields) { if (Has-Property $event $field) { $hasExtendedPayload = $true } }
+        if ($hasExtendedPayload) {
+            Test-TextParity (Get-Property $event 'outcome') (Get-Property $episodeRecord 'Outcome') "stop_out_triggered[$sequence].outcome"
+            Test-TimeParity (Get-Property $event 'resolvedTime') (Get-Property $episodeRecord 'ResolvedTime') "stop_out_triggered[$sequence].resolvedTime"
+            $afterLiquidation = Get-Property $episodeRecord 'AfterLiquidation'
+            foreach ($field in @('Balance', 'FloatingProfit', 'Equity', 'UsedMargin', 'FreeMargin', 'MarginLevelPercent', 'OpenPositions')) {
+                Test-NumberParity (Get-Property $event ('after' + $field)) (Get-Property $afterLiquidation $field) "stop_out_triggered[$sequence].AfterLiquidation.$field"
+            }
+        }
+    }
+
+    # F. Rejections: every RejectionTrace row of every closed basket and of the open basket must
+    # have exactly one live entry_rejected event (the first attempt) and exactly one run-end
+    # entry_rejection_summary recap. The live event carries the attempt requirement and margin
+    # assessment; the summary carries the episode identity and aggregates.
+    $rejectionTraceRows = New-Object System.Collections.Generic.List[object]
+    foreach ($basketRecord in $expectedBasketRecords) {
+        foreach ($rejectionRow in @(Get-Property $basketRecord 'RejectionTrace')) {
+            [void]$rejectionTraceRows.Add($rejectionRow)
+        }
+    }
+    $rejectionSummaryEvents = @(Get-EventsOfType 'entry_rejection_summary')
+    $entryRejectedEvents = @(Get-EventsOfType 'entry_rejected')
+    Test-ParityCheck ($rejectionSummaryEvents.Count -eq $rejectionTraceRows.Count) `
+        "entry_rejection_summary parity: the package has $($rejectionSummaryEvents.Count) summaries but the authoritative RejectionTrace row count is $($rejectionTraceRows.Count)"
+    Test-ParityCheck ($entryRejectedEvents.Count -eq $rejectionTraceRows.Count) `
+        "entry_rejected parity: the package has $($entryRejectedEvents.Count) live rejections but the authoritative RejectionTrace row count is $($rejectionTraceRows.Count)"
+    foreach ($rejectionRow in $rejectionTraceRows) {
+        $sequence = [long](Get-Property $rejectionRow 'Basket')
+        $tradeNumber = [long](Get-Property $rejectionRow 'TradeNumber')
+        $side = [string](Get-Property $rejectionRow 'Side')
+        $identity = "$sequence/$tradeNumber/$side"
+        $summaryMatches = @($rejectionSummaryEvents | Where-Object {
+                [long](Get-Property $_ 'basket') -eq $sequence -and
+                [long](Get-Property $_ 'tradeNumber') -eq $tradeNumber -and
+                ([string](Get-Property $_ 'side')) -ceq $side
+            })
+        Test-ParityCheck ($summaryMatches.Count -eq 1) "entry_rejection_summary parity: $($summaryMatches.Count) summaries match rejection row $identity, expected exactly one"
+        if ($summaryMatches.Count -ge 1) {
+            $summary = $summaryMatches[0]
+            Test-NumberParity (Get-Property $summary 'basket') $sequence "entry_rejection_summary[$identity].basket"
+            Test-NumberParity (Get-Property $summary 'tradeNumber') $tradeNumber "entry_rejection_summary[$identity].tradeNumber"
+            Test-TextParity (Get-Property $summary 'side') $side "entry_rejection_summary[$identity].side"
+            Test-TextParity (Get-Property $summary 'reason') (Get-Property $rejectionRow 'Reason') "entry_rejection_summary[$identity].reason"
+            Test-TextParity (Get-Property $summary 'outcome') (Get-Property $rejectionRow 'Outcome') "entry_rejection_summary[$identity].outcome"
+            Test-NumberParity (Get-Property $summary 'attempts') (Get-Property $rejectionRow 'Attempts') "entry_rejection_summary[$identity].attempts"
+            Test-NumberParity (Get-Property $summary 'firstQuoteSequence') (Get-Property $rejectionRow 'FirstQuoteSequence') "entry_rejection_summary[$identity].firstQuoteSequence"
+            Test-TimeParity (Get-Property $summary 'firstTime') (Get-Property $rejectionRow 'FirstTime') "entry_rejection_summary[$identity].firstTime"
+            Test-NumberParity (Get-Property $summary 'firstBid') (Get-Property $rejectionRow 'FirstBid') "entry_rejection_summary[$identity].firstBid"
+            Test-NumberParity (Get-Property $summary 'firstAsk') (Get-Property $rejectionRow 'FirstAsk') "entry_rejection_summary[$identity].firstAsk"
+            Test-NumberParity (Get-Property $summary 'lastQuoteSequence') (Get-Property $rejectionRow 'LastQuoteSequence') "entry_rejection_summary[$identity].lastQuoteSequence"
+            Test-TimeParity (Get-Property $summary 'lastTime') (Get-Property $rejectionRow 'LastTime') "entry_rejection_summary[$identity].lastTime"
+            Test-NumberParity (Get-Property $summary 'lastBid') (Get-Property $rejectionRow 'LastBid') "entry_rejection_summary[$identity].lastBid"
+            Test-NumberParity (Get-Property $summary 'lastAsk') (Get-Property $rejectionRow 'LastAsk') "entry_rejection_summary[$identity].lastAsk"
+            Test-TextParity (Get-Property $summary 'parityHash') (Get-Property $rejectionRow 'ParityHash') "entry_rejection_summary[$identity].parityHash"
+            Test-TextParity (Get-Property $summary 'parityAlgorithm') (Get-Property $rejectionRow 'ParityAlgorithm') "entry_rejection_summary[$identity].parityAlgorithm"
+            Test-TextParity (Get-Property $summary 'message') (Get-Property $rejectionRow 'Message') "entry_rejection_summary[$identity].message"
+            Test-NumberParity (Get-Property $summary 'minNormalizedRequiredLots') (Get-Property $rejectionRow 'MinNormalizedRequiredLots') "entry_rejection_summary[$identity].minNormalizedRequiredLots"
+            Test-NumberParity (Get-Property $summary 'maxNormalizedRequiredLots') (Get-Property $rejectionRow 'MaxNormalizedRequiredLots') "entry_rejection_summary[$identity].maxNormalizedRequiredLots"
+            Test-NumberParity (Get-Property $summary 'minProjectedFreeMargin') (Get-Property $rejectionRow 'MinProjectedFreeMargin') "entry_rejection_summary[$identity].minProjectedFreeMargin"
+            Test-NumberParity (Get-Property $summary 'maxProjectedFreeMargin') (Get-Property $rejectionRow 'MaxProjectedFreeMargin') "entry_rejection_summary[$identity].maxProjectedFreeMargin"
+            # If a package ever carries the attempt requirement/margin fields on the summary too,
+            # they are compared as well (the committed recorder puts them on the live event only).
+            foreach ($pair in @(@('rawRequestedLots', 'RawRequestedLots'), @('exactRequiredLots', 'ExactRequiredLots'),
+                    @('normalizedRequiredLots', 'NormalizedRequiredLots'), @('hardBreakevenTarget', 'HardBreakevenTarget'),
+                    @('targetSpread', 'TargetSpread'), @('targetBid', 'TargetBid'), @('targetAsk', 'TargetAsk'),
+                    @('existingProfitAtTarget', 'ExistingProfitAtTarget'), @('marginalProfitPerLot', 'MarginalProfitPerLot'),
+                    @('projectedProfitAfter', 'ProjectedProfitAfter'), @('accountUsedMargin', 'AccountUsedMargin'),
+                    @('accountFreeMargin', 'AccountFreeMargin'), @('accountMarginLevelPercent', 'AccountMarginLevelPercent'),
+                    @('projectedUsedMargin', 'ProjectedUsedMargin'), @('projectedFreeMargin', 'ProjectedFreeMargin'))) {
+                if (Has-Property $summary $pair[0]) {
+                    Test-NumberParity (Get-Property $summary $pair[0]) (Get-Property $rejectionRow $pair[1]) "entry_rejection_summary[$identity].$($pair[0])"
+                }
+            }
+        }
+        $liveMatches = @($entryRejectedEvents | Where-Object {
+                [long](Get-Property $_ 'basket') -eq $sequence -and
+                [long](Get-Property $_ 'tradeNumber') -eq $tradeNumber -and
+                ([string](Get-Property $_ 'side')) -ceq $side
+            })
+        Test-ParityCheck ($liveMatches.Count -eq 1) "entry_rejected parity: $($liveMatches.Count) live rejections match rejection row $identity, expected exactly one"
+        if ($liveMatches.Count -ge 1) {
+            $live = $liveMatches[0]
+            Test-NumberParity (Get-Property $live 'basket') $sequence "entry_rejected[$identity].basket"
+            Test-NumberParity (Get-Property $live 'tradeNumber') $tradeNumber "entry_rejected[$identity].tradeNumber"
+            Test-TextParity (Get-Property $live 'side') $side "entry_rejected[$identity].side"
+            Test-TextParity (Get-Property $live 'reason') (Get-Property $rejectionRow 'Reason') "entry_rejected[$identity].reason"
+            Test-NumberParity (Get-Property $live 'quoteSequence') (Get-Property $rejectionRow 'FirstQuoteSequence') "entry_rejected[$identity].quoteSequence"
+            Test-TimeParity (Get-Property $live 'time') (Get-Property $rejectionRow 'FirstTime') "entry_rejected[$identity].time"
+            Test-NumberParity (Get-Property $live 'bid') (Get-Property $rejectionRow 'FirstBid') "entry_rejected[$identity].bid"
+            Test-NumberParity (Get-Property $live 'ask') (Get-Property $rejectionRow 'FirstAsk') "entry_rejected[$identity].ask"
+            Test-TextParity (Get-Property $live 'message') (Get-Property $rejectionRow 'Message') "entry_rejected[$identity].message"
+            foreach ($pair in @(@('rawRequestedLots', 'RawRequestedLots'), @('exactRequiredLots', 'ExactRequiredLots'),
+                    @('normalizedRequiredLots', 'NormalizedRequiredLots'), @('hardBreakevenTarget', 'HardBreakevenTarget'),
+                    @('targetSpread', 'TargetSpread'), @('targetBid', 'TargetBid'), @('targetAsk', 'TargetAsk'),
+                    @('existingProfitAtTarget', 'ExistingProfitAtTarget'), @('marginalProfitPerLot', 'MarginalProfitPerLot'),
+                    @('projectedProfitAfter', 'ProjectedProfitAfter'), @('accountUsedMargin', 'AccountUsedMargin'),
+                    @('accountFreeMargin', 'AccountFreeMargin'), @('accountMarginLevelPercent', 'AccountMarginLevelPercent'),
+                    @('projectedUsedMargin', 'ProjectedUsedMargin'), @('projectedFreeMargin', 'ProjectedFreeMargin'))) {
+                Test-NumberParity (Get-Property $live $pair[0]) (Get-Property $rejectionRow $pair[1]) "entry_rejected[$identity].$($pair[0])"
+            }
+        }
+    }
+
+    # G. Hard-BE activation: every basket whose authoritative record activated hard-BE mode has
+    # exactly one hard_breakeven_activated event, published at the first hard-BE-regime entry
+    # (the engine removes liquidated legs from LegTrace, so the first hard-BE entry is the lowest
+    # trade number across LegTrace and LiquidationTrace), or at the first rejected attempt when
+    # the activation attempt was rejected, with both hard-BE boundaries equal to the anchor's.
+    $hardBreakevenEvents = @(Get-EventsOfType 'hard_breakeven_activated')
+    $hardBreakevenBaskets = @($expectedBasketRecords | Where-Object { [bool](Get-Property $_ 'HardBreakevenModeActive') })
+    Test-ParityCheck ($hardBreakevenEvents.Count -eq $hardBreakevenBaskets.Count) `
+        "hard_breakeven_activated parity: the package has $($hardBreakevenEvents.Count) activations but the authoritative HardBreakevenModeActive basket count is $($hardBreakevenBaskets.Count)"
+    foreach ($basketRecord in $hardBreakevenBaskets) {
+        $sequence = [long](Get-Property $basketRecord 'Sequence')
+        $matches = @($hardBreakevenEvents | Where-Object { [long](Get-Property $_ 'basket') -eq $sequence })
+        Test-ParityCheck ($matches.Count -eq 1) "hard_breakeven_activated parity: $($matches.Count) events for hard-BE basket $sequence, expected exactly one"
+        if ($matches.Count -lt 1) { continue }
+        $event = $matches[0]
+        $referenceTradeNumber = $null
+        $referenceTime = $null
+        $firstHardBreakevenLeg = $null
+        foreach ($legRow in @(Get-Property $basketRecord 'LegTrace')) {
+            if (([string](Get-Property $legRow 'Regime')) -cne 'HardBreakeven') { continue }
+            $tradeNumberCandidate = [long](Get-Property $legRow 'TradeNumber')
+            if ($null -eq $firstHardBreakevenLeg -or $tradeNumberCandidate -lt $firstHardBreakevenLeg) {
+                $firstHardBreakevenLeg = $tradeNumberCandidate
+                $referenceTradeNumber = $tradeNumberCandidate
+                $referenceTime = Get-Property $legRow 'Time'
+            }
+        }
+        foreach ($liquidationRow in @(Get-Property $basketRecord 'LiquidationTrace')) {
+            if (([string](Get-Property $liquidationRow 'Regime')) -cne 'HardBreakeven') { continue }
+            $tradeNumberCandidate = [long](Get-Property $liquidationRow 'TradeNumber')
+            if ($null -eq $firstHardBreakevenLeg -or $tradeNumberCandidate -lt $firstHardBreakevenLeg) {
+                $firstHardBreakevenLeg = $tradeNumberCandidate
+                $referenceTradeNumber = $tradeNumberCandidate
+                $referenceTime = Get-Property $liquidationRow 'EntryTime'
+            }
+        }
+        if ($null -eq $referenceTradeNumber) {
+            $rejectionRows = @(Get-Property $basketRecord 'RejectionTrace')
+            if ($rejectionRows.Count -ge 1) {
+                $firstRejection = $rejectionRows[0]
+                $referenceTradeNumber = [long](Get-Property $firstRejection 'TradeNumber')
+                $referenceTime = Get-Property $firstRejection 'FirstTime'
+            }
+        }
+        if ($null -eq $referenceTradeNumber) {
+            Add-Failure "hard_breakeven_activated parity: basket $sequence has no HardBreakeven entry or RejectionTrace row to locate its activation attempt"
+            continue
+        }
+        Test-NumberParity (Get-Property $event 'tradeNumber') $referenceTradeNumber "hard_breakeven_activated[$sequence].tradeNumber"
+        Test-TimeParity (Get-Property $event 'time') $referenceTime "hard_breakeven_activated[$sequence].time"
+        $anchor = Get-Property $basketRecord 'AnchorEvent'
+        Test-NumberParity (Get-Property $event 'lowerTarget') (Get-Property $anchor 'LowerTarget') "hard_breakeven_activated[$sequence].lowerTarget"
+        Test-NumberParity (Get-Property $event 'upperTarget') (Get-Property $anchor 'UpperTarget') "hard_breakeven_activated[$sequence].upperTarget"
+    }
+
+    # H. run_ended account snapshot: the event's telemetry snapshot must be the final research
+    # account and margin state. It is looked up after the telemetry scan below.
 
     # Telemetry: event coverage, periodic bound, exact decimal strings, time order.
-    $telemetryFiles = @(Get-ChildItem -LiteralPath $replayDirectory -Filter 'telemetry-*.jsonl' | Sort-Object Name)
-    Test-Check ($telemetryFiles.Count -ge 1) "no telemetry shard exists"
-    $manifestTelemetryNames = @($fileRows | Where-Object { ([string](Get-Property $_ 'name')).StartsWith('telemetry-') } | ForEach-Object { [string](Get-Property $_ 'name') })
-    $diskTelemetryNames = @($telemetryFiles | ForEach-Object { $_.Name })
-    Test-Check (($diskTelemetryNames -join ',') -eq ($manifestTelemetryNames -join ',')) `
+    $telemetryFileNames = @($fileRows | Where-Object { ([string](Get-Property $_ 'name')).StartsWith('telemetry-') } | ForEach-Object { [string](Get-Property $_ 'name') })
+    $diskTelemetryFiles = @(Get-ChildItem -LiteralPath $replayDirectory -Filter 'telemetry-*.jsonl' | Sort-Object Name)
+    $diskTelemetryNames = @($diskTelemetryFiles | ForEach-Object { $_.Name })
+    Test-Check ($diskTelemetryNames.Count -ge 1) "no telemetry shard exists"
+    Test-Check (($diskTelemetryNames -join ',') -eq ($telemetryFileNames -join ',')) `
         "the on-disk telemetry shards do not match the manifest file list"
+    $telemetryInterval = Get-Property $manifest 'telemetryIntervalSeconds'
+    Test-Check ([decimal]$telemetryInterval -eq 300) "manifest.telemetryIntervalSeconds is not the fixed 300"
     $snapshotIds = New-Object System.Collections.Generic.HashSet[long]
+    $snapshotByEventId = @{}
     $periodic = 0
     $eventSnapshots = 0
     $previousTelemetryTime = $null
-    foreach ($file in $telemetryFiles) {
-        foreach ($row in @(Read-JsonLines $file.FullName)) {
+    $lastPeriodicTime = $null
+    foreach ($telemetryName in $telemetryFileNames) {
+        $telemetryPath = Join-Path $replayDirectory $telemetryName
+        if (-not (Test-Path -LiteralPath $telemetryPath -PathType Leaf)) {
+            Add-Failure "the manifest lists a missing telemetry shard: $telemetryName"
+            continue
+        }
+        foreach ($row in @(Read-JsonLines $telemetryPath)) {
             $kind = [string](Get-Property $row 'kind')
             if ($kind -ne 'event' -and $kind -ne 'periodic') { Add-Failure "unknown telemetry kind '$kind'"; continue }
-            foreach ($field in $requiredDecimalFields) { Assert-ExactString $row $field "telemetry[$($file.Name)] kind=$kind" $true }
-            foreach ($field in $nullableDecimalFields) { Assert-ExactString $row $field "telemetry[$($file.Name)] kind=$kind" $false }
+            $openPositions = [int](Get-Property $row 'openPositions')
+            if ($openPositions -eq 0) { $lastPeriodicTime = $null }
+            foreach ($field in $requiredDecimalFields) { Assert-ExactString $row $field "telemetry[$telemetryName] kind=$kind" $true }
+            foreach ($field in $nullableDecimalFields) { Assert-ExactString $row $field "telemetry[$telemetryName] kind=$kind" $false }
             try {
                 $time = Convert-UtcTime (Get-Property $row 'time') "telemetry.time"
                 if ($null -ne $previousTelemetryTime -and $time -lt $previousTelemetryTime) {
                     Add-Failure "telemetry goes backwards in time at $($time.ToString('o'))"
                 }
                 $previousTelemetryTime = $time
+                if ($kind -eq 'periodic') {
+                    $periodic++
+                    if ($openPositions -le 0) {
+                        Add-Failure "a periodic telemetry sample was taken with no open position"
+                    }
+                    if ($null -ne (Get-Property $row 'eventId')) {
+                        Add-Failure "a periodic telemetry sample carries an eventId"
+                    }
+                    if ($null -ne $lastPeriodicTime) {
+                        $delta = ($time - $lastPeriodicTime).TotalSeconds
+                        if ($delta -lt [double]$telemetryInterval) {
+                            Add-Failure "periodic telemetry at $($time.ToString('o')) is only $delta simulated seconds after the previous periodic sample (minimum $telemetryInterval)"
+                        }
+                    }
+                    $lastPeriodicTime = $time
+                }
+                else {
+                    $eventSnapshots++
+                    $eventId = Get-Property $row 'eventId'
+                    if ($null -eq $eventId) { Add-Failure "an event telemetry snapshot has no eventId"; continue }
+                    if (-not $snapshotIds.Add([long]$eventId)) { Add-Failure "duplicate eventId telemetry snapshot for event $eventId" }
+                    if (-not $snapshotByEventId.ContainsKey([long]$eventId)) { $snapshotByEventId[[long]$eventId] = $row }
+                }
             }
             catch { Add-Failure $_.Exception.Message }
-            if ($kind -eq 'periodic') {
-                $periodic++
-                if ([int](Get-Property $row 'openPositions') -le 0) {
-                    Add-Failure "a periodic telemetry sample was taken with no open position"
-                }
-                if ($null -ne (Get-Property $row 'eventId')) {
-                    Add-Failure "a periodic telemetry sample carries an eventId"
-                }
-            }
-            else {
-                $eventSnapshots++
-                $eventId = Get-Property $row 'eventId'
-                if ($null -eq $eventId) { Add-Failure "an event telemetry snapshot has no eventId"; continue }
-                [void]$snapshotIds.Add([long]$eventId)
-            }
         }
     }
     [int]$snapshotEvents = 0
@@ -402,12 +1132,40 @@ try {
     Test-Check ((Get-Property $manifestTelemetry 'event') -eq $eventSnapshots) "manifest telemetry event count does not match the telemetry file"
     Test-Check ((Get-Property $manifestTelemetry 'periodic') -eq $periodic) "manifest telemetry periodic count does not match the telemetry file"
 
+    # H (continued). run_ended account snapshot against the final research account and margin state.
+    $runEndedId = [long](Get-Property $runEnded 'id')
+    if (-not $snapshotByEventId.ContainsKey($runEndedId)) {
+        Add-Failure "run_ended parity: the run_ended event has no telemetry account snapshot"
+    }
+    else {
+        $runEndedSnapshot = $snapshotByEventId[$runEndedId]
+        $researchAccount = Get-Property $results 'researchAccount'
+        if ($null -eq $researchAccount) { Add-Failure "run_ended parity: results.researchAccount is missing" }
+        else {
+            foreach ($pair in @(@('balance', 'Balance'), @('equity', 'Equity'), @('floatingProfit', 'FloatingProfit'),
+                    @('realizedProfit', 'RealizedProfit'), @('openPositions', 'CurrentOpenPositions'),
+                    @('grossLots', 'CurrentGrossLots'), @('absoluteNetLots', 'CurrentAbsoluteNetLots'))) {
+                Test-NumberParity (Get-Property $runEndedSnapshot $pair[0]) (Get-Property $researchAccount $pair[1]) "run_ended snapshot.$($pair[0])"
+            }
+        }
+        if ($null -eq $margin) { Add-Failure "run_ended parity: results.researchMargin is missing" }
+        else {
+            foreach ($pair in @(@('usedMargin', 'CurrentUsedMargin'), @('freeMargin', 'CurrentFreeMargin'),
+                    @('marginLevelPercent', 'CurrentMarginLevelPercent'))) {
+                Test-NumberParity (Get-Property $runEndedSnapshot $pair[0]) (Get-Property $margin $pair[1]) "run_ended snapshot.$($pair[0])"
+            }
+            Test-BoolParity (Get-Property $runEndedSnapshot 'marginCallActive') (Get-Property $margin 'MarginCallActive') "run_ended snapshot.marginCallActive"
+        }
+    }
+
     $summary = [ordered]@{
         contract = 'marketlab-single-anchor-replay-package-verification-v1'
         runDirectory = $run
-        pass = ($failures.Count -eq 0)
-        checks = $checks
-        failures = @($failures)
+        pass = ($script:failures.Count -eq 0)
+        checks = $script:checks
+        parityChecks = $script:parityChecks
+        failures = @($script:failures)
+        failuresTruncated = $script:failuresTruncated
         resultsSha256 = $resultsSha256
         expectedResultsSha256 = if ($ExpectedResultsSha256) { $ExpectedResultsSha256.ToLowerInvariant() } else { $null }
         resultsBoundToPhaseD = if ($ExpectedResultsSha256) { $resultsSha256 -eq $ExpectedResultsSha256.ToLowerInvariant() } else { $null }
@@ -416,17 +1174,17 @@ try {
         eventTypes = $eventCounts
         telemetryEventSnapshots = $eventSnapshots
         telemetryPeriodicSamples = $periodic
-        telemetryShards = @($telemetryFiles | ForEach-Object { $_.Name })
+        telemetryShards = @($telemetryFileNames)
         packageFiles = @($fileRows | ForEach-Object { [ordered]@{ name = (Get-Property $_ 'name'); sha256 = (Get-Property $_ 'sha256'); bytes = (Get-Property $_ 'bytes') } })
     }
     $json = ($summary | ConvertTo-Json -Depth 8)
     [System.IO.File]::WriteAllText($OutputPath, $json + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
-    if ($failures.Count -eq 0) {
-        Write-Output "PASS: replay package verified ($checks checks); results $resultsSha256; package $($summary.packageSha256); $($events.Count) events; $eventSnapshots event snapshots; $periodic periodic samples."
+    if ($script:failures.Count -eq 0) {
+        Write-Output "PASS: replay package verified ($($script:checks) checks, $($script:parityChecks) payload-parity comparisons); results $resultsSha256; package $($summary.packageSha256); $($events.Count) events; $eventSnapshots event snapshots; $periodic periodic samples."
         exit 0
     }
-    Write-Output "FAIL: replay package verification found $($failures.Count) problem(s) in $checks checks:"
-    foreach ($failure in $failures) { Write-Output "  - $failure" }
+    Write-Output "FAIL: replay package verification found $($script:failures.Count) problem(s) in $($script:checks) checks ($($script:parityChecks) payload-parity comparisons):"
+    foreach ($failure in $script:failures) { Write-Output "  - $failure" }
     exit 1
 }
 catch {

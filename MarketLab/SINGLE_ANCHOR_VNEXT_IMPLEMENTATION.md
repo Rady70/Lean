@@ -360,7 +360,9 @@ exact invocation is recorded in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md).
 - **Financing / swap** until continuous financing behaviour is specified: the
   single-anchor engine currently rejects non-zero swap configurations instead
   of allowing the hard ceiling to drift after a tail entry.
-- Replay, optimization, UI, charting, live trading, broker connectivity.
+- Parameter optimization, UI/charting (LuxAlgo and Fincept), live trading and
+  broker connectivity. (The Phase E authoritative replay export is implemented
+  and qualified; section 17.)
 - A full performance report (equity curve, basket-depth distribution, the
   first full-history baseline tables) and the Python/MT5 parity comparison from
   the strategy's own results; PR 2 adds the run-level account values and the
@@ -2053,8 +2055,16 @@ review. Phase F-I have not started.**
   the engine's risk guard) and saves the package after `results.json`.
   `ResearchAccount.cs` gains four read-only accessors
   (`CurrentUsedMargin`, `CurrentFreeMargin`, `CurrentMarginLevelPercent`,
-  `MarginCallActive`) used only by the recorder. The recorder is fault-guarded:
-  a recorder defect refuses the package build instead of aborting the run.
+  `MarginCallActive`) used only by the recorder. The engine raises an
+  observational `HardBreakevenActivated` event at the existing hard-BE mode
+  transition, before the first tail attempt is sized or placed, so the recorder's
+  activation snapshot is the exact **pre-attempt** state (trade 5 activation
+  snapshots show 4 open positions, not the post-fill 5). The recorder is
+  fault-guarded: a recorder defect refuses the package build instead of aborting
+  the run. Publication is fail-closed: the package is only attempted after
+  `results.json` persisted, every payload is saved before the manifest, and a
+  failed payload suppresses the manifest so an incomplete package is never
+  advertised.
 - **Validation and the Phase D binding.** The export run executed the frozen
   corrected-full-history command from the clean Phase E revision
   `c29770ef78a9ad85e3061460bde3ff664e764048`; the corrected-full-history
@@ -2077,23 +2087,40 @@ review. Phase F-I have not started.**
   (package SHA-256 `2e1865159d7eb0de095c50865c90df5a9eace5b41b555c6b396acde274e24957`).
   The frozen model is reproducible byte-for-byte at that bounded scope, and the
   full run additionally reproduced the Phase D result exactly.
-- **Tests.** 310/310 C# tests (9 new replay recorder tests plus a multi-year
-  shard test), PowerShell guards 40/40, invocation 12/12, failed-data 97/97,
-  availability 12/12, corrected-classifier 160/160, delivery end-to-end 40
-  checks, and 274/274 Python historical-data tests (the additive `candles`
-  subcommand derives the deterministic monthly M1 cache with positive/uncrossed
-  quote validation and a UTC data-time-zone precondition).
-- **Derived M1 candle cache.** The full cache was generated into
-  `E:\MarketLab\data\lean\xauusd-m1-candles`: 90 monthly CSVs, 2,332 partitions
-  and 413,750,130 source rows read, 2,655,664 candle rows, 172,160,895 bytes,
-  `content_sha256`
-  `ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d`. Because
-  the local command runner terminates a single command at about one hour, the
-  cache was produced in four contiguous ranges and merged byte-for-byte with a
-  verification script that recomputed the generator's manifest recipe; monthly
-  output is range-independent and the merged first (`2019-01`) and last
-  (`2026-06`) months were re-generated as single-range runs and are
-  byte-identical. The committed cache manifest is
+- **Tests.** 314/314 C# tests (17 new Phase E tests: recorder event/snapshot
+  ordering, the pre-attempt hard-BE activation snapshot on both the filled and
+  rejected tail paths, Margin Call transitions, Stop Out/forced/full
+  liquidation parity, failure identity, rejection recaps, manifest/decimals,
+  byte determinism, recorder-does-not-change-the-engine outcome, and the
+  fail-closed publisher), PowerShell guards 40/40, invocation 12/12,
+  failed-data 97/97, availability 12/12, corrected-classifier 160/160, delivery
+  end-to-end 40 checks, and 289/289 Python historical-data tests (the additive
+  `candles` subcommand with its fail-closed qualification preflight and
+  `verify-candles`). `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives
+  11 verifier mutation cases (trade number, fill price, forced-liquidation
+  ordinal and price, Stop Out time, same-quote reorder, manifest identity, file
+  hash, event deletion, snapshot deletion and an over-frequent periodic sample),
+  each of which the verifier rejects.
+- **Derived M1 candle cache (fail-closed provenance).** The cache was generated
+  into `E:\MarketLab\data\lean\xauusd-m1-candles`: 90 monthly CSVs, 2,332
+  partitions and 413,750,130 source rows read, 2,655,664 candle rows,
+  172,160,895 bytes, `content_sha256`
+  `ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d`.
+  Generation now requires the qualified composition and a PASS qualification
+  record bound to the actual composition hash, requires the on-disk partition
+  set to equal the composition exactly, and verifies each selected partition's
+  `zip_sha256` plus its member name/size/row count and member SHA-256 while
+  reading. Month independence only holds for month-aligned `--start/--end`
+  bounds; a mid-month bound produces a partial-month file. Because the local
+  command runner terminates a single command at about one hour, the cache was
+  produced in four contiguous month-aligned ranges and merged byte-for-byte with
+  a reviewed merge-verification step that recomputes the generator's manifest
+  recipe; the component ranges and manifests are preserved in the committed
+  evidence. The existing cache is certified by the new
+  `verify-candles --data-folder <tree> --cache <dir>` command: 2,332/2,332
+  partition zip hashes and partition set verified, 9/9 cache checks passed, and
+  the certification record is committed with the evidence. The committed cache
+  manifest is
   `evidence/20261001-phase-e-replay-export/candle-cache-manifest.json`.
 - **Evidence and records.** Compact evidence with a SHA-256 manifest is under
   `evidence/20261001-phase-e-replay-export/`; the result record is
