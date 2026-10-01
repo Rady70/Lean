@@ -43,7 +43,9 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `scripts\Build-SingleAnchorBaseline.ps1` | rebuilds an explicitly reviewed clean revision and records the source, contract and complete runtime dependency identity |
 | `scripts\Test-SingleAnchorBaselineFailedData.ps1` | classifies every failed data request of a baseline run against the frozen contract and the qualified continuous tree |
 | `scripts\Test-SingleAnchorCorrectedFullHistory.ps1` | preflight and post-run classification of the corrected full-history (Phase D) run: descriptor and frozen pins, source-bound build, complete qualified tree, current-model delivery (full stream or exact terminal prefix) and failed-data reconciliation |
-| `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
+| `REPLAY_PACKAGE.md` | the Phase E authoritative replay package contract: files, event stream, bounded account telemetry, determinism/provenance, the Phase D binding and the candle/authority separation |
+| `scripts\Test-SingleAnchorReplayPackage.ps1` | the Phase E package verifier: manifest/file hashes, package fingerprint, identity and counters against `results.json`, event order/counts, exact-decimal strings, telemetry coverage/periodic bound and the optional Phase D `results.json` binding |
+| `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm and the Phase E replay recorder/package writer) |
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
 | `tests\SingleAnchor\BaselineDecisionAuditTests.cs` | the Windows-local drift check for the audit register, the implementation defaults and the PR #13 evidence |
 | `tests\SingleAnchor\BaselineContractTests.cs` | the Windows-local checks for the frozen contract: completeness, values, identity, invocation, data/margin identity and run policy |
