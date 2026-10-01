@@ -752,6 +752,39 @@ deterministic JSON verification record (otherwise it prints it); it exits 0 on
 PASS, 1 on a verification failure, and 2 for a usage or source-configuration
 error.
 
+The full cache is produced in month-aligned chunks and merged by a documented
+recipe: copy every part's monthly CSV byte-for-byte, concatenate the part
+manifests' `files` records sorted by `name`, sum the four totals, set
+`start_date`/`end_date` to the union bounds, carry the identical part `inputs`
+identity, and recompute `content_sha256` over the ordered
+`name\0sha256\0bytes\n` rows. `python -m marketlab_historical_data
+verify-candle-composition` independently verifies that merge:
+
+```powershell
+python -m marketlab_historical_data verify-candle-composition `
+    --cache E:\MarketLab\data\lean\xauusd-m1-candles `
+    --parts E:\MarketLab\data\lean\_candles-parts\partA,E:\MarketLab\data\lean\_candles-parts\partB,E:\MarketLab\data\lean\_candles-parts\partC,E:\MarketLab\data\lean\_candles-parts\partD `
+    --output E:\MarketLab\data\lean\candle-composition-verification.json
+```
+
+It requires every part manifest to be a valid
+`marketlab-xauusd-m1-candle-cache-v1` manifest with month-aligned start/end
+dates and strictly increasing, exactly adjacent part ranges (the next part
+starts the month after the previous ends); the union of part file names must
+equal the final file set exactly (no gap, overlap, duplicate, extra or missing
+month); every file's part and final records must agree on `name`, `sha256`,
+`bytes`, `rows`, `first_candle_utc` and `last_candle_utc`, and the final CSV
+bytes must hash to that `sha256`; all parts' `inputs` identities (composition
+SHA-256, qualification-record SHA-256 when the schema carries it, and
+`data_folder_name`) must be identical and match the final manifest; the final
+`totals.partitions`, `totals.source_rows`, `totals.candle_rows` and
+`totals.candle_bytes` must equal the part sums; and the final `content_sha256`
+must recompute over the final ordered records. With `--output` it writes a
+deterministic JSON record (contract
+`marketlab-xauusd-m1-candle-composition-v1`, folder names only, no wall clock),
+otherwise it prints it; it exits 0 on PASS, 1 on a verification failure, and 2
+for a usage or configuration error.
+
 Candles are derived visualization/index data. Executions, events and account
 snapshots remain the authoritative LEAN output, and the qualified native
 partitions (section 10) remain the qualified source: the cache does not

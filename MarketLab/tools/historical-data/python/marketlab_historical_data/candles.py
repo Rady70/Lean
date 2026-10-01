@@ -54,7 +54,10 @@ The generator never writes into the source data folder; it reads one native zip
 at a time and builds each month's CSV in memory (about 2 MB per month).
 ``verify-candles`` re-runs the source preflight over every partition and checks
 the cache manifest, every monthly CSV and the source totals without deriving
-candles.
+candles. ``verify-candle-composition`` verifies that a merged final cache is
+the month-aligned, contiguous, non-overlapping union of its part caches,
+including the per-file records, totals, source identity and recomputed
+``content_sha256``.
 """
 
 from __future__ import annotations
@@ -64,7 +67,7 @@ import json
 import re
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, localcontext
 from pathlib import Path
 
@@ -80,15 +83,19 @@ from .transactions import OutputTransaction, OutputTransactionError
 
 __all__ = [
     "CANDLE_CONTRACT",
+    "COMPOSITION_VERIFICATION_CONTRACT",
     "VERIFICATION_CONTRACT",
     "CandleCacheError",
     "CandleCacheOutcome",
+    "CandleCompositionOutcome",
     "CandleVerificationOutcome",
     "generate_candles",
+    "verify_candle_composition",
     "verify_candles",
 ]
 
 CANDLE_CONTRACT = "marketlab-xauusd-m1-candle-cache-v1"
+COMPOSITION_VERIFICATION_CONTRACT = "marketlab-xauusd-m1-candle-composition-v1"
 VERIFICATION_CONTRACT = "marketlab-xauusd-m1-candle-verification-v1"
 SYMBOL = "XAUUSD"
 MARKET = "dukascopy"
@@ -127,6 +134,15 @@ class CandleCacheOutcome:
 
 class CandleVerificationOutcome:
     """Result of one candle-cache verification attempt."""
+
+    def __init__(self, exit_code: int, failures, record):
+        self.exit_code = exit_code
+        self.failures = list(failures)
+        self.record = record
+
+
+class CandleCompositionOutcome:
+    """Result of one merged-cache composition verification attempt."""
 
     def __init__(self, exit_code: int, failures, record):
         self.exit_code = exit_code
@@ -1128,3 +1144,508 @@ def verify_candles(data_folder: Path, cache: Path) -> CandleVerificationOutcome:
     }
     exit_code = 0 if not failures else 1
     return CandleVerificationOutcome(exit_code, failures, record)
+
+
+COMPOSITION_FILE_AGREEMENT_FIELDS = (
+    "name",
+    "sha256",
+    "bytes",
+    "rows",
+    "first_candle_utc",
+    "last_candle_utc",
+)
+COMPOSITION_TOTAL_FIELDS = ("partitions", "source_rows", "candle_rows", "candle_bytes")
+COMPOSITION_INPUT_IDENTITY_FIELDS = (
+    "composition_sha256",
+    "qualification_record_sha256",
+    "data_folder_name",
+)
+
+
+def _month_first_day(index: int) -> date:
+    year, month = divmod(index - 1, 12)
+    return date(year, month + 1, 1)
+
+
+def _month_last_day(index: int) -> date:
+    return _month_first_day(index + 1) - timedelta(days=1)
+
+
+def _manifest_input_identity(manifest: dict) -> dict:
+    inputs = manifest.get("inputs")
+    composition = inputs.get("composition") if isinstance(inputs, dict) else None
+    qualification_record = inputs.get("qualification_record") if isinstance(inputs, dict) else None
+    return {
+        "composition_sha256": (
+            composition.get("sha256") if isinstance(composition, dict) else None
+        ),
+        "qualification_record_sha256": (
+            qualification_record.get("sha256")
+            if isinstance(qualification_record, dict)
+            else None
+        ),
+        "data_folder_name": (
+            inputs.get("data_folder_name") if isinstance(inputs, dict) else None
+        ),
+    }
+
+
+def _read_candle_manifest(directory: Path, label: str):
+    """Returns (manifest, sha256, failure) with no absolute path in the failure text."""
+    manifest_file = Path(directory) / MANIFEST_NAME
+    relative = f"{label}/{MANIFEST_NAME}"
+    if not manifest_file.is_file():
+        return None, None, f"CacheManifestMissing: {relative}"
+    try:
+        manifest_sha256 = sha256_file(manifest_file)
+        payload = json.loads(manifest_file.read_text(encoding="utf-8-sig"))
+    except OSError as error:
+        detail = error.strerror or type(error).__name__
+        return None, None, f"CacheManifestUnreadable: {relative}: {detail}"
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return None, None, f"CacheManifestUnreadable: {relative}: {error}"
+    if not isinstance(payload, dict):
+        return None, manifest_sha256, f"CacheManifestNotAnObject: {relative}"
+    if payload.get("contract") != CANDLE_CONTRACT:
+        return None, manifest_sha256, (
+            f"CacheManifestContractMismatch: {relative}: expected {CANDLE_CONTRACT}, "
+            f"found {payload.get('contract')!r}"
+        )
+    return payload, manifest_sha256, None
+
+
+def _record_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def verify_candle_composition(cache: Path, parts) -> CandleCompositionOutcome:
+    """Verifies a merged cache is the month-aligned contiguous union of its parts."""
+    cache = Path(cache)
+    part_paths = [Path(part) for part in parts]
+    if not cache.is_dir():
+        return CandleCompositionOutcome(2, [f"CacheFolderNotFound: {cache}"], None)
+    if not part_paths:
+        return CandleCompositionOutcome(
+            2, ["NoPartsSupplied: at least one --parts directory is required"], None
+        )
+    for part in part_paths:
+        if not part.is_dir():
+            return CandleCompositionOutcome(2, [f"PartFolderNotFound: {part}"], None)
+
+    checks = {
+        "part_manifests": True,
+        "final_manifest": True,
+        "part_month_ranges": True,
+        "file_name_union": True,
+        "file_record_agreement": True,
+        "final_file_hashes": True,
+        "part_input_identity": True,
+        "total_sums": True,
+        "final_content_sha256": True,
+        "final_window": True,
+    }
+    failures: list[str] = []
+
+    def fail(check: str, message: str) -> None:
+        checks[check] = False
+        failures.append(message)
+
+    part_entries: list[dict] = []
+    part_manifests: list[dict | None] = []
+    part_files: list[dict] = []
+    part_ranges: list[tuple[int, int] | None] = []
+    for index, part in enumerate(part_paths):
+        label = part.name or f"part{index}"
+        manifest, manifest_sha256, failure = _read_candle_manifest(part, label)
+        entry = {
+            "folder_name": label,
+            "manifest_sha256": manifest_sha256,
+            "start_date": None,
+            "end_date": None,
+            "start_month": None,
+            "end_month": None,
+            "files": 0,
+            "totals": {field: None for field in COMPOSITION_TOTAL_FIELDS},
+        }
+        part_entries.append(entry)
+        if failure is not None:
+            fail("part_manifests", failure)
+            part_manifests.append(None)
+            part_ranges.append(None)
+            continue
+        part_manifests.append(manifest)
+        files = manifest.get("files")
+        totals = manifest.get("totals")
+        if not isinstance(files, list) or not files:
+            fail("part_manifests", f"PartFileRecordsMissing: {label}/{MANIFEST_NAME}")
+            files = []
+        if not isinstance(totals, dict):
+            fail("part_manifests", f"PartTotalsMissing: {label}/{MANIFEST_NAME}")
+            totals = {}
+        entry["files"] = len(files)
+        for field in COMPOSITION_TOTAL_FIELDS:
+            value = totals.get(field)
+            entry["totals"][field] = value if _record_int(value) else None
+
+        name_months: list[tuple[int, str]] = []
+        previous_name = None
+        seen_names: set[str] = set()
+        for record_index, record in enumerate(files):
+            file_label = f"{label}/files[{record_index}]"
+            if not isinstance(record, dict):
+                fail("part_month_ranges", f"PartFileRecordNotAnObject: {file_label}")
+                fail("file_record_agreement", f"PartFileRecordNotAnObject: {file_label}")
+                continue
+            name = record.get("name")
+            match = _CANDLE_NAME.match(name) if isinstance(name, str) else None
+            month_number = int(match.group(2)) if match is not None else 0
+            if match is None or not 1 <= month_number <= 12:
+                fail("part_month_ranges", f"PartFileNameNotMonthAligned: {label}: {name!r}")
+                fail("file_record_agreement", f"PartFileNameNotMonthAligned: {label}: {name!r}")
+                continue
+            if name in seen_names:
+                fail("part_month_ranges", f"PartFileDuplicate: {label}: {name}")
+                continue
+            if previous_name is not None and name <= previous_name:
+                fail(
+                    "part_month_ranges",
+                    f"PartFileOrderMismatch: {label}: {name} does not follow {previous_name}",
+                )
+            previous_name = name
+            seen_names.add(name)
+            name_months.append((int(match.group(1)) * 12 + month_number, name))
+            part_files.append({"part": label, "record": record})
+
+        if not name_months:
+            fail(
+                "part_month_ranges",
+                f"PartMonthRangeUnusable: {label} has no month-aligned file records",
+            )
+            part_ranges.append(None)
+            continue
+        start_index = name_months[0][0]
+        end_index = name_months[-1][0]
+        try:
+            declared_start = date.fromisoformat(manifest.get("start_date"))
+            declared_end = date.fromisoformat(manifest.get("end_date"))
+        except (TypeError, ValueError):
+            fail(
+                "part_month_ranges",
+                f"PartWindowUnusable: {label}/{MANIFEST_NAME} start_date/end_date are not "
+                "ISO dates",
+            )
+            part_ranges.append((start_index, end_index))
+            continue
+        entry["start_date"] = declared_start.isoformat()
+        entry["end_date"] = declared_end.isoformat()
+        entry["start_month"] = _month_text(start_index)
+        entry["end_month"] = _month_text(end_index)
+        if declared_start != _month_first_day(start_index):
+            fail(
+                "part_month_ranges",
+                f"PartStartNotMonthAligned: {label} start_date {declared_start.isoformat()} "
+                f"is not the first day of {_month_text(start_index)}",
+            )
+        if declared_end != _month_last_day(end_index):
+            fail(
+                "part_month_ranges",
+                f"PartEndNotMonthAligned: {label} end_date {declared_end.isoformat()} is not "
+                f"the last day of {_month_text(end_index)}",
+            )
+        part_ranges.append((start_index, end_index))
+
+    previous_end = None
+    previous_label = None
+    for index, range_info in enumerate(part_ranges):
+        if range_info is None:
+            continue
+        label = part_entries[index]["folder_name"]
+        start_index, end_index = range_info
+        if previous_end is not None:
+            if start_index <= previous_end:
+                fail(
+                    "part_month_ranges",
+                    f"PartMonthOverlap: {label} starts at {_month_text(start_index)} which "
+                    f"overlaps {previous_label} ending at {_month_text(previous_end)}",
+                )
+            elif start_index != previous_end + 1:
+                fail(
+                    "part_month_ranges",
+                    f"PartMonthGap: {label} starts at {_month_text(start_index)} after "
+                    f"{previous_label} ends at {_month_text(previous_end)}",
+                )
+        previous_end = end_index
+        previous_label = label
+
+    valid_ranges = [range_info for range_info in part_ranges if range_info is not None]
+    union_start = min(range_info[0] for range_info in valid_ranges) if valid_ranges else None
+    union_end = max(range_info[1] for range_info in valid_ranges) if valid_ranges else None
+
+    final_label = cache.name or "cache"
+    final_manifest, final_manifest_sha256, failure = _read_candle_manifest(cache, final_label)
+    final_files: list = []
+    if failure is not None:
+        fail("final_manifest", failure)
+    else:
+        files = final_manifest.get("files")
+        totals = final_manifest.get("totals")
+        if not isinstance(files, list) or not files:
+            fail("final_manifest", f"FinalFileRecordsMissing: {final_label}/{MANIFEST_NAME}")
+            files = []
+        if not isinstance(totals, dict):
+            fail("final_manifest", f"FinalTotalsMissing: {final_label}/{MANIFEST_NAME}")
+        final_files = files
+
+    final_by_name: dict[str, dict] = {}
+    final_order: list[str] = []
+    for index, record in enumerate(final_files):
+        if not isinstance(record, dict):
+            fail("file_name_union", f"FinalFileRecordNotAnObject: {final_label}/files[{index}]")
+            continue
+        name = record.get("name")
+        if not isinstance(name, str):
+            fail("file_name_union", f"FinalFileNameMissing: {final_label}/files[{index}]")
+            continue
+        if name in final_by_name:
+            fail("file_name_union", f"FinalFileDuplicate: {name}")
+            continue
+        final_by_name[name] = record
+        final_order.append(name)
+    if final_order != sorted(final_order):
+        fail(
+            "file_name_union",
+            f"FinalFileOrderMismatch: {final_label} file records are not sorted by name",
+        )
+
+    union: dict[str, tuple[str, dict]] = {}
+    for item in part_files:
+        name = item["record"].get("name")
+        if not isinstance(name, str):
+            continue
+        if name in union:
+            fail(
+                "file_name_union",
+                f"PartFileDuplicateAcrossParts: {name} in {union[name][0]} and {item['part']}",
+            )
+            continue
+        union[name] = (item["part"], item["record"])
+    if set(union) != set(final_by_name):
+        detail: list[str] = []
+        part_only = sorted(set(union) - set(final_by_name))
+        final_only = sorted(set(final_by_name) - set(union))
+        if part_only:
+            detail.append("part-only " + ", ".join(part_only[:3]))
+        if final_only:
+            detail.append("final-only " + ", ".join(final_only[:3]))
+        fail("file_name_union", "FileNameUnionMismatch: " + "; ".join(detail))
+
+    for name, (label, part_record) in union.items():
+        final_record = final_by_name.get(name)
+        if final_record is None:
+            continue
+        for field in COMPOSITION_FILE_AGREEMENT_FIELDS:
+            if part_record.get(field) != final_record.get(field):
+                fail(
+                    "file_record_agreement",
+                    f"FileRecordMismatch: {name}: {field} part {part_record.get(field)!r} != "
+                    f"final {final_record.get(field)!r}",
+                )
+
+    for name, final_record in final_by_name.items():
+        path = cache / name
+        if not path.is_file():
+            fail("final_file_hashes", f"FinalFileMissing: {name}")
+            continue
+        try:
+            payload = path.read_bytes()
+        except OSError as error:
+            fail(
+                "final_file_hashes",
+                f"FinalFileUnreadable: {name}: {error.strerror or type(error).__name__}",
+            )
+            continue
+        actual_sha = hashlib.sha256(payload).hexdigest()
+        if final_record.get("sha256") != actual_sha:
+            fail(
+                "final_file_hashes",
+                f"FinalFileSha256Mismatch: {name}: manifest {final_record.get('sha256')!r} "
+                f"!= actual {actual_sha}",
+            )
+        if final_record.get("bytes") != len(payload):
+            fail(
+                "final_file_hashes",
+                f"FinalFileBytesMismatch: {name}: manifest {final_record.get('bytes')!r} != "
+                f"actual {len(payload)}",
+            )
+
+    part_identities: list[tuple[str, dict]] = []
+    for index, manifest in enumerate(part_manifests):
+        label = part_entries[index]["folder_name"]
+        if manifest is None:
+            continue
+        identity = _manifest_input_identity(manifest)
+        if (
+            not isinstance(identity["composition_sha256"], str)
+            or not identity["composition_sha256"]
+        ):
+            fail("part_input_identity", f"PartCompositionIdentityMissing: {label}")
+        if not isinstance(identity["data_folder_name"], str) or not identity["data_folder_name"]:
+            fail("part_input_identity", f"PartDataFolderIdentityMissing: {label}")
+        part_identities.append((label, identity))
+    if part_identities:
+        reference_label, reference = part_identities[0]
+        for label, identity in part_identities[1:]:
+            if identity != reference:
+                fail(
+                    "part_input_identity",
+                    f"PartInputIdentityMismatch: {label} != {reference_label}",
+                )
+    if final_manifest is not None:
+        final_identity = _manifest_input_identity(final_manifest)
+        if not isinstance(final_identity["composition_sha256"], str) or not final_identity[
+            "composition_sha256"
+        ]:
+            fail("part_input_identity", f"FinalCompositionIdentityMissing: {final_label}")
+        if not isinstance(final_identity["data_folder_name"], str) or not final_identity[
+            "data_folder_name"
+        ]:
+            fail("part_input_identity", f"FinalDataFolderIdentityMissing: {final_label}")
+        if part_identities:
+            _, reference = part_identities[0]
+            for field in COMPOSITION_INPUT_IDENTITY_FIELDS:
+                if (
+                    final_identity[field] is not None
+                    and reference[field] != final_identity[field]
+                ):
+                    fail(
+                        "part_input_identity",
+                        f"PartInputIdentityMismatch: {field} part {reference[field]!r} != "
+                        f"final {final_identity[field]!r}",
+                    )
+
+    expected_totals = {field: 0 for field in COMPOSITION_TOTAL_FIELDS}
+    for index, manifest in enumerate(part_manifests):
+        label = part_entries[index]["folder_name"]
+        if manifest is None:
+            continue
+        totals = manifest.get("totals")
+        if not isinstance(totals, dict):
+            continue
+        for field in COMPOSITION_TOTAL_FIELDS:
+            value = totals.get(field)
+            if _record_int(value):
+                expected_totals[field] += value
+            else:
+                fail(
+                    "total_sums",
+                    f"PartTotalMissing: {label} totals.{field}: {value!r}",
+                )
+    if final_manifest is not None:
+        final_totals = final_manifest.get("totals")
+        if isinstance(final_totals, dict):
+            for field in COMPOSITION_TOTAL_FIELDS:
+                if final_totals.get(field) != expected_totals[field]:
+                    fail(
+                        "total_sums",
+                        f"TotalMismatch: {field} final {final_totals.get(field)!r} != parts sum "
+                        f"{expected_totals[field]}",
+                    )
+
+    recomputed_content_sha256 = None
+    if final_manifest is not None:
+        ordered_records = [final_by_name[name] for name in final_order]
+        usable = all(
+            isinstance(record.get("name"), str)
+            and isinstance(record.get("sha256"), str)
+            and _record_int(record.get("bytes"))
+            for record in ordered_records
+        )
+        if not usable:
+            fail(
+                "final_content_sha256",
+                f"FinalContentUnusable: {final_label}/{MANIFEST_NAME} file records are "
+                "incomplete",
+            )
+        else:
+            recomputed_content_sha256 = _content_sha256(ordered_records)
+            if final_manifest.get("content_sha256") != recomputed_content_sha256:
+                fail(
+                    "final_content_sha256",
+                    f"FinalContentSha256Mismatch: manifest "
+                    f"{final_manifest.get('content_sha256')!r} != recomputed "
+                    f"{recomputed_content_sha256!r}",
+                )
+
+    final_start_month = None
+    final_end_month = None
+    if final_manifest is not None:
+        try:
+            final_start = date.fromisoformat(final_manifest.get("start_date"))
+            final_end = date.fromisoformat(final_manifest.get("end_date"))
+        except (TypeError, ValueError):
+            fail(
+                "final_window",
+                f"FinalWindowUnusable: {final_label}/{MANIFEST_NAME} start_date/end_date "
+                "are not ISO dates",
+            )
+        else:
+            final_start_month = _month_index(final_start)
+            final_end_month = _month_index(final_end)
+            if union_start is not None and final_start_month != union_start:
+                fail(
+                    "final_window",
+                    f"FinalStartMonthMismatch: {final_start.isoformat()} does not match the "
+                    f"union start {_month_text(union_start)}",
+                )
+            if union_end is not None and final_end_month != union_end:
+                fail(
+                    "final_window",
+                    f"FinalEndMonthMismatch: {final_end.isoformat()} does not match the union "
+                    f"end {_month_text(union_end)}",
+                )
+
+    record = {
+        "contract": COMPOSITION_VERIFICATION_CONTRACT,
+        "cache_folder_name": final_label,
+        "parts": part_entries,
+        "final": {
+            "folder_name": final_label,
+            "manifest_sha256": final_manifest_sha256,
+            "start_date": (
+                final_manifest.get("start_date")
+                if isinstance(final_manifest, dict)
+                and isinstance(final_manifest.get("start_date"), str)
+                else None
+            ),
+            "end_date": (
+                final_manifest.get("end_date")
+                if isinstance(final_manifest, dict)
+                and isinstance(final_manifest.get("end_date"), str)
+                else None
+            ),
+            "start_month": _month_text(final_start_month) if final_start_month else None,
+            "end_month": _month_text(final_end_month) if final_end_month else None,
+            "files": len(final_by_name),
+            "content_sha256": (
+                final_manifest.get("content_sha256")
+                if isinstance(final_manifest, dict)
+                else None
+            ),
+            "recomputed_content_sha256": recomputed_content_sha256,
+            "totals": {
+                field: (
+                    final_manifest["totals"].get(field)
+                    if isinstance(final_manifest, dict)
+                    and isinstance(final_manifest.get("totals"), dict)
+                    and _record_int(final_manifest["totals"].get(field))
+                    else None
+                )
+                for field in COMPOSITION_TOTAL_FIELDS
+            },
+        },
+        "expected_totals": expected_totals,
+        "checks": checks,
+        "failure_reasons": failures,
+        "overall_qualification": "PASS" if not failures else "FAIL",
+    }
+    return CandleCompositionOutcome(0 if not failures else 1, failures, record)

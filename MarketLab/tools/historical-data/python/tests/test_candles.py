@@ -17,9 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from marketlab_historical_data.candles import (  # noqa: E402
     CANDLE_CONTRACT,
+    COMPOSITION_VERIFICATION_CONTRACT,
     VERIFICATION_CONTRACT,
     _midpoint,
     generate_candles,
+    verify_candle_composition,
     verify_candles,
 )
 from marketlab_historical_data.canonical import canonical_decimal_text  # noqa: E402
@@ -178,6 +180,75 @@ def candle_lines(out: Path, name: str) -> list[str]:
 
 def load_manifest(out: Path) -> dict:
     return json.loads((Path(out) / "manifest.json").read_text(encoding="utf-8"))
+
+
+THREE_MONTH_ROWS = [
+    (datetime(2019, 1, 2, 0, 0, 0, tzinfo=UTC), D("1"), D("2")),
+    (datetime(2019, 2, 3, 0, 0, 0, tzinfo=UTC), D("3"), D("4")),
+    (datetime(2019, 3, 4, 0, 0, 0, tzinfo=UTC), D("5"), D("6")),
+]
+
+MONTH_WINDOWS = [
+    ("2019-01-01", "2019-01-31"),
+    ("2019-02-01", "2019-02-28"),
+    ("2019-03-01", "2019-03-31"),
+]
+
+
+def build_three_part_caches(data: Path, base: Path) -> list[Path]:
+    build_qualified_tree(data, THREE_MONTH_ROWS)
+    parts: list[Path] = []
+    for index, (start, end) in enumerate(MONTH_WINDOWS):
+        part = base / f"part{index}"
+        outcome = generate_candles(
+            data, part, start=date.fromisoformat(start), end=date.fromisoformat(end)
+        )
+        if outcome.exit_code != 0:
+            raise AssertionError(f"part {index} generation failed: {outcome.failures}")
+        parts.append(part)
+    return parts
+
+
+def merge_candle_caches(part_dirs, out: Path) -> dict:
+    manifests = [
+        json.loads((Path(part) / "manifest.json").read_text(encoding="utf-8"))
+        for part in part_dirs
+    ]
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    files: list[dict] = []
+    totals = {"partitions": 0, "source_rows": 0, "candle_rows": 0, "candle_bytes": 0}
+    for part, manifest in zip(part_dirs, manifests):
+        for record in manifest["files"]:
+            (out / record["name"]).write_bytes((Path(part) / record["name"]).read_bytes())
+            files.append(record)
+        for field in totals:
+            totals[field] += manifest["totals"][field]
+    files.sort(key=lambda record: record["name"])
+    digest = hashlib.sha256()
+    for record in files:
+        digest.update(
+            f"{record['name']}\0{record['sha256']}\0{record['bytes']}\n".encode("utf-8")
+        )
+    final = {
+        "contract": manifests[0]["contract"],
+        "symbol": manifests[0]["symbol"],
+        "market": manifests[0]["market"],
+        "resolution": manifests[0]["resolution"],
+        "price_basis": manifests[0]["price_basis"],
+        "time_basis": manifests[0]["time_basis"],
+        "empty_minutes": manifests[0]["empty_minutes"],
+        "inputs": manifests[0]["inputs"],
+        "start_date": manifests[0]["start_date"],
+        "end_date": manifests[-1]["end_date"],
+        "totals": totals,
+        "files": files,
+        "content_sha256": digest.hexdigest(),
+    }
+    (out / "manifest.json").write_text(
+        json.dumps(final, indent=2) + "\n", encoding="utf-8"
+    )
+    return final
 
 
 class CandleContractTests(unittest.TestCase):
@@ -685,6 +756,158 @@ class CandleContractTests(unittest.TestCase):
         self.assertIn("verify-candles: PASS", buffer.getvalue())
         record = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(record["contract"], VERIFICATION_CONTRACT)
+        self.assertEqual(record["overall_qualification"], "PASS")
+
+    def _merged_three_part_cache(self):
+        parts = build_three_part_caches(self.data, self.base)
+        final_dir = self.base / "final"
+        merge_candle_caches(parts, final_dir)
+        return parts, final_dir
+
+    def test_verify_candle_composition_passes_on_a_merged_cache(self):
+        parts, final_dir = self._merged_three_part_cache()
+        outcome = verify_candle_composition(final_dir, parts)
+        self.assertEqual(outcome.exit_code, 0, outcome.failures)
+        self.assertEqual(
+            outcome.record["contract"], COMPOSITION_VERIFICATION_CONTRACT
+        )
+        self.assertEqual(outcome.record["overall_qualification"], "PASS")
+        self.assertTrue(all(outcome.record["checks"].values()))
+        self.assertEqual(
+            [entry["folder_name"] for entry in outcome.record["parts"]],
+            [part.name for part in parts],
+        )
+        self.assertEqual(outcome.record["final"]["files"], 3)
+        self.assertEqual(outcome.record["expected_totals"]["candle_rows"], 3)
+        self.assertNotIn(":\\", json.dumps(outcome.record))
+
+    def test_verify_candle_composition_fails_on_a_month_gap(self):
+        parts, final_dir = self._merged_three_part_cache()
+        outcome = verify_candle_composition(final_dir, [parts[0], parts[2]])
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertFalse(outcome.record["checks"]["part_month_ranges"])
+        self.assertTrue(any("PartMonthGap" in f for f in outcome.failures))
+
+    def test_verify_candle_composition_fails_on_overlapping_parts(self):
+        parts, final_dir = self._merged_three_part_cache()
+        overlapping = self.base / "overlapping"
+        overlapping.mkdir()
+        part_ab = overlapping / "part_ab"
+        part_bc = overlapping / "part_bc"
+        first = generate_candles(
+            self.data, part_ab, start=date(2019, 1, 1), end=date(2019, 2, 28)
+        )
+        second = generate_candles(
+            self.data, part_bc, start=date(2019, 2, 1), end=date(2019, 3, 31)
+        )
+        self.assertEqual(first.exit_code, 0, first.failures)
+        self.assertEqual(second.exit_code, 0, second.failures)
+        outcome = verify_candle_composition(final_dir, [part_ab, part_bc])
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertFalse(outcome.record["checks"]["part_month_ranges"])
+        self.assertTrue(any("PartMonthOverlap" in f for f in outcome.failures))
+
+    def test_verify_candle_composition_fails_on_a_renamed_part_file(self):
+        parts, final_dir = self._merged_three_part_cache()
+        manifest_path = parts[1] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["files"][0]["name"] = "xauusd-m1-2019-02-renamed.csv"
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        outcome = verify_candle_composition(final_dir, parts)
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertFalse(outcome.record["checks"]["part_month_ranges"])
+        self.assertTrue(
+            any("PartFileNameNotMonthAligned" in f for f in outcome.failures)
+        )
+
+    def test_verify_candle_composition_fails_on_part_final_file_mismatch(self):
+        for field, value in (
+            ("sha256", "0" * 64),
+            ("bytes", 123456789),
+            ("rows", 424242),
+        ):
+            with self.subTest(field=field):
+                data = self.base / f"data-{field}"
+                case = self.base / f"case-{field}"
+                parts = build_three_part_caches(data, case)
+                final_dir = case / "final"
+                merge_candle_caches(parts, final_dir)
+                manifest_path = parts[1] / "manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["files"][0][field] = value
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+                )
+                outcome = verify_candle_composition(final_dir, parts)
+                self.assertEqual(outcome.exit_code, 1)
+                self.assertFalse(outcome.record["checks"]["file_record_agreement"])
+
+    def test_verify_candle_composition_fails_on_a_total_mismatch(self):
+        parts, final_dir = self._merged_three_part_cache()
+        manifest_path = final_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["totals"]["candle_rows"] += 1
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        outcome = verify_candle_composition(final_dir, parts)
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertFalse(outcome.record["checks"]["total_sums"])
+        self.assertTrue(any("TotalMismatch" in f for f in outcome.failures))
+
+    def test_verify_candle_composition_fails_on_differing_part_identities(self):
+        parts, final_dir = self._merged_three_part_cache()
+        manifest_path = parts[1] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["inputs"]["composition"]["sha256"] = "0" * 64
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        outcome = verify_candle_composition(final_dir, parts)
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertFalse(outcome.record["checks"]["part_input_identity"])
+        self.assertTrue(any("PartInputIdentityMismatch" in f for f in outcome.failures))
+
+    def test_verify_candle_composition_fails_on_a_tampered_final_csv(self):
+        parts, final_dir = self._merged_three_part_cache()
+        target = final_dir / "xauusd-m1-2019-02.csv"
+        target.write_bytes(
+            target.read_bytes() + b"2019-02-03T00:01:00.000Z,1,1,1,1,1\n"
+        )
+        outcome = verify_candle_composition(final_dir, parts)
+        self.assertEqual(outcome.exit_code, 1)
+        self.assertFalse(outcome.record["checks"]["final_file_hashes"])
+
+    def test_verify_candle_composition_refuses_missing_directories(self):
+        outcome = verify_candle_composition(self.base / "missing-cache", [self.base])
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertIsNone(outcome.record)
+        outcome = verify_candle_composition(self.base, [self.base / "missing-part"])
+        self.assertEqual(outcome.exit_code, 2)
+        self.assertIsNone(outcome.record)
+
+    def test_cli_verify_candle_composition_writes_the_record(self):
+        parts, final_dir = self._merged_three_part_cache()
+        output = self.base / "candle-composition-verification.json"
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = main(
+                [
+                    "verify-candle-composition",
+                    "--cache",
+                    str(final_dir),
+                    "--parts",
+                    ",".join(str(part) for part in parts),
+                    "--output",
+                    str(output),
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("verify-candle-composition: PASS", buffer.getvalue())
+        record = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(record["contract"], COMPOSITION_VERIFICATION_CONTRACT)
         self.assertEqual(record["overall_qualification"], "PASS")
 
 

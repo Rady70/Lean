@@ -9,7 +9,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from .candles import generate_candles, verify_candles
+from .candles import generate_candles, verify_candle_composition, verify_candles
 from .csv_source import CsvSourceConfig
 from .continuous import (
     build_continuous_record,
@@ -289,6 +289,28 @@ def _verify_candles_parser(subparsers) -> None:
         "--cache",
         required=True,
         help="derived candle cache directory holding manifest.json and the monthly CSVs",
+    )
+    parser.add_argument(
+        "--output",
+        help="output verification record path (default: print the JSON record to stdout)",
+    )
+
+
+def _verify_candle_composition_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "verify-candle-composition",
+        help="verify a merged M1 candle cache is the contiguous union of its part caches",
+    )
+    parser.add_argument(
+        "--cache",
+        required=True,
+        help="merged final candle cache directory holding manifest.json and the monthly CSVs",
+    )
+    parser.add_argument(
+        "--parts",
+        required=True,
+        help="comma-separated part cache directories in chronological order, each holding "
+        "manifest.json and its monthly CSVs",
     )
     parser.add_argument(
         "--output",
@@ -687,6 +709,50 @@ def _run_verify_candles(args) -> int:
     return outcome.exit_code
 
 
+def _run_verify_candle_composition(args) -> int:
+    part_values = [value.strip() for value in args.parts.split(",") if value.strip()]
+    if not part_values:
+        print(
+            "ERROR: --parts must list at least one part cache directory",
+            file=sys.stderr,
+        )
+        return 2
+    outcome = verify_candle_composition(
+        Path(args.cache), [Path(value) for value in part_values]
+    )
+    if outcome.record is None:
+        for failure in outcome.failures:
+            print(f"FAIL: {failure}", file=sys.stderr)
+        print("verify-candle-composition: configuration error", file=sys.stderr)
+        return outcome.exit_code
+    text = dump_json(outcome.record)
+    if args.output:
+        output = Path(args.output)
+        try:
+            with OutputTransaction(allow_overwrite=True) as transaction:
+                transaction.stage_text(output, text)
+                transaction.commit()
+        except OutputTransactionError as error:
+            print(f"ERROR: verification record not written: {error}", file=sys.stderr)
+            return 2
+        print(f"verification: {output}")
+    else:
+        print(text, end="")
+    checks = outcome.record["checks"]
+    final = outcome.record["final"]
+    print(
+        f"parts: {len(outcome.record['parts'])}; final files: {final['files']}; checks "
+        f"passed: {sum(1 for value in checks.values() if value)}/{len(checks)}"
+    )
+    for failure in outcome.failures:
+        print(f"FAIL: {failure}", file=sys.stderr)
+    if outcome.exit_code == 0:
+        print("verify-candle-composition: PASS")
+    else:
+        print("verify-candle-composition: FAIL", file=sys.stderr)
+    return outcome.exit_code
+
+
 def _run_qualify(args) -> int:
     config = CsvSourceConfig(
         delimiter=args.delimiter,
@@ -861,6 +927,7 @@ def main(argv=None) -> int:
     _verify_continuous_parser(subparsers)
     _candles_parser(subparsers)
     _verify_candles_parser(subparsers)
+    _verify_candle_composition_parser(subparsers)
     args = parser.parse_args(argv)
     if args.command == "prepare-identity":
         return _run_prepare_identity(args)
@@ -878,6 +945,8 @@ def main(argv=None) -> int:
         return _run_candles(args)
     if args.command == "verify-candles":
         return _run_verify_candles(args)
+    if args.command == "verify-candle-composition":
+        return _run_verify_candle_composition(args)
     parser.error(f"unknown command {args.command!r}")
     return 2
 
