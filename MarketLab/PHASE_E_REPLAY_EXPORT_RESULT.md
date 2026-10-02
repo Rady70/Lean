@@ -237,7 +237,7 @@ package build instead of aborting the strategy run.
   `tests\Test-SingleAnchorReplayPackageVerifier.ps1` rejects **54/54**
   mutations and verifies **4/4** positive fixtures (forward-time fault,
   out-of-order fault, negative-equity Stop Out, terminal hard-BE violation).
-  The evidence manifest is now `e4985b48...`.
+  The evidence manifest at that revision was `e4985b48...`.
 
 ### 1.5 Fifth-round fixture and documentation cleanup (this revision)
 
@@ -262,9 +262,10 @@ package build instead of aborting the strategy run.
 - **Credible NegativeEquity fixture.** Its states now use the frozen
   uncovered-volume used-margin model, and its balance transitions correspond
   exactly to the recorded forced-liquidation realized results.
-- No verifier behavior changed for the real package: the verification record
-  and evidence manifest hashes are unchanged
-  (`273350ca...` and `e4985b48...`).
+- No verifier behavior changed for the real package at that revision: the verification
+  record and evidence manifest hashes were unchanged
+  (`273350ca...` and the then-current `e4985b48...`; section 1.6 records the later
+  counter refresh).
 
 ### 1.6 Sixth-round terminal-violation fixture and enforcement cleanup (this revision)
 
