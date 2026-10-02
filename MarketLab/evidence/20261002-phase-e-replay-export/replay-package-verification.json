@@ -1,29 +1,31 @@
 {
   "contract": "marketlab-single-anchor-replay-package-verification-v1",
-  "runDirectory": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261001-115952-SingleAnchorVNextAlgorithm",
+  "runDirectory": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm",
   "pass": true,
-  "checks": 1537,
+  "checks": 22942,
+  "parityChecks": 21406,
   "failures": [],
+  "failuresTruncated": false,
   "resultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
   "expectedResultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
   "resultsBoundToPhaseD": true,
-  "packageSha256": "8f77bdd16dc06593f87af5fe84b761f2f0a9e0ff7b4ee2f33956e6a1837f6a00",
+  "packageSha256": "5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a",
   "eventCount": 1454,
   "eventTypes": {
-    "entry_rejected": 2,
-    "entry_executed": 555,
-    "basket_liquidated": 1,
-    "margin_call_left": 23,
-    "strategy_exit": 278,
-    "forced_liquidation": 65,
-    "run_ended": 1,
     "stop_out_triggered": 5,
-    "basket_anchored": 280,
+    "forced_liquidation": 65,
+    "entry_executed": 555,
     "hard_breakeven_activated": 11,
-    "margin_call_entered": 23,
-    "trailing_activated": 207,
+    "basket_anchored": 280,
     "entry_rejection_summary": 2,
-    "run_started": 1
+    "basket_liquidated": 1,
+    "strategy_exit": 278,
+    "trailing_activated": 207,
+    "entry_rejected": 2,
+    "run_started": 1,
+    "margin_call_left": 23,
+    "margin_call_entered": 23,
+    "run_ended": 1
   },
   "telemetryEventSnapshots": 1452,
   "telemetryPeriodicSamples": 98866,
@@ -37,27 +39,27 @@
     {
       "name": "events.jsonl",
       "sha256": "2eb4d8464d2ef4e7c95e6862a3253a9afbd952222f3c5e5ce9818cd96e67cc42",
-      "bytes": 679227
+      "bytes": 679227.0
     },
     {
       "name": "telemetry-2019.jsonl",
-      "sha256": "a4f50faad6aea66023656007295f1855aa0e6ad65d819647c4390de132a5f405",
-      "bytes": 30417309
+      "sha256": "b4260d475416bb640f484c092465a353287639a887eb60af7fd6a23318ec6212",
+      "bytes": 30417274.0
     },
     {
       "name": "telemetry-2020.jsonl",
-      "sha256": "c9ad91016e52a0f99f45138f7fe6b900a3a4c3ca2b751f0c2f53f3b7f211f16b",
-      "bytes": 14784134
+      "sha256": "213f2bb7542bf3fdb6533c745d9ff55b001e776ff352c26000c6cd5bb2163b76",
+      "bytes": 14784016.0
     },
     {
       "name": "telemetry-2021.jsonl",
       "sha256": "9372cbf681392fc3e0e4046281a5acb13c5c30fb6c516228dfec86df87490494",
-      "bytes": 363
+      "bytes": 363.0
     },
     {
       "name": "telemetry-2026.jsonl",
       "sha256": "2cdee0240eaeba8ac8e8616b163a10e2a0ba76d1230c8914f9ef1ed9d521d7d1",
-      "bytes": 363
+      "bytes": 363.0
     }
   ]
 }

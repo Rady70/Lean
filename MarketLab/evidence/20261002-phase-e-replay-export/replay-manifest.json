@@ -112,15 +112,15 @@
     {
       "name": "telemetry-2019.jsonl",
       "year": 2019,
-      "sha256": "a4f50faad6aea66023656007295f1855aa0e6ad65d819647c4390de132a5f405",
-      "bytes": 30417309,
+      "sha256": "b4260d475416bb640f484c092465a353287639a887eb60af7fd6a23318ec6212",
+      "bytes": 30417274,
       "lines": 67559
     },
     {
       "name": "telemetry-2020.jsonl",
       "year": 2020,
-      "sha256": "c9ad91016e52a0f99f45138f7fe6b900a3a4c3ca2b751f0c2f53f3b7f211f16b",
-      "bytes": 14784134,
+      "sha256": "213f2bb7542bf3fdb6533c745d9ff55b001e776ff352c26000c6cd5bb2163b76",
+      "bytes": 14784016,
       "lines": 32757
     },
     {
@@ -138,5 +138,5 @@
       "lines": 1
     }
   ],
-  "packageSha256": "8f77bdd16dc06593f87af5fe84b761f2f0a9e0ff7b4ee2f33956e6a1837f6a00"
+  "packageSha256": "5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a"
 }

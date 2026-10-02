@@ -1,13 +1,15 @@
 # MarketLab SingleAnchor authoritative replay package (Phase E)
 
-Status: **implemented; the authoritative package was produced by the Phase E
-export run and qualified by the package verifier (PASS, 1,537 checks, bound to
-the byte-identical Phase D result). Phase E is ready for independent review;
-later replay/visualization phases (F–I) have not started.**
+Status: **implemented and corrected after independent review; the authoritative
+package was produced by the corrected Phase E export run and qualified by the
+strengthened package verifier (PASS, 22,942 checks including 21,406
+authoritative parity comparisons, bound to the byte-identical Phase D result).
+Phase E is ready for re-review; later replay/visualization phases (F–I) have not
+started.**
 
-Phase E export run: `Rady70/Lean` revision
-`c29770ef78a9ad85e3061460bde3ff664e764048`, classified `EXPECTED`; package
-SHA-256 `8f77bdd16dc06593f87af5fe84b761f2f0a9e0ff7b4ee2f33956e6a1837f6a00`
+Corrected Phase E export run: `Rady70/Lean` revision
+`a2941581c02462a190f4d4289f371aed409cb1e3`, classified `EXPECTED`; package
+SHA-256 `5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`
 (1,454 events, 1,452 event snapshots, 98,866 periodic samples). Full record:
 [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md).
 

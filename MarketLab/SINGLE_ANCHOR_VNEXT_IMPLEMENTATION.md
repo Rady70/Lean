@@ -2065,28 +2065,32 @@ review. Phase F-I have not started.**
   `results.json` persisted, every payload is saved before the manifest, and a
   failed payload suppresses the manifest so an incomplete package is never
   advertised.
-- **Validation and the Phase D binding.** The export run executed the frozen
-  corrected-full-history command from the clean Phase E revision
-  `c29770ef78a9ad85e3061460bde3ff664e764048`; the corrected-full-history
-  classifier returned `EXPECTED` (exit 0, `invalidCount` 0) and the run's
-  `storage/single-anchor/results.json` is **byte-identical** to the Phase D
-  artifact
+- **Validation and the Phase D binding.** The corrected export run executed the
+  frozen corrected-full-history command from the clean Phase E revision
+  `a2941581c02462a190f4d4289f371aed409cb1e3` in 6,248 s; the
+  corrected-full-history classifier returned `EXPECTED` (exit 0, `invalidCount`
+  0) and the run's `storage/single-anchor/results.json` is **byte-identical**
+  to the Phase D artifact
   (`bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad`).
   `scripts/Test-SingleAnchorReplayPackage.ps1` verified the package on that
-  exact run with the binding enforced: **PASS, 1,537 checks**, package SHA-256
-  `8f77bdd16dc06593f87af5fe84b761f2f0a9e0ff7b4ee2f33956e6a1837f6a00`.
-- **Package contents.** 1,454 events (280 anchors, 555 entries, 278 strategy
-  exits, 1 basket liquidation, 5 Stop Out triggers, 65 forced liquidations,
-  11 hard-BE activations, 207 trailing activations, 23 Margin Call enter/leave
-  pairs, 2 rejection episodes plus 2 run-end recaps, run start/end), 1,452 exact
+  exact run with the binding enforced: **PASS, 22,942 checks including 21,406
+  authoritative payload-parity comparisons**, package SHA-256
+  `5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`.
+- **Package contents.** 1,454 events (280 anchors, 555 entries = 490 surviving
+  `LegTrace` rows plus 65 `LiquidationTrace` identities, 278 strategy exits,
+  1 basket liquidation, 5 Stop Out triggers, 65 forced liquidations, 11 hard-BE
+  activations, 207 trailing activations, 23 Margin Call enter/leave pairs,
+  2 rejection episodes plus 2 run-end recaps, run start/end), 1,452 exact
   per-event account snapshots and 98,866 bounded periodic samples in four
   telemetry shards; every decimal is an exact JSON string.
-- **Determinism.** Two identical bounded executions over 2019-01-01..2019-01-03
-  produced byte-identical `results.json`, `events.jsonl`,
-  `telemetry-2019.jsonl` and `manifest.json`
-  (package SHA-256 `2e1865159d7eb0de095c50865c90df5a9eace5b41b555c6b396acde274e24957`).
-  The frozen model is reproducible byte-for-byte at that bounded scope, and the
-  full run additionally reproduced the Phase D result exactly.
+- **Determinism and behavior invariance.** Two identical bounded executions over
+  `2019-01-01..2019-02-15` (including hard-BE activations) produced byte-identical
+  `results.json` (`07ab303d...`), `events.jsonl`, telemetry and `manifest.json`
+  (package SHA-256
+  `344db104429c648645282a719d23f765328dfc41b18e1173ad2eb11300e9326d`);
+  the bounded March 2020 (`81ba0304...`) and low-cash rejection (`697bd85e...`)
+  windows are byte-identical to their pre-correction results, and the full
+  corrected run reproduced the Phase D result exactly.
 - **Tests.** 314/314 C# tests (17 new Phase E tests: recorder event/snapshot
   ordering, the pre-attempt hard-BE activation snapshot on both the filled and
   rejected tail paths, Margin Call transitions, Stop Out/forced/full
@@ -2122,11 +2126,12 @@ review. Phase F-I have not started.**
   the certification record is committed with the evidence. The committed cache
   manifest is
   `evidence/20261001-phase-e-replay-export/candle-cache-manifest.json`.
-- **Evidence and records.** Compact evidence with a SHA-256 manifest is under
-  `evidence/20261001-phase-e-replay-export/`; the result record is
-  [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md) and the
-  package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). The full telemetry
-  shards, engine logs, result packets and the candle cache remain local run
-  artifacts identified by hash. The Phase A-D evidence is unchanged, the
-  413,750,130-row qualification was not rerun, no parameter was optimized and
-  no hosted CI was dispatched.
+- **Evidence and records.** Compact evidence with a SHA-256 manifest
+  (`a8e800c7...`) is under `evidence/20261002-phase-e-replay-export/`; the result
+  record is [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md)
+  and the package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). The full
+  telemetry shards, engine logs, result packets and the candle cache remain
+  local run artifacts identified by hash; the four candle part manifests and the
+  two candle verification records are committed. The Phase A-D evidence is
+  unchanged, the 413,750,130-row qualification was not rerun, no parameter was
+  optimized and no hosted CI was dispatched.
