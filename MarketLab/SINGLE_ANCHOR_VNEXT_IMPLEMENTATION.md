@@ -2145,7 +2145,7 @@ review. Phase F-I have not started.**
   `evidence/20261002-phase-e-replay-export/candle-cache-manifest.json`
   (SHA-256 `75f1d241...`).
 - **Evidence and records.** Compact evidence with a SHA-256 manifest
-  (`264e00b4...`) is under `evidence/20261002-phase-e-replay-export/`; the result
+  (`d57b2d79...`) is under `evidence/20261002-phase-e-replay-export/`; the result
   record is [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md)
   and the package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). The full
   telemetry shards, engine logs, result packets and the candle cache remain

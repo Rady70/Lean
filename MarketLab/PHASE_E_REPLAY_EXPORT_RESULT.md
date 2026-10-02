@@ -196,7 +196,7 @@ package build instead of aborting the strategy run.
   mutations (adding entry/forced snapshot binding, duplicate/unknown/spurious
   events, swapped rejection recaps, impossible Margin Call state and the new
   exact-string cases) and verifies **2/2** positive failed-run fixtures. The
-  evidence manifest is now `264e00b4...` and the exact trailing-activation
+  evidence manifest is now `d57b2d79...` and the exact trailing-activation
   parity limitation is documented in `REPLAY_PACKAGE.md`.
 
 ## 2. Phase D preservation and binding
@@ -320,7 +320,7 @@ the qualified tree into `E:\MarketLab\data\lean\xauusd-m1-candles`:
 
 Committed compact evidence under
 `MarketLab/evidence/20261002-phase-e-replay-export/` (manifest SHA-256
-`264e00b4ca49b633f327acb835b6d47313df58f406d45e76ed0b0d7b5dc3363d`) with a
+`d57b2d796c24138729ae0059804802c1ffc1fe60aeb52f16ca3fdbcc287a96bf`) with a
 SHA-256 manifest:
 
 - the run's `baseline-build.json`, `corrected-history-preflight.json`,
