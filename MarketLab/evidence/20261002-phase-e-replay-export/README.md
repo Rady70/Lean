@@ -21,7 +21,7 @@ path, after the independent-review corrections.
   classification (`EXPECTED`, `invalidCount` 0): full qualified stream delivery
   and the 407/407 failed-request reconciliation.
 - `replay-package-verification.json` - the strengthened Phase E package
-  verifier PASS record (25,727 checks, 24,191 authoritative payload-parity
+  verifier PASS record (30,467 checks, 28,917 authoritative payload-parity
   comparisons, `resultsBoundToPhaseD: true`; byte-reproducible).
 - `replay-manifest.json` - the authoritative replay package manifest: run
   identity, event/telemetry counts, per-file hashes and the package fingerprint
@@ -63,7 +63,7 @@ package was then verified against that binding by the strengthened
 `MarketLab\scripts\Test-SingleAnchorReplayPackage.ps1`, whose authoritative
 parity comparisons, derivations, ordering checks and mutation behavior are
 exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
-(22/22 mutations rejected, 2/2 positive failed-run fixtures verified).
+(36/36 mutations rejected, 2/2 positive failed-run fixtures verified).
 
 ## Review corrections in this revision
 
@@ -89,6 +89,15 @@ exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
   `verify-candles`/`verify-candle-composition` certify it.
 - The committed part manifests are byte-identical to the verified files, and
   the verification record is byte-reproducible (no absolute path).
+- Third review: the snapshot-binding loop no longer skips entry and
+  forced-liquidation events (post-entry/post-close derived inventory, trigger
+  quote, run-start/run-end quote identity); the event-type whitelist, the
+  unique run boundary pair, the one-to-one trailing lifecycle, the
+  `first_entry_skipped`/`SkippedFirstEntryTrace` binding, the rejection-recap
+  order and the hard-BE-violation failure mapping are enforced; exact-string
+  coverage includes the remaining event classes and the manifest parameter
+  blocks; Margin Call conditions and the account-arithmetic identities are
+  checked (tolerance `1e-20`).
 
 The Phase A-D evidence, the frozen contracts and the qualified data identity are
 unchanged. The 413,750,130-row historical-data qualification was not rerun, no

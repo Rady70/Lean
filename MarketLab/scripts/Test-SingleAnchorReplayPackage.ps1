@@ -306,6 +306,25 @@ function Test-NumberParity([object]$actual, [object]$expected, [string]$where) {
     }
 }
 
+# Account-arithmetic identities (free margin, margin level) are exact decimal combinations in
+# ResearchAccount; the comparison allows only a numeric-scale tolerance (the frozen run contains
+# last-digit decimal scale artifacts of order 1e-25, far below any meaningful corruption).
+function Test-NumberApproxParity([object]$actual, [object]$expected, [string]$where, [decimal]$absoluteTolerance = [decimal]'1e-20') {
+    $script:parityChecks++
+    $script:checks++
+    if ($null -eq $actual -and $null -eq $expected) { return }
+    if ($null -eq $actual -or $null -eq $expected) {
+        Add-Failure "${where}: null mismatch (actual '$actual', derived '$expected')"
+        return
+    }
+    $left = Convert-JsonDecimal $actual $where
+    $right = Convert-JsonDecimal $expected $where
+    if ($null -eq $left -or $null -eq $right) { return }
+    if ([math]::Abs($left - $right) -gt $absoluteTolerance) {
+        Add-Failure "${where}: actual '$([string]$actual)' differs from the derived '$([string]$expected)' by more than $absoluteTolerance"
+    }
+}
+
 function Test-BoolParity([object]$actual, [object]$expected, [string]$where) {
     $script:parityChecks++
     $script:checks++
@@ -422,6 +441,11 @@ try {
                 Test-BoolParity $property.Value $resultValue "manifest.parameters.$($property.Name)"
             }
             else {
+                # The exact-decimal contract: a numeric parameter is a JSON string in the
+                # manifest, so it cannot be re-read as an IEEE double.
+                if ($property.Value -isnot [string]) {
+                    Add-Failure "manifest.parameters.$($property.Name) is a JSON $($property.Value.GetType().Name), not an exact string"
+                }
                 Test-NumberParity $property.Value $resultValue "manifest.parameters.$($property.Name)"
             }
         }
@@ -443,6 +467,9 @@ try {
         foreach ($property in $manifestMarginParameters.PSObject.Properties) {
             $resultValue = Get-Property $resultMarginParameters $property.Name
             if ($null -eq $resultValue) { Add-Failure "researchMargin.Parameters.$($property.Name) is missing"; continue }
+            if ($property.Value -isnot [string]) {
+                Add-Failure "manifest.marginParameters.$($property.Name) is a JSON $($property.Value.GetType().Name), not an exact string"
+            }
             Test-NumberParity $property.Value $resultValue "manifest.marginParameters.$($property.Name)"
         }
         foreach ($property in $resultMarginParameters.PSObject.Properties) {
@@ -670,6 +697,34 @@ try {
         $expectedLeaves = $enters - $(if ([bool](Get-Property $margin 'MarginCallActive')) { 1 } else { 0 })
         Test-Check ($leaves -eq $expectedLeaves) "margin_call_left count $leaves does not match the entered/active state ($expectedLeaves)"
     }
+
+    # Event-stream contract: only published event types, exactly one run boundary pair, and the
+    # rare terminal diagnostic classes are impossible on this successful run.
+    $allowedEventTypes = @('run_started', 'basket_anchored', 'first_entry_skipped', 'entry_executed',
+        'entry_rejected', 'entry_rejection_summary', 'hard_breakeven_activated', 'hard_breakeven_violated',
+        'trailing_activated', 'basket_close_failed', 'strategy_exit', 'basket_liquidated',
+        'stop_out_triggered', 'forced_liquidation', 'margin_call_entered', 'margin_call_left', 'run_ended')
+    foreach ($streamType in $eventCounts.Keys) {
+        Test-Check ($allowedEventTypes -contains $streamType) "the event stream contains an event type outside the published contract: '$streamType'"
+    }
+    Test-ParityCheck ((& $countOf 'run_started') -eq 1) "the event stream must contain exactly one run_started"
+    Test-ParityCheck ((& $countOf 'run_ended') -eq 1) "the event stream must contain exactly one run_ended"
+    # A hard-BE violation is terminal by construction: it must map to the documented
+    # StrategyInvariant/HardBreakevenViolatedByFill failure and clear the verification flag.
+    if ((& $countOf 'hard_breakeven_violated') -gt 0) {
+        $violationFailure = Get-Property $results 'failure'
+        if ($null -eq $violationFailure) {
+            Add-Failure "hard_breakeven_violated is present but the run has no failure"
+        }
+        else {
+            Test-TextParity (Get-Property $violationFailure 'Kind') 'StrategyInvariant' "results.failure.Kind (hard-BE violation)"
+            Test-TextParity (Get-Property $violationFailure 'Condition') 'HardBreakevenViolatedByFill' "results.failure.Condition (hard-BE violation)"
+        }
+        $hardVerification = Get-Property $results 'hardBreakevenVerification'
+        if ($null -ne $hardVerification) {
+            Test-BoolParity (Get-Property $hardVerification 'HardBEVerifiedUnderConfiguredExecutionModel') $false "hardBreakevenVerification.HardBEVerifiedUnderConfiguredExecutionModel"
+        }
+    }
     $runEnded = $events[-1]
     Test-Check ($null -ne (Get-Property $runEnded 'completed')) "run_ended has no completed flag"
 
@@ -681,11 +736,15 @@ try {
         'trailing_activated'       = @('bid', 'ask', 'profit', 'activationThreshold')
         'hard_breakeven_activated' = @('lowerTarget', 'upperTarget')
         'strategy_exit'            = @('bid', 'ask', 'anchor', 'buyLots', 'sellLots', 'grossLots', 'netLots', 'rawProfit', 'exitProfit', 'threshold', 'buyClosePrice', 'sellClosePrice', 'commission', 'realizedProfit', 'liquidatedRealizedProfit')
-        'basket_liquidated'        = @('bid', 'ask', 'anchor', 'buyLots', 'sellLots', 'grossLots', 'netLots', 'realizedProfit', 'liquidatedRealizedProfit')
-        'forced_liquidation'       = @('closePrice', 'realizedProfit', 'triggerBid', 'triggerAsk', 'placedLot', 'entryPrice', 'beforeBalance', 'beforeFloatingProfit', 'beforeEquity', 'beforeUsedMargin', 'afterBalance', 'afterFloatingProfit', 'afterEquity', 'afterUsedMargin')
+        'basket_liquidated'        = @('bid', 'ask', 'anchor', 'buyLots', 'sellLots', 'grossLots', 'netLots', 'rawProfit', 'exitProfit', 'threshold', 'buyClosePrice', 'sellClosePrice', 'commission', 'realizedProfit', 'liquidatedRealizedProfit')
+        'forced_liquidation'       = @('closePrice', 'realizedProfit', 'triggerBid', 'triggerAsk', 'placedLot', 'entryPrice', 'normalizedRequiredLot', 'commission', 'beforeBalance', 'beforeFloatingProfit', 'beforeEquity', 'beforeUsedMargin', 'afterBalance', 'afterFloatingProfit', 'afterEquity', 'afterUsedMargin')
         'stop_out_triggered'       = @('bid', 'ask', 'balance', 'floatingProfit', 'equity', 'usedMargin', 'freeMargin')
         'entry_rejected'           = @('bid', 'ask', 'normalizedRequiredLots')
         'entry_rejection_summary'  = @('firstBid', 'firstAsk', 'lastBid', 'lastAsk')
+        'first_entry_skipped'      = @('bid', 'ask', 'spread')
+        'basket_close_failed'      = @('bid', 'ask')
+        'hard_breakeven_violated'  = @('bid', 'ask', 'placedLot', 'fillPrice', 'hardBreakevenTarget', 'projectedProfitAfterFill', 'sizingProjectedProfitAfter')
+        'run_ended'                = @('engineRealizedProfit')
         'margin_call_entered'      = @('bid', 'ask', 'balance', 'equity', 'usedMargin')
         'margin_call_left'         = @('bid', 'ask', 'balance', 'equity', 'usedMargin')
     }
@@ -695,6 +754,7 @@ try {
         'forced_liquidation'      = @('rawRequestedLot', 'exactRequiredLot', 'beforeFreeMargin', 'beforeMarginLevelPercent', 'afterFreeMargin', 'afterMarginLevelPercent')
         'entry_rejected'          = @('rawRequestedLots', 'exactRequiredLots', 'maximumVolume', 'hardBreakevenTarget', 'targetSpread', 'targetBid', 'targetAsk', 'existingProfitAtTarget', 'marginalProfitPerLot', 'projectedProfitAfter', 'accountUsedMargin', 'accountFreeMargin', 'accountMarginLevelPercent', 'projectedUsedMargin', 'projectedFreeMargin')
         'entry_rejection_summary' = @('minNormalizedRequiredLots', 'maxNormalizedRequiredLots', 'minProjectedFreeMargin', 'maxProjectedFreeMargin')
+        'run_ended'               = @('failureBid', 'failureAsk')
         'margin_call_entered'     = @('freeMargin', 'marginLevelPercent')
         'margin_call_left'        = @('freeMargin', 'marginLevelPercent')
     }
@@ -1117,6 +1177,42 @@ try {
         }
     }
 
+    # F2. The run-end recap order must match the authoritative RejectionTrace order.
+    $summaryOrder = @($rejectionSummaryEvents | ForEach-Object {
+            "$([long](Get-Property $_ 'basket'))/$([long](Get-Property $_ 'tradeNumber'))/$([string](Get-Property $_ 'side'))" })
+    $authoritativeRejectionOrder = @($rejectionTraceRows | ForEach-Object {
+            "$([long](Get-Property $_ 'Basket'))/$([long](Get-Property $_ 'TradeNumber'))/$([string](Get-Property $_ 'Side'))" })
+    Test-ParityCheck (($summaryOrder -join ',') -eq ($authoritativeRejectionOrder -join ',')) `
+        "entry_rejection_summary parity: the summary order does not match the authoritative RejectionTrace order"
+
+    # F3. first_entry_skipped: every published event must match the basket's authoritative
+    # SkippedFirstEntryTrace and the population must equal the trace population exactly.
+    $skippedTraceRows = New-Object System.Collections.Generic.List[object]
+    foreach ($basketRecord in $expectedBasketRecords) {
+        $trace = Get-Property $basketRecord 'SkippedFirstEntryTrace'
+        if ($null -eq $trace) { continue }
+        if ($trace -is [System.Collections.IEnumerable] -and $trace -isnot [string]) {
+            foreach ($row in $trace) { [void]$skippedTraceRows.Add($row) }
+        }
+        else { [void]$skippedTraceRows.Add($trace) }
+    }
+    $skippedEvents = @(Get-EventsOfType 'first_entry_skipped')
+    Test-ParityCheck ($skippedEvents.Count -eq $skippedTraceRows.Count) `
+        "first_entry_skipped parity: the package has $($skippedEvents.Count) events but the authoritative SkippedFirstEntryTrace population is $($skippedTraceRows.Count)"
+    foreach ($skippedEvent in $skippedEvents) {
+        $skippedBasket = [long](Get-Property $skippedEvent 'basket')
+        $skippedMatches = @($skippedTraceRows | Where-Object { [long](Get-Property $_ 'Basket') -eq $skippedBasket })
+        Test-ParityCheck ($skippedMatches.Count -eq 1) "first_entry_skipped parity: $($skippedMatches.Count) trace rows match basket $skippedBasket, expected exactly one"
+        if ($skippedMatches.Count -ge 1) {
+            $skippedRecord = $skippedMatches[0]
+            Test-NumberParity (Get-Property $skippedEvent 'quoteSequence') (Get-Property $skippedRecord 'FirstQuoteSequence') "first_entry_skipped[$skippedBasket].quoteSequence"
+            Test-TimeParity (Get-Property $skippedEvent 'time') (Get-Property $skippedRecord 'FirstTime') "first_entry_skipped[$skippedBasket].time"
+            Test-NumberParity (Get-Property $skippedEvent 'bid') (Get-Property $skippedRecord 'FirstBid') "first_entry_skipped[$skippedBasket].bid"
+            Test-NumberParity (Get-Property $skippedEvent 'ask') (Get-Property $skippedRecord 'FirstAsk') "first_entry_skipped[$skippedBasket].ask"
+            Test-NumberParity (Get-Property $skippedEvent 'attempts') (Get-Property $skippedRecord 'Attempts') "first_entry_skipped[$skippedBasket].attempts"
+        }
+    }
+
     # G. Hard-BE activation: every basket whose authoritative record activated hard-BE mode has
     # exactly one hard_breakeven_activated event, published at the first hard-BE-regime entry
     # (the engine removes liquidated legs from LegTrace, so the first hard-BE entry is the lowest
@@ -1192,6 +1288,30 @@ try {
         $anchor = Get-Property $basketRecord 'AnchorEvent'
         Test-NumberParity (Get-Property $event 'lowerTarget') (Get-Property $anchor 'LowerTarget') "hard_breakeven_activated[$sequence].lowerTarget"
         Test-NumberParity (Get-Property $event 'upperTarget') (Get-Property $anchor 'UpperTarget') "hard_breakeven_activated[$sequence].upperTarget"
+    }
+
+    # G2. Trailing activation lifecycle: at most one activation per basket, every activation maps
+    # to an anchored basket, and the authoritative Trailing closes map one-to-one onto activations.
+    $trailingLifecycleEvents = @(Get-EventsOfType 'trailing_activated')
+    $trailingByBasket = @{}
+    foreach ($trailingEvent in $trailingLifecycleEvents) {
+        $basket = [long](Get-Property $trailingEvent 'basket')
+        Test-ParityCheck (-not $trailingByBasket.ContainsKey($basket)) "trailing_activated parity: more than one activation for basket $basket"
+        $trailingByBasket[$basket] = $trailingEvent
+    }
+    $anchoredBasketNumbers = @{}
+    foreach ($anchorEvent in @(Get-EventsOfType 'basket_anchored')) {
+        $anchoredBasketNumbers[[long](Get-Property $anchorEvent 'basket')] = $true
+    }
+    foreach ($trailingBasket in @($trailingByBasket.Keys)) {
+        Test-ParityCheck ($anchoredBasketNumbers.ContainsKey([long]$trailingBasket)) "trailing_activated parity: basket $trailingBasket has no anchored basket"
+    }
+    $trailingCloseBaskets2 = @($closedBasketRecords | Where-Object { ([string](Get-Property $_ 'Reason')) -ceq 'Trailing' })
+    Test-ParityCheck ($trailingLifecycleEvents.Count -eq $trailingCloseBaskets2.Count) `
+        "trailing_activated parity: $($trailingLifecycleEvents.Count) activations but $($trailingCloseBaskets2.Count) authoritative Trailing closes"
+    foreach ($basketRecord in $trailingCloseBaskets2) {
+        $sequence = [long](Get-Property $basketRecord 'Sequence')
+        Test-ParityCheck ($trailingByBasket.ContainsKey($sequence)) "the authoritative Trailing close of basket $sequence has no trailing_activated event"
     }
 
     # H. run_ended account snapshot: the event's telemetry snapshot must be the final research
@@ -1295,6 +1415,10 @@ try {
     foreach ($event in $events) {
         $type = [string](Get-Property $event 'type')
         $eventId = [long](Get-Property $event 'id')
+        if ($type -eq 'entry_rejection_summary') { continue }
+        # Inventory transitions happen before the snapshot checks: an entry snapshot is the
+        # post-entry state, a forced-liquidation snapshot is the post-close state, and a close
+        # leaves the basket flat.
         if ($type -eq 'entry_executed') {
             $basket = [long](Get-Property $event 'basket')
             if (-not $openLegs.ContainsKey($basket)) { $openLegs[$basket] = @{} }
@@ -1302,14 +1426,15 @@ try {
                 side = [string](Get-Property $event 'side')
                 lot  = [decimal](Get-Property $event 'placedLot')
             }
-            continue
         }
-        if ($type -eq 'forced_liquidation') {
+        elseif ($type -eq 'forced_liquidation') {
             $basket = [long](Get-Property $event 'basket')
             if ($openLegs.ContainsKey($basket)) { [void]$openLegs[$basket].Remove([long](Get-Property $event 'tradeNumber')) }
-            continue
         }
-        if ($type -eq 'entry_rejection_summary') { continue }
+        elseif ($type -eq 'strategy_exit' -or $type -eq 'basket_liquidated') {
+            $basket = [long](Get-Property $event 'basket')
+            if ($openLegs.ContainsKey($basket)) { $openLegs[$basket] = @{} }
+        }
         if (-not $snapshotByEventId.ContainsKey($eventId)) { continue }
         $snapshot = $snapshotByEventId[$eventId]
         try {
@@ -1317,8 +1442,20 @@ try {
             Test-TimeParity (Get-Property $snapshot 'time') $eventTime "telemetry[$eventId].time"
         }
         catch { Add-Failure $_.Exception.Message }
-        if (Has-Property $event 'quoteSequence') {
+        # The applicable quote identity: the generic quoteSequence, the liquidation trigger quote
+        # for forced_liquidation (which does not expose the generic property), zero at run start
+        # and the processed-quote counter at run end.
+        if ($type -eq 'forced_liquidation') {
+            Test-NumberParity (Get-Property $snapshot 'quoteSequence') (Get-Property $event 'triggerQuoteSequence') "telemetry[$eventId].quoteSequence (trigger)"
+        }
+        elseif (Has-Property $event 'quoteSequence') {
             Test-NumberParity (Get-Property $snapshot 'quoteSequence') (Get-Property $event 'quoteSequence') "telemetry[$eventId].quoteSequence"
+        }
+        if ($type -eq 'run_started') {
+            Test-NumberParity (Get-Property $snapshot 'quoteSequence') 0 "telemetry[$eventId].quoteSequence (run start)"
+        }
+        if ($type -eq 'run_ended') {
+            Test-NumberParity (Get-Property $snapshot 'quoteSequence') (Get-Property $results 'quoteTicksProcessed') "telemetry[$eventId].quoteSequence (run end)"
         }
         if ($snapshotAccountFields.ContainsKey($type)) {
             foreach ($field in $snapshotAccountFields[$type]) {
@@ -1332,11 +1469,100 @@ try {
                 Test-NumberParity (Get-Property $snapshot $pair[0]) (Get-Property $event $pair[1]) "telemetry[$eventId].$($pair[1])"
             }
         }
-        if ($type -eq 'margin_call_entered') {
-            Test-BoolParity (Get-Property $snapshot 'marginCallActive') $true "telemetry[$eventId].marginCallActive (entered)"
+        # Margin Call state conditions and the account arithmetic identities, checked against the
+        # already-authoritative margin contract (MarginModel.MarginLevelPercent and
+        # ResearchAccount.ObserveMarginState), never by reconstructing strategy logic.
+        if ($type -eq 'margin_call_entered' -or $type -eq 'margin_call_left') {
+            $equityValue = Convert-JsonDecimal (Get-Property $snapshot 'equity') "telemetry[$eventId].equity"
+            $usedValue = Convert-JsonDecimal (Get-Property $snapshot 'usedMargin') "telemetry[$eventId].usedMargin"
+            $freeValue = Convert-JsonDecimal (Get-Property $snapshot 'freeMargin') "telemetry[$eventId].freeMargin"
+            $levelValue = Convert-JsonDecimal (Get-Property $snapshot 'marginLevelPercent') "telemetry[$eventId].marginLevelPercent"
+            if ($null -ne $equityValue -and $null -ne $usedValue -and $null -ne $freeValue) {
+                Test-NumberApproxParity $freeValue ($equityValue - $usedValue) "telemetry[$eventId].freeMargin identity"
+            }
+            if ($null -ne $equityValue -and $null -ne $usedValue -and $null -ne $levelValue -and $usedValue -gt 0) {
+                Test-NumberApproxParity $levelValue ($equityValue / $usedValue * 100) "telemetry[$eventId].marginLevelPercent identity"
+            }
+            $marginCallLevel = [decimal](Get-Property $resultMarginParameters 'MarginCallLevelPercent')
+            if ($type -eq 'margin_call_entered') {
+                Test-BoolParity (Get-Property $snapshot 'marginCallActive') $true "telemetry[$eventId].marginCallActive (entered)"
+                Test-ParityCheck ($null -ne $levelValue -and $levelValue -le $marginCallLevel) "margin_call_entered[$eventId] has a margin level above the configured Margin Call level"
+            }
+            else {
+                Test-BoolParity (Get-Property $snapshot 'marginCallActive') $false "telemetry[$eventId].marginCallActive (left)"
+                Test-ParityCheck ($null -eq $levelValue -or $levelValue -gt $marginCallLevel) "margin_call_left[$eventId] has a margin level inside the Margin Call condition"
+            }
         }
-        if ($type -eq 'margin_call_left') {
-            Test-BoolParity (Get-Property $snapshot 'marginCallActive') $false "telemetry[$eventId].marginCallActive (left)"
+        if ($type -eq 'stop_out_triggered') {
+            $balanceValue = Convert-JsonDecimal (Get-Property $event 'balance') "stop_out_triggered[$eventId].balance"
+            $floatingValue = Convert-JsonDecimal (Get-Property $event 'floatingProfit') "stop_out_triggered[$eventId].floatingProfit"
+            $equityValue = Convert-JsonDecimal (Get-Property $event 'equity') "stop_out_triggered[$eventId].equity"
+            $usedValue = Convert-JsonDecimal (Get-Property $event 'usedMargin') "stop_out_triggered[$eventId].usedMargin"
+            $freeValue = Convert-JsonDecimal (Get-Property $event 'freeMargin') "stop_out_triggered[$eventId].freeMargin"
+            $levelValue = Convert-JsonDecimal (Get-Property $event 'marginLevelPercent') "stop_out_triggered[$eventId].marginLevelPercent"
+            if ($null -ne $balanceValue -and $null -ne $floatingValue -and $null -ne $equityValue) {
+                Test-NumberParity $equityValue ($balanceValue + $floatingValue) "stop_out_triggered[$eventId].equity identity"
+            }
+            if ($null -ne $equityValue -and $null -ne $usedValue -and $null -ne $freeValue) {
+                Test-NumberApproxParity $freeValue ($equityValue - $usedValue) "stop_out_triggered[$eventId].freeMargin identity"
+            }
+            if ($null -ne $equityValue -and $null -ne $usedValue -and $null -ne $levelValue -and $usedValue -gt 0) {
+                Test-NumberApproxParity $levelValue ($equityValue / $usedValue * 100) "stop_out_triggered[$eventId].marginLevelPercent identity"
+            }
+        }
+        if ($type -eq 'forced_liquidation') {
+            foreach ($prefix in @('before', 'after')) {
+                $balanceValue = Convert-JsonDecimal (Get-Property $event ($prefix + 'Balance')) "forced_liquidation[$eventId].$($prefix)Balance"
+                $floatingValue = Convert-JsonDecimal (Get-Property $event ($prefix + 'FloatingProfit')) "forced_liquidation[$eventId].$($prefix)FloatingProfit"
+                $equityValue = Convert-JsonDecimal (Get-Property $event ($prefix + 'Equity')) "forced_liquidation[$eventId].$($prefix)Equity"
+                $usedValue = Convert-JsonDecimal (Get-Property $event ($prefix + 'UsedMargin')) "forced_liquidation[$eventId].$($prefix)UsedMargin"
+                $freeValue = Convert-JsonDecimal (Get-Property $event ($prefix + 'FreeMargin')) "forced_liquidation[$eventId].$($prefix)FreeMargin"
+                $levelValue = Convert-JsonDecimal (Get-Property $event ($prefix + 'MarginLevelPercent')) "forced_liquidation[$eventId].$($prefix)MarginLevelPercent"
+                if ($null -ne $balanceValue -and $null -ne $floatingValue -and $null -ne $equityValue) {
+                    Test-NumberParity $equityValue ($balanceValue + $floatingValue) "forced_liquidation[$eventId].$($prefix) equity identity"
+                }
+                if ($null -ne $equityValue -and $null -ne $usedValue -and $null -ne $freeValue) {
+                    Test-NumberApproxParity $freeValue ($equityValue - $usedValue) "forced_liquidation[$eventId].$($prefix) freeMargin identity"
+                }
+                if ($null -ne $equityValue -and $null -ne $usedValue -and $null -ne $levelValue -and $usedValue -gt 0) {
+                    Test-NumberApproxParity $levelValue ($equityValue / $usedValue * 100) "forced_liquidation[$eventId].$($prefix) marginLevelPercent identity"
+                }
+            }
+        }
+        if ($type -eq 'run_ended') {
+            $balanceValue = Convert-JsonDecimal (Get-Property $snapshot 'balance') "telemetry[$eventId].balance"
+            $floatingValue = Convert-JsonDecimal (Get-Property $snapshot 'floatingProfit') "telemetry[$eventId].floatingProfit"
+            $equityValue = Convert-JsonDecimal (Get-Property $snapshot 'equity') "telemetry[$eventId].equity"
+            $usedValue = Convert-JsonDecimal (Get-Property $snapshot 'usedMargin') "telemetry[$eventId].usedMargin"
+            $freeValue = Convert-JsonDecimal (Get-Property $snapshot 'freeMargin') "telemetry[$eventId].freeMargin"
+            $levelValue = Convert-JsonDecimal (Get-Property $snapshot 'marginLevelPercent') "telemetry[$eventId].marginLevelPercent"
+            if ($null -ne $balanceValue -and $null -ne $floatingValue -and $null -ne $equityValue) {
+                Test-NumberParity $equityValue ($balanceValue + $floatingValue) "telemetry[$eventId].equity identity"
+            }
+            if ($null -ne $equityValue -and $null -ne $usedValue -and $null -ne $freeValue) {
+                Test-NumberApproxParity $freeValue ($equityValue - $usedValue) "telemetry[$eventId].freeMargin identity"
+            }
+            if ($null -ne $equityValue -and $null -ne $usedValue -and $null -ne $levelValue -and $usedValue -gt 0) {
+                Test-NumberApproxParity $levelValue ($equityValue / $usedValue * 100) "telemetry[$eventId].marginLevelPercent identity"
+            }
+        }
+        # The parity-verified inventory transition: the snapshot must be the derived post-entry
+        # (entry) or post-close (forced liquidation) state of the surviving basket legs.
+        if ($type -eq 'entry_executed' -or $type -eq 'forced_liquidation') {
+            $basket = [long](Get-Property $event 'basket')
+            $legs = if ($openLegs.ContainsKey($basket)) { $openLegs[$basket] } else { @{} }
+            $count = 0
+            $gross = [decimal]0
+            $net = [decimal]0
+            foreach ($leg in $legs.Values) {
+                $count++
+                $gross += $leg.lot
+                if ($leg.side -ceq 'Buy') { $net += $leg.lot } else { $net -= $leg.lot }
+            }
+            $qualifier = if ($type -eq 'entry_executed') { 'post-entry' } else { 'post-close' }
+            Test-NumberParity (Get-Property $snapshot 'openPositions') $count "telemetry[$eventId].openPositions (derived $qualifier)"
+            Test-NumberParity (Get-Property $snapshot 'grossLots') $gross "telemetry[$eventId].grossLots (derived $qualifier)"
+            Test-NumberParity (Get-Property $snapshot 'absoluteNetLots') ([math]::Abs($net)) "telemetry[$eventId].absoluteNetLots (derived $qualifier)"
         }
         if ($type -eq 'hard_breakeven_activated' -or $type -eq 'trailing_activated') {
             $basket = [long](Get-Property $event 'basket')

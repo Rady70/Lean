@@ -11,19 +11,24 @@ three baskets: a trailing basket, a stop-out/margin-call basket and a hard-BE ba
 tail attempt is rejected and a later attempt of the same trade fills. It asserts that the
 strengthened verifier returns PASS on it, then applies each payload mutation in a copy of the tree:
 
-  * entry_executed tradeNumber / fillPrice             (payload parity B)
-  * forced_liquidation ordinal / closePrice            (payload parity D)
-  * stop_out_triggered time                            (payload parity E)
-  * swap the two same-quote forced liquidations        (payload parity D order)
-  * manifest.modelRevision / payload sha256 / outcome  (manifest identity/outcome)
-  * delete one event / one telemetry snapshot          (coverage)
-  * extra periodic row inside the 300-second interval  (periodic bound)
+  * entry_executed tradeNumber / fillPrice / snapshot quoteSequence / post-entry inventory
+  * forced_liquidation ordinal / closePrice / commission / snapshot time+trigger quote /
+    event afterBalance
+  * stop_out_triggered time                              (payload parity E)
+  * swap the two same-quote forced liquidations          (payload parity D order)
+  * manifest.modelRevision / payload sha256 / outcome / numeric parameter representation
+  * delete one event / one telemetry snapshot            (coverage)
+  * extra periodic row inside the 300-second interval    (periodic bound)
   * hard-BE activation snapshot replaced by the following entry snapshot (derived pre-attempt state)
-  * hard-BE activation moved after its enabling attempt (same-timestamp lifecycle order)
-  * hard-BE activation timed at the later fill          (earliest-attempt selection)
-  * trailing_activated threshold / snapshot quote       (derived threshold, snapshot binding)
-  * margin_call_entered balance / moved after the Stop Out (event-snapshot parity, lifecycle order)
-  * entry_rejected decimal changed from string to JSON number (exact-string serialization)
+  * hard-BE activation moved after its enabling attempt  (same-timestamp lifecycle order)
+  * hard-BE activation timed at the later fill           (earliest-attempt selection)
+  * trailing_activated threshold / snapshot quote / duplicate activation (lifecycle + threshold)
+  * margin_call_entered balance-only change, moved after the Stop Out, and a consistent
+    event+snapshot impossible state                        (parity, lifecycle, margin condition)
+  * entry_rejected / forced_liquidation / basket_liquidated / manifest parameter decimals changed
+    from exact strings to JSON numbers                     (exact-string serialization)
+  * spurious first_entry_skipped / extra run_started / unknown event type (stream contract)
+  * swapped rejection recaps                              (authoritative rejection order)
 
 After each mutation the package's own derived integrity (the changed payload's sha256/bytes/lines,
 the event counts, the telemetry counts and the package fingerprint) is recomputed automatically,
@@ -33,7 +38,7 @@ return a non-zero exit code.
 The test also builds two positive failed-run fixtures (a forward-time fault whose quote is later
 than the last accepted quote and an out-of-order fault whose quote precedes it) and asserts the
 verifier PASSES them under the documented max(lastProcessedQuote, failureQuote) rule, then rejects
-a tampered failure identity and a run-end time that ignores the rule.
+a tampered failure identity, a run-end time that ignores the rule and a numeric failureBid.
 
 The test is self-contained, uses only Windows PowerShell 5.1 syntax and invokes the verifier with
 the current machine's pwsh (falling back to Windows PowerShell). Exit 0 only when the base package
@@ -156,6 +161,72 @@ function New-EventWithId([object]$source, [long]$id) {
     return $copy
 }
 
+# Duplicates the event at a 0-based index immediately after itself, renumbers every event id so
+# the id sequence stays 1..N, and duplicates its telemetry snapshot. Because the ids were
+# sequential, originals at or after the insertion keep a valid shifted identity.
+function Insert-DuplicateEvent([string]$directory, [int]$sourceIndex) {
+    $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
+    $rows = Read-JsonLinesArray $eventsPath
+    if ($sourceIndex -lt 0 -or $sourceIndex -ge $rows.Count) { throw "source index $sourceIndex is outside the event stream" }
+    $sourceId = $sourceIndex + 1
+    $insertIndex = $sourceIndex + 1
+    $newId = $insertIndex + 1
+    $duplicate = New-EventWithId $rows[$sourceIndex] $newId
+    $rows.Insert($insertIndex, $duplicate)
+    for ($i = $insertIndex + 1; $i -lt $rows.Count; $i++) { $rows[$i].id = $i + 1 }
+    Write-JsonLinesFile $eventsPath $rows
+
+    $telemetryPath = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+    $telemetry = Read-JsonLinesArray $telemetryPath
+    $snapshotCopy = $null
+    $snapshotPosition = 0
+    for ($i = 0; $i -lt $telemetry.Count; $i++) {
+        $row = $telemetry[$i]
+        if ([string]$row.kind -ne 'event') { continue }
+        if ([long]$row.eventId -eq $sourceId) { $snapshotCopy = $row; $snapshotPosition = $i + 1 }
+        elseif ([long]$row.eventId -gt $sourceId) { $row.eventId = [long]$row.eventId + 1 }
+    }
+    if ($null -eq $snapshotCopy) { throw "the source event has no telemetry snapshot" }
+    $newSnapshot = Copy-ObjectWithUpdates $snapshotCopy @{ eventId = $newId }
+    $telemetry.Insert($snapshotPosition, $newSnapshot)
+    Write-JsonLinesFile $telemetryPath $telemetry
+}
+
+# Inserts a synthetic event and its telemetry snapshot at a 0-based index, renumbering ids.
+function Insert-EventAndSnapshot(
+    [string]$directory, [int]$index, [System.Collections.IDictionary]$payload,
+    [object]$snapshotBase, [hashtable]$snapshotOverrides) {
+    $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
+    $rows = Read-JsonLinesArray $eventsPath
+    $newId = $index + 1
+    $event = [ordered]@{}
+    foreach ($key in $payload.Keys) { $event[$key] = $payload[$key] }
+    $event['id'] = $newId
+    $rows.Insert($index, $event)
+    for ($i = $index + 1; $i -lt $rows.Count; $i++) { $rows[$i].id = $i + 1 }
+    Write-JsonLinesFile $eventsPath $rows
+
+    $telemetryPath = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+    $telemetry = Read-JsonLinesArray $telemetryPath
+    $overrides = @{}
+    foreach ($key in $snapshotOverrides.Keys) { $overrides[$key] = $snapshotOverrides[$key] }
+    $overrides['kind'] = 'event'
+    $overrides['eventId'] = $newId
+    $snapshot = Copy-ObjectWithUpdates $snapshotBase $overrides
+    $insertPosition = $telemetry.Count
+    for ($i = 0; $i -lt $telemetry.Count; $i++) {
+        $row = $telemetry[$i]
+        if ([string]$row.kind -ne 'event') { continue }
+        if ([long]$row.eventId -ge $newId) { $insertPosition = $i; break }
+    }
+    for ($i = 0; $i -lt $telemetry.Count; $i++) {
+        $row = $telemetry[$i]
+        if ([string]$row.kind -eq 'event' -and [long]$row.eventId -ge $newId) { $row.eventId = [long]$row.eventId + 1 }
+    }
+    $telemetry.Insert($insertPosition, $snapshot)
+    Write-JsonLinesFile $telemetryPath $telemetry
+}
+
 function Add-SecondsToUtc([object]$value, [double]$seconds) {
     if ($value -is [datetime]) {
         $time = [datetime]$value
@@ -243,6 +314,7 @@ function New-SyntheticResultPackage([string]$directory) {
     $entryThreeTime = New-UtcTime '2019-01-02T02:13:00.000'
     $periodicThreeTime = $entryThreeTime
     $trailingOneTime = New-UtcTime '2019-01-02T02:05:00.000'
+    $rejectionOneTime = New-UtcTime '2019-01-02T02:06:00.000'
     $anchorFourTime = New-UtcTime '2019-01-02T02:14:00.000'
     $entryFourOneTime = New-UtcTime '2019-01-02T02:14:10.000'
     $entryFourTwoTime = New-UtcTime '2019-01-02T02:14:20.000'
@@ -284,6 +356,22 @@ function New-SyntheticResultPackage([string]$directory) {
         HardBreakevenTarget = $null; TargetSpread = $null; TargetBid = $null; TargetAsk = $null
         ExistingProfitAtTarget = $null; MarginalProfitPerLot = $null; ProjectedProfitAfter = $null
     }
+    $rejectionOne = [ordered]@{
+        Basket = 1; FirstQuoteSequence = 103; FirstTime = Format-UtcZ $rejectionOneTime
+        FirstBid = [decimal]1004.0; FirstAsk = [decimal]1004.2; TradeNumber = 2; Side = 'Sell'
+        Reason = 'VolumeExceedsMaximum'; RawRequestedLots = [decimal]0.2; ExactRequiredLots = $null
+        NormalizedRequiredLots = [decimal]0.2; PlacedLots = $null; NormalizedLot = $null; Outcome = $null
+        HardBreakevenTarget = $null; TargetSpread = $null; TargetBid = $null; TargetAsk = $null
+        ExistingProfitAtTarget = $null; MarginalProfitPerLot = $null; ProjectedProfitAfter = $null
+        AccountUsedMargin = [decimal]100.0; AccountFreeMargin = [decimal]9900.0; AccountMarginLevelPercent = [decimal]9990.5
+        ProjectedUsedMargin = $null; ProjectedFreeMargin = $null
+        Message = 'Synthetic volume rejection; the trade may be retried on a later eligible quote.'
+        Attempts = 1; LastQuoteSequence = 103; LastTime = Format-UtcZ $rejectionOneTime
+        LastBid = [decimal]1004.0; LastAsk = [decimal]1004.2
+        ParityAlgorithm = 'synthetic parity algorithm'; ParityHash = 'fedcba9876543210'
+        MinNormalizedRequiredLots = [decimal]0.2; MaxNormalizedRequiredLots = [decimal]0.2
+        MinProjectedFreeMargin = $null; MaxProjectedFreeMargin = $null
+    }
     $basketOne = [ordered]@{
         Sequence = 1; AnchorEvent = $anchorOne; CreatedTime = Format-UtcZ $anchorOneTime; ClosedTime = Format-UtcZ $exitOneTime
         CloseQuoteSequence = 102; CloseBid = [decimal]1005.0; CloseAsk = [decimal]1005.2; Anchor = [decimal]1000.1
@@ -292,7 +380,7 @@ function New-SyntheticResultPackage([string]$directory) {
         RawProfit = [decimal]0.5; ExitProfit = [decimal]0.5; Threshold = [decimal]0.4
         BuyClosePrice = [decimal]1005.0; SellClosePrice = [decimal]1005.2; Commission = [decimal]0.0
         RealizedProfit = [decimal]0.5; LiquidatedRealizedProfit = [decimal]0.0; LiquidatedPositions = 0
-        HistoricalEntries = 1; LiquidationTrace = @(); LegTrace = @($legOne); RejectionTrace = @()
+        HistoricalEntries = 1; LiquidationTrace = @(); LegTrace = @($legOne); RejectionTrace = @($rejectionOne)
         SkippedFirstEntryTrace = $null
     }
 
@@ -400,7 +488,7 @@ function New-SyntheticResultPackage([string]$directory) {
     $basketFour = [ordered]@{
         Sequence = 3; AnchorEvent = $anchorFour; CreatedTime = Format-UtcZ $anchorFourTime; ClosedTime = Format-UtcZ $exitFourTime
         CloseQuoteSequence = 507; CloseBid = [decimal]1015.0; CloseAsk = [decimal]1015.4; Anchor = [decimal]1010.2
-        Reason = 'Trailing'; Legs = 5; BuyLots = [decimal]1.5; SellLots = [decimal]0.0
+        Reason = 'Escape'; Legs = 5; BuyLots = [decimal]1.5; SellLots = [decimal]0.0
         GrossLots = [decimal]1.5; NetLots = [decimal]1.5; HardBreakevenModeActive = $true
         RawProfit = [decimal]5.0; ExitProfit = [decimal]5.0; Threshold = [decimal]4.0
         BuyClosePrice = [decimal]1015.0; SellClosePrice = [decimal]1015.4; Commission = [decimal]0.0
@@ -476,7 +564,7 @@ function New-SyntheticResultPackage([string]$directory) {
             Time = Format-UtcZ $runEndTime; Bid = [decimal]990.0; Ask = [decimal]990.4
             Mid = [decimal]990.2; Spread = [decimal]0.4; IsValid = $true
         }
-        legsOpened = 8; skippedFirstEntryQuotes = 0; distinctRejectedEntries = 1; rejectedEntryAttempts = 2
+        legsOpened = 8; skippedFirstEntryQuotes = 0; distinctRejectedEntries = 2; rejectedEntryAttempts = 3
         basketsClosed = 2; basketsLiquidated = 1; forcedLiquidations = 2; realizedProfit = [decimal]3.48
         researchAccount = $researchAccount; researchMargin = $researchMargin
         closedBaskets = @($basketOne, $basketTwo, $basketFour)
@@ -508,6 +596,17 @@ function New-SyntheticResultPackage([string]$directory) {
             type = 'trailing_activated'; basket = 1; quoteSequence = 110; time = Format-UtcZ $trailingOneTime
             bid = Format-Decimal 1005.0; ask = Format-Decimal 1005.2
             profit = Format-Decimal 12.6; activationThreshold = Format-Decimal 12.5
+        })
+    Add-SyntheticEvent $events ([ordered]@{
+            type = 'entry_rejected'; basket = 1; tradeNumber = 2; side = 'Sell'; reason = 'VolumeExceedsMaximum'
+            quoteSequence = 103; time = Format-UtcZ $rejectionOneTime
+            bid = Format-Decimal 1004.0; ask = Format-Decimal 1004.2
+            rawRequestedLots = Format-Decimal 0.2; exactRequiredLots = $null; normalizedRequiredLots = Format-Decimal 0.2
+            maximumVolume = Format-Decimal 50.0; hardBreakevenTarget = $null; targetSpread = $null; targetBid = $null
+            targetAsk = $null; existingProfitAtTarget = $null; marginalProfitPerLot = $null; projectedProfitAfter = $null
+            sizingOutcome = $null; accountUsedMargin = Format-Decimal 100.0; accountFreeMargin = Format-Decimal 9900.0
+            accountMarginLevelPercent = Format-Decimal 9990.5; projectedUsedMargin = $null; projectedFreeMargin = $null
+            message = 'Synthetic volume rejection; the trade may be retried on a later eligible quote.'
         })
     Add-SyntheticEvent $events ([ordered]@{
             type = 'strategy_exit'; basket = 1; reason = 'Trailing'; quoteSequence = 102; time = Format-UtcZ $exitOneTime
@@ -592,7 +691,7 @@ function New-SyntheticResultPackage([string]$directory) {
             sizingOutcome = 'Feasible'
         })
     Add-SyntheticEvent $events ([ordered]@{
-            type = 'strategy_exit'; basket = 3; reason = 'Trailing'; quoteSequence = 507; time = Format-UtcZ $exitFourTime
+            type = 'strategy_exit'; basket = 3; reason = 'Escape'; quoteSequence = 507; time = Format-UtcZ $exitFourTime
             bid = Format-Decimal 1015.0; ask = Format-Decimal 1015.4; anchor = Format-Decimal 1010.2; legs = 5
             buyLots = Format-Decimal 1.5; sellLots = Format-Decimal 0.0; grossLots = Format-Decimal 1.5
             netLots = Format-Decimal 1.5; hardBreakevenModeActive = $true; rawProfit = Format-Decimal 5.0
@@ -603,9 +702,9 @@ function New-SyntheticResultPackage([string]$directory) {
     Add-SyntheticEvent $events ([ordered]@{
             type = 'margin_call_entered'; quoteSequence = 399; time = Format-UtcZ $marginEnterTime
             bid = Format-Decimal 990.0; ask = Format-Decimal 990.4
-            balance = Format-Decimal 10000.5; equity = Format-Decimal 9990.5
-            usedMargin = Format-Decimal 200.0; freeMargin = Format-Decimal 9790.5
-            marginLevelPercent = Format-Decimal 4995.25; openPositions = 2
+            balance = Format-Decimal 10000.5; equity = Format-Decimal 80.0
+            usedMargin = Format-Decimal 200.0; freeMargin = Format-Decimal -120.0
+            marginLevelPercent = Format-Decimal 40.0; openPositions = 2
         })
     Add-SyntheticEvent $events ([ordered]@{
             type = 'stop_out_triggered'; basket = 2; reason = 'MarginLevel'; quoteSequence = 400
@@ -667,6 +766,18 @@ function New-SyntheticResultPackage([string]$directory) {
             marginLevelPercent = $null; openPositions = 0
         })
     Add-SyntheticEvent $events ([ordered]@{
+            type = 'entry_rejection_summary'; basket = 1; tradeNumber = 2; side = 'Sell'
+            reason = 'VolumeExceedsMaximum'; outcome = $null; attempts = 1
+            firstQuoteSequence = 103; firstTime = Format-UtcZ $rejectionOneTime
+            firstBid = Format-Decimal 1004.0; firstAsk = Format-Decimal 1004.2
+            lastQuoteSequence = 103; lastTime = Format-UtcZ $rejectionOneTime
+            lastBid = Format-Decimal 1004.0; lastAsk = Format-Decimal 1004.2
+            parityAlgorithm = 'synthetic parity algorithm'; parityHash = 'fedcba9876543210'
+            minNormalizedRequiredLots = Format-Decimal 0.2; maxNormalizedRequiredLots = Format-Decimal 0.2
+            minProjectedFreeMargin = $null; maxProjectedFreeMargin = $null
+            message = 'Synthetic volume rejection; the trade may be retried on a later eligible quote.'
+        })
+    Add-SyntheticEvent $events ([ordered]@{
             type = 'entry_rejection_summary'; basket = 3; tradeNumber = 5; side = 'Buy'
             reason = 'InsufficientMargin'; outcome = $null; attempts = 2
             firstQuoteSequence = 505; firstTime = Format-UtcZ $activationFourTime
@@ -683,41 +794,42 @@ function New-SyntheticResultPackage([string]$directory) {
             failureKind = $null; failureCondition = $null; failureMessage = $null
             failureQuoteTime = $null; failureBid = $null; failureAsk = $null
             quoteTicksProcessed = 5; quoteOnlyQuotes = 1; strategyEligibleQuotes = 4; legsOpened = 8
-            basketsClosed = 2; basketsLiquidated = 1; forcedLiquidations = 2; distinctRejectedEntries = 1
-            rejectedEntryAttempts = 2; skippedFirstEntryQuotes = 0; engineRealizedProfit = Format-Decimal 3.48
+            basketsClosed = 2; basketsLiquidated = 1; forcedLiquidations = 2; distinctRejectedEntries = 2
+            rejectedEntryAttempts = 3; skippedFirstEntryQuotes = 0; engineRealizedProfit = Format-Decimal 3.48
             deliveryQuoteCount = 3; deliverySemanticDigest = $delivered.semantic_digest
             deliveryFirstUtc = $delivered.first_canonical_utc; deliveryLastUtc = $delivered.last_canonical_utc
         })
 
     # ---- Telemetry ---- (one event snapshot per significant event, in event order)
     $telemetry = New-Object System.Collections.Generic.List[object]
-    Add-SyntheticTelemetry $telemetry 'event' $events[0]['id'] $runStart 1 10000.0 10000.0 0.0 $true 0.0 0.0 10000.0 $null $false 0 0.0 0.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[0]['id'] $runStart 0 10000.0 10000.0 0.0 $true 0.0 0.0 10000.0 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[1]['id'] $anchorOneTime 100 10000.0 10000.0 0.0 $true 0.0 0.0 10000.0 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[2]['id'] $entryOneTime 101 10000.0 9999.5 -0.5 $true 0.5 100.0 9900.0 9999.0 $false 1 0.1 0.1
     Add-SyntheticTelemetry $telemetry 'periodic' $null $periodicOneTime 101 10000.0 9999.5 -0.5 $true 0.5 100.0 9900.0 9999.0 $false 1 0.1 0.1
     Add-SyntheticTelemetry $telemetry 'periodic' $null $periodicTwoTime 110 10000.0 10000.5 0.5 $true 0.5 100.0 9900.5 10000.0 $false 1 0.1 0.1
     Add-SyntheticTelemetry $telemetry 'event' $events[3]['id'] $trailingOneTime 110 10000.5 10000.5 0.5 $true 0.5 100.0 9900.5 10000.0 $false 1 0.1 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[4]['id'] $exitOneTime 102 10000.5 10000.5 0.0 $true 0.5 0.0 10000.5 $null $false 0 0.0 0.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[5]['id'] $anchorTwoTime 300 10000.5 10000.5 0.0 $true 0.5 0.0 10000.5 $null $false 0 0.0 0.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[6]['id'] $entryTwoTime 301 10000.5 10000.48 -0.02 $true 0.5 100.0 9900.5 10000.5 $false 1 0.1 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[7]['id'] $entryThreeTime 302 10000.5 10000.46 -0.04 $true 0.5 200.0 9800.5 10000.5 $false 2 0.3 0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[4]['id'] $rejectionOneTime 103 10000.5 10000.45 -0.05 $true 0.5 100.0 9900.5 10000.45 $false 1 0.1 0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[5]['id'] $exitOneTime 102 10000.5 10000.5 0.0 $true 0.5 0.0 10000.5 $null $false 0 0.0 0.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[6]['id'] $anchorTwoTime 300 10000.5 10000.5 0.0 $true 0.5 0.0 10000.5 $null $false 0 0.0 0.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[7]['id'] $entryTwoTime 301 10000.5 10000.48 -0.02 $true 0.5 100.0 9900.5 10000.5 $false 1 0.1 0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[8]['id'] $entryThreeTime 302 10000.5 10000.46 -0.04 $true 0.5 200.0 9800.5 10000.5 $false 2 0.3 0.1
     Add-SyntheticTelemetry $telemetry 'periodic' $null $periodicThreeTime 302 10000.5 10000.46 -0.04 $true 0.5 200.0 9800.5 10000.5 $false 2 0.3 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[8]['id'] $anchorFourTime 500 10000.5 10000.46 -0.04 $true 0.5 200.0 9800.5 10000.5 $false 2 0.3 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[9]['id'] $entryFourOneTime 501 10000.5 10000.4 -0.1 $true 0.5 100.0 9900.5 10000.4 $false 1 0.1 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[10]['id'] $entryFourTwoTime 502 10000.5 10000.35 -0.15 $true 0.5 150.0 9850.5 10000.35 $false 2 0.3 0.3
-    Add-SyntheticTelemetry $telemetry 'event' $events[11]['id'] $entryFourThreeTime 503 10000.5 10000.3 -0.2 $true 0.5 200.0 9800.5 10000.3 $false 3 0.6 0.6
-    Add-SyntheticTelemetry $telemetry 'event' $events[12]['id'] $entryFourFourTime 504 10000.5 10000.25 -0.25 $true 0.5 250.0 9750.5 10000.25 $false 4 1.0 1.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[13]['id'] $activationFourTime 505 10000.5 10000.25 -0.25 $true 0.5 250.0 9750.5 10000.25 $false 4 1.0 1.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[9]['id'] $anchorFourTime 500 10000.5 10000.46 -0.04 $true 0.5 200.0 9800.5 10000.5 $false 2 0.3 0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[10]['id'] $entryFourOneTime 501 10000.5 10000.4 -0.1 $true 0.5 100.0 9900.5 10000.4 $false 1 0.1 0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[11]['id'] $entryFourTwoTime 502 10000.5 10000.35 -0.15 $true 0.5 150.0 9850.5 10000.35 $false 2 0.3 0.3
+    Add-SyntheticTelemetry $telemetry 'event' $events[12]['id'] $entryFourThreeTime 503 10000.5 10000.3 -0.2 $true 0.5 200.0 9800.5 10000.3 $false 3 0.6 0.6
+    Add-SyntheticTelemetry $telemetry 'event' $events[13]['id'] $entryFourFourTime 504 10000.5 10000.25 -0.25 $true 0.5 250.0 9750.5 10000.25 $false 4 1.0 1.0
     Add-SyntheticTelemetry $telemetry 'event' $events[14]['id'] $activationFourTime 505 10000.5 10000.25 -0.25 $true 0.5 250.0 9750.5 10000.25 $false 4 1.0 1.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[15]['id'] $entryFourFiveTime 506 10000.5 10000.2 -0.3 $true 0.5 300.0 9700.5 10000.2 $false 5 1.5 1.5
-    Add-SyntheticTelemetry $telemetry 'event' $events[16]['id'] $exitFourTime 507 10005.5 10005.5 0.0 $true 5.5 0.0 10005.5 $null $false 0 0.0 0.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[17]['id'] $marginEnterTime 399 10000.5 9990.5 -10.0 $true 0.5 200.0 9790.5 4995.25 $true 2 0.3 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[18]['id'] $stopOutTime 400 10000.5 9990.5 -10.0 $true 0.5 200.0 9790.5 4995.25 $false 2 0.3 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[19]['id'] $stopOutTime 400 9999.48 9990.5 -8.98 $true 2.98 100.0 9890.5 9990.5 $false 1 0.1 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[20]['id'] $stopOutTime 400 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[15]['id'] $activationFourTime 505 10000.5 10000.25 -0.25 $true 0.5 250.0 9750.5 10000.25 $false 4 1.0 1.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[16]['id'] $entryFourFiveTime 506 10000.5 10000.2 -0.3 $true 0.5 300.0 9700.5 10000.2 $false 5 1.5 1.5
+    Add-SyntheticTelemetry $telemetry 'event' $events[17]['id'] $exitFourTime 507 10005.5 10005.5 0.0 $true 5.5 0.0 10005.5 $null $false 0 0.0 0.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[18]['id'] $marginEnterTime 399 10000.5 80.0 -9920.5 $true 0.5 200.0 -120.0 40.0 $true 2 0.3 0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[19]['id'] $stopOutTime 400 10000.5 9990.5 -10.0 $true 0.5 200.0 9790.5 4995.25 $false 2 0.3 0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[20]['id'] $stopOutTime 400 9999.48 9990.5 -8.98 $true 2.98 100.0 9890.5 9990.5 $false 1 0.2 0.2
     Add-SyntheticTelemetry $telemetry 'event' $events[21]['id'] $stopOutTime 400 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[22]['id'] $marginLeaveTime 401 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[24]['id'] $runEndTime 413 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[22]['id'] $stopOutTime 400 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[23]['id'] $marginLeaveTime 401 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[26]['id'] $runEndTime 5 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
 
     # ---- Write payload files ----
     $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
@@ -780,8 +892,8 @@ function New-SyntheticResultPackage([string]$directory) {
         outcome = [ordered]@{ completed = $true; failureKind = $null; failureCondition = $null }
         counters = [ordered]@{
             quoteTicksProcessed = 5; quoteOnlyQuotes = 1; strategyEligibleQuotes = 4; legsOpened = 8
-            basketsClosed = 2; basketsLiquidated = 1; forcedLiquidations = 2; distinctRejectedEntries = 1
-            rejectedEntryAttempts = 2; skippedFirstEntryQuotes = 0; engineRealizedProfit = Format-Decimal 3.48
+            basketsClosed = 2; basketsLiquidated = 1; forcedLiquidations = 2; distinctRejectedEntries = 2
+            rejectedEntryAttempts = 3; skippedFirstEntryQuotes = 0; engineRealizedProfit = Format-Decimal 3.48
         }
         eventCounts = [pscustomobject]$eventCounts
         telemetryCounts = [ordered]@{ event = $eventSnapshotCount; periodic = $periodicCount }
@@ -1181,6 +1293,174 @@ $cases = @(
                 if ([string]$row.type -eq 'entry_rejected') { $row.projectedFreeMargin = [decimal]-150.0; break }
             }
             Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'entry_executed snapshot quoteSequence' @('telemetry-2019.jsonl') {
+            param($directory)
+            $events = Read-JsonLinesArray (Get-ArtifactPath $directory 'events.jsonl')
+            $entryId = $null
+            foreach ($row in $events) {
+                if ([string]$row.type -eq 'entry_executed') { $entryId = [long]$row.id; break }
+            }
+            $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $entryId) { $row.quoteSequence = 999999 }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'entry_executed snapshot post-entry inventory' @('telemetry-2019.jsonl') {
+            param($directory)
+            $events = Read-JsonLinesArray (Get-ArtifactPath $directory 'events.jsonl')
+            $entryId = $null
+            foreach ($row in $events) {
+                if ([string]$row.type -eq 'entry_executed' -and [long]$row.basket -eq 3 -and [long]$row.tradeNumber -eq 5) { $entryId = [long]$row.id; break }
+            }
+            $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $entryId) {
+                    $row.openPositions = 9
+                    $row.grossLots = '9.0'
+                    $row.absoluteNetLots = '9.0'
+                }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'forced_liquidation snapshot time and trigger quote' @('telemetry-2019.jsonl') {
+            param($directory)
+            $events = Read-JsonLinesArray (Get-ArtifactPath $directory 'events.jsonl')
+            $liquidationId = $null
+            foreach ($row in $events) {
+                if ([string]$row.type -eq 'forced_liquidation') { $liquidationId = [long]$row.id; break }
+            }
+            $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $liquidationId) {
+                    $row.time = '2019-01-02T02:23:00.500Z'
+                    $row.quoteSequence = 401
+                }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'forced_liquidation event afterBalance' @('events.jsonl') {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'events.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.type -eq 'forced_liquidation') { $row.afterBalance = '1.0'; break }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'forced_liquidation commission as a JSON number' @('events.jsonl') {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'events.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.type -eq 'forced_liquidation') { $row.commission = [decimal]0.0; break }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'duplicate trailing_activated' @('events.jsonl', 'telemetry-2019.jsonl') {
+            param($directory)
+            $events = Read-JsonLinesArray (Get-ArtifactPath $directory 'events.jsonl')
+            $trailingIndex = -1
+            for ($i = 0; $i -lt $events.Count; $i++) {
+                if ([string]$events[$i].type -eq 'trailing_activated') { $trailingIndex = $i; break }
+            }
+            if ($trailingIndex -lt 0) { throw 'no trailing_activated event' }
+            Insert-DuplicateEvent $directory $trailingIndex
+        }),
+    (New-Case 'extra run_started' @('events.jsonl', 'telemetry-2019.jsonl') {
+            param($directory)
+            Insert-DuplicateEvent $directory 0
+        }),
+    (New-Case 'spurious first_entry_skipped' @('events.jsonl', 'telemetry-2019.jsonl') {
+            param($directory)
+            $events = Read-JsonLinesArray (Get-ArtifactPath $directory 'events.jsonl')
+            $anchorId = $null
+            foreach ($row in $events) {
+                if ([string]$row.type -eq 'basket_anchored' -and [long]$row.basket -eq 2) { $anchorId = [long]$row.id; break }
+            }
+            $telemetry = Read-JsonLinesArray (Get-ArtifactPath $directory 'telemetry-2019.jsonl')
+            $snapshotBase = $null
+            foreach ($row in $telemetry) {
+                if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $anchorId) { $snapshotBase = $row }
+            }
+            if ($null -eq $snapshotBase) { throw 'no anchor snapshot to copy' }
+            $payload = [ordered]@{
+                type = 'first_entry_skipped'; basket = 2; quoteSequence = 299
+                time = '2019-01-02T02:11:00.000Z'; bid = '1010.0'; ask = '1010.4'; spread = '0.4'; attempts = 1
+            }
+            Insert-EventAndSnapshot $directory 6 $payload $snapshotBase @{
+                time = '2019-01-02T02:11:00.000Z'; quoteSequence = 299
+                openPositions = 0; grossLots = '0.0'; absoluteNetLots = '0.0'
+            }
+        }),
+    (New-Case 'unknown event type' @('events.jsonl') {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'events.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.type -eq 'margin_call_left') { $row.type = 'bogus_replay_event'; break }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'swapped rejection summaries' @('events.jsonl') {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'events.jsonl'
+            $rows = Read-JsonLinesArray $path
+            $indexes = New-Object System.Collections.Generic.List[int]
+            for ($i = 0; $i -lt $rows.Count; $i++) {
+                if ([string]$rows[$i].type -eq 'entry_rejection_summary') { $indexes.Add($i) }
+            }
+            if ($indexes.Count -ne 2) { throw "expected two rejection summaries, found $($indexes.Count)" }
+            $first = $rows[$indexes[0]]
+            $second = $rows[$indexes[1]]
+            $firstId = [long]$first.id
+            $secondId = [long]$second.id
+            $rows[$indexes[0]] = New-EventWithId $second $firstId
+            $rows[$indexes[1]] = New-EventWithId $first $secondId
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'manifest parameter as a JSON number' @() {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'manifest.json'
+            $manifest = Read-JsonFile $path
+            $manifest.parameters.BaseLot = [decimal]0.1
+            Write-JsonFile $path $manifest
+        }),
+    (New-Case 'basket_liquidated decimal as a JSON number' @('events.jsonl') {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'events.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.type -eq 'basket_liquidated') { $row.threshold = [decimal]0.0; break }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'margin_call_entered impossible state (event and snapshot together)' @('events.jsonl', 'telemetry-2019.jsonl') {
+            param($directory)
+            $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
+            $events = Read-JsonLinesArray $eventsPath
+            $enteredId = $null
+            foreach ($row in $events) {
+                if ([string]$row.type -eq 'margin_call_entered') { $enteredId = [long]$row.id; break }
+            }
+            foreach ($row in $events) {
+                if ([long]$row.id -eq $enteredId) {
+                    $row.equity = '9000.0'; $row.usedMargin = '100.0'; $row.freeMargin = '8900.0'; $row.marginLevelPercent = '9000.0'
+                }
+            }
+            Write-JsonLinesFile $eventsPath $events
+            $telemetryPath = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+            $telemetry = Read-JsonLinesArray $telemetryPath
+            foreach ($row in $telemetry) {
+                if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $enteredId) {
+                    $row.equity = '9000.0'; $row.usedMargin = '100.0'; $row.freeMargin = '8900.0'; $row.marginLevelPercent = '9000.0'
+                }
+            }
+            Write-JsonLinesFile $telemetryPath $telemetry
         })
 )
 
@@ -1264,6 +1544,15 @@ $failedCases = @(
                 if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $runEndId) { $row.time = $targetTime }
             }
             Write-JsonLinesFile $telemetryPath $telemetry
+        }),
+    (New-Case 'failed run: failureBid as a JSON number' @('events.jsonl') {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'events.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.type -eq 'run_ended') { $row.failureBid = [decimal]990.0 }
+            }
+            Write-JsonLinesFile $path $rows
         })
 )
 

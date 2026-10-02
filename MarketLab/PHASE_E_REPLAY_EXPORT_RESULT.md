@@ -26,7 +26,7 @@ Phase D binding:                  the run's storage/single-anchor/results.json i
 package contract:                 marketlab-single-anchor-replay-package-v1
 package sha256:                   5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a
 events / event snapshots / periodic samples: 1,454 / 1,452 / 98,866
-verifier:                         PASS, 25,727 checks (24,191 authoritative payload-parity comparisons), Phase D binding enforced
+verifier:                         PASS, 30,467 checks (28,917 authoritative payload-parity comparisons), Phase D binding enforced
 candle cache contract:            marketlab-xauusd-m1-candle-cache-v1
 candle cache content_sha256:      ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d
 candle cache manifest_sha256:     75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1
@@ -97,7 +97,7 @@ package build instead of aborting the strategy run.
   and streaming member name/size/row-count/member-SHA verification. The derived
   cache is certified by `verify-candles` and `verify-candle-composition`.
 
-### 1.2 Second independent-review corrections (this revision)
+### 1.2 Second independent-review corrections
 
 - **Candle source derivation (the second review's blocker).** The four
   month-aligned ranges (`2019-01-01..2020-11-30`, `2020-12-01..2022-10-31`,
@@ -138,7 +138,7 @@ package build instead of aborting the strategy run.
   enforces exact-string serialization for hard-BE targets, rejection decimals
   and the remaining manifest decimals. The record is now byte-reproducible
   (run-directory name only, sorted event-type counts).
-- **Verifier proof expanded.** The verifier record on the exact run is now
+- **Verifier proof expanded.** The verifier record on the exact run became
   **PASS, 25,727 checks including 24,191 authoritative payload-parity
   comparisons** (record SHA-256
   `753eeda149d661a10726cc465867e0d6feaf2fd9b279577a4b0c26f9f97b9b4e`);
@@ -152,6 +152,52 @@ package build instead of aborting the strategy run.
   attempt (pre-attempt 4 positions, post-entry 5); the committed part manifests
   are byte-identical to the verified files. The previous evidence manifest and
   its hash references are superseded.
+
+### 1.3 Third independent-review corrections (this revision)
+
+- **Snapshot-binding control-flow fix (the third review's main defect).** The
+  inventory loop previously `continue`d for `entry_executed` and
+  `forced_liquidation`, so those 555 + 65 snapshots skipped the snapshot checks
+  and the forced-liquidation post-close comparison was unreachable. The loop now
+  updates the derived inventory first and then validates every significant
+  event: snapshot time equals the event time, the applicable quote is the event
+  quote (`triggerQuoteSequence` for forced liquidation, `0` at run start,
+  `quoteTicksProcessed` at run end), snapshot account values equal the event
+  `after*` values for forced liquidation, and the derived inventory matches the
+  snapshot (post-entry for entries, post-close for forced liquidation).
+- **Missing/duplicate/unknown event detection.** The verifier now enforces the
+  published event-type whitelist, exactly one `run_started` and one
+  `run_ended`, the one-to-one `trailing_activated` lifecycle (at most one per
+  basket; every authoritative Trailing close has exactly one activation), the
+  `first_entry_skipped` population bound to `SkippedFirstEntryTrace`, the
+  rejection-recap order against the authoritative `RejectionTrace` order, and
+  the terminal mapping of `hard_breakeven_violated` to the documented
+  `StrategyInvariant`/`HardBreakevenViolatedByFill` failure.
+- **Exact-string coverage completed.** Missing decimals were added
+  (`forced_liquidation.normalizedRequiredLot`/`commission`,
+  `basket_liquidated` close fields, `first_entry_skipped`,
+  `basket_close_failed`, `hard_breakeven_violated`, nullable
+  `run_ended.failureBid/failureAsk`), and every numeric manifest parameter and
+  margin parameter must now be a JSON string.
+- **Margin Call authority.** `margin_call_entered` must satisfy the configured
+  Margin Call condition (`level <= MarginCallLevelPercent`),
+  `margin_call_left` must be outside it (or flat/null), and the account
+  identities `equity = balance + floatingProfit`,
+  `freeMargin = equity - usedMargin` and the exact
+  `MarginLevelPercent = equity / usedMargin * 100` ratio are checked on margin
+  events, Stop Out, forced liquidation and the run-end snapshot (numeric-scale
+  tolerance `1e-20`; the frozen run contains last-digit artifacts of order
+  `1e-25`).
+- **Verifier proof expanded again.** The verifier record on the exact run is
+  now **PASS, 30,467 checks including 28,917 authoritative payload-parity
+  comparisons** (record SHA-256
+  `795710515caf47c8b617c26ccdb90f90cb04cfbfd8ff23fd47c79d6c37b50465`);
+  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` rejects **36/36**
+  mutations (adding entry/forced snapshot binding, duplicate/unknown/spurious
+  events, swapped rejection recaps, impossible Margin Call state and the new
+  exact-string cases) and verifies **2/2** positive failed-run fixtures. The
+  evidence manifest is now `264e00b4...` and the exact trailing-activation
+  parity limitation is documented in `REPLAY_PACKAGE.md`.
 
 ## 2. Phase D preservation and binding
 
@@ -199,7 +245,7 @@ open positions, gross lots and absolute net lots at every significant event and
 at most every 300 simulated seconds while positions are open. No quote row is
 exported.
 
-The verifier returned **PASS** on the exact run - 25,727 checks including 24,191
+The verifier returned **PASS** on the exact run - 30,467 checks including 28,917
 authoritative parity comparisons - with the Phase D binding enforced
 (`-ExpectedResultsSha256 bc3958b2...`); its record is
 `MarketLab/evidence/20261002-phase-e-replay-export/replay-package-verification.json`
@@ -225,7 +271,7 @@ the record is byte-reproducible across verifier runs).
 - PowerShell: launch/build guards 40/40, baseline invocation 12/12,
   failed-data classifier 97/97, trading availability 12/12, corrected-full-
   history classifier tests 160/160, production delivery end-to-end 40 checks,
-  and the package-verifier suite (**22/22** mutations rejected plus two positive
+  and the package-verifier suite (**36/36** mutations rejected plus two positive
   failed-run fixtures verified).
 - Python historical data: **300/300** tests, including the fail-closed candle
   preflight, `verify-candles` and `verify-candle-composition`.
@@ -274,14 +320,14 @@ the qualified tree into `E:\MarketLab\data\lean\xauusd-m1-candles`:
 
 Committed compact evidence under
 `MarketLab/evidence/20261002-phase-e-replay-export/` (manifest SHA-256
-`2ea521d725b426a9ff3adbb631b2fb4e4768a21b4af25d410c93a778e3330944`) with a
+`264e00b4ca49b633f327acb835b6d47313df58f406d45e76ed0b0d7b5dc3363d`) with a
 SHA-256 manifest:
 
 - the run's `baseline-build.json`, `corrected-history-preflight.json`,
   `marketlab-run-invocation.json`, `marketlab-run-outcome.json` and
   `corrected-full-history-classification.json` byte-identical copies;
 - the package verifier record (`replay-package-verification.json`, SHA-256
-  `753eeda149d661a10726cc465867e0d6feaf2fd9b279577a4b0c26f9f97b9b4e`) and the
+  `795710515caf47c8b617c26ccdb90f90cb04cfbfd8ff23fd47c79d6c37b50465`) and the
   package manifest (`replay-manifest.json`);
 - the complete authoritative event stream (`replay-events.jsonl`) and a bounded
   account-telemetry sample (`replay-telemetry-sample.jsonl`) that includes all
@@ -313,6 +359,16 @@ artifact committed in the Phase D evidence directory.
   is verified by `verify-candle-composition`; the merge itself is not a shipped
   command (the re-derived part caches and their 90 matching monthly records are
   the derivation evidence).
+- Trailing-activation exact parity is limited by what Phase D retains: the
+  verifier enforces the one-to-one lifecycle relation, the derived
+  `activationThreshold`, the snapshot time/quote binding and
+  `profit >= threshold`, but the activation `bid`/`ask`/`profit` are not
+  independently re-derived from a retained authoritative trace because the
+  frozen `results.json` has no dedicated activation record. Reconstructing the
+  strategy economics inside the gate is deliberately avoided.
+- The free-margin and margin-level identities are compared with a numeric-scale
+  tolerance of `1e-20`; the frozen run contains last-digit decimal scale
+  artifacts of order `1e-25`, far below any meaningful corruption.
 - The long run used a temporary AC power-plan change (standby and display
   disabled). Both original values were captured and restored exactly
   (`STANDBYIDLE` `0x00001c20`, `VIDEOIDLE` `0x00000258`).

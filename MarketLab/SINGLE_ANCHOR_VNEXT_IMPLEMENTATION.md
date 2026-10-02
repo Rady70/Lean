@@ -2073,7 +2073,7 @@ review. Phase F-I have not started.**
   to the Phase D artifact
   (`bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad`).
   `scripts/Test-SingleAnchorReplayPackage.ps1` verified the package on that
-  exact run with the binding enforced: **PASS, 25,727 checks including 24,191
+  exact run with the binding enforced: **PASS, 30,467 checks including 28,917
   authoritative payload-parity comparisons**, package SHA-256
   `5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`.
 - **Package contents.** 1,454 events (280 anchors, 555 entries = 490 surviving
@@ -2101,19 +2101,22 @@ review. Phase F-I have not started.**
   end-to-end 40 checks, and 300/300 Python historical-data tests (the additive
   `candles` subcommand with its fail-closed qualification preflight,
   `verify-candles` and `verify-candle-composition`).
-  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 22 verifier mutation
+  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 36 verifier mutation
   cases over an expanded synthetic package (including a hard-BE
-  reject-then-later-fill basket, a trailing activation and a Margin Call pair):
-  changed trade number/fill price, forced-liquidation ordinal/price, Stop Out
-  time, same-quote reorder, manifest identity/outcome, file hash, event and
-  snapshot deletion, over-frequent periodic sample, activation snapshot
-  swapped with the following entry snapshot, activation moved after its
-  enabling attempt or timed at the later fill, trailing threshold and
-  snapshot/quote changes, Margin Call value and ordering changes, and an
-  exact-string decimal replaced by a JSON number; it also verifies two positive
+  reject-then-later-fill basket, a trailing activation, a Margin Call pair and
+  two rejection episodes): changed trade number/fill price, entry snapshot
+  quote/inventory, forced-liquidation ordinal/price/commission and
+  snapshot/post-close state, Stop Out time, same-quote reorder, manifest
+  identity/outcome/numeric parameters, file hash, event and snapshot deletion,
+  over-frequent periodic sample, activation snapshot swapped with the
+  following entry snapshot, activation moved after its enabling attempt or
+  timed at the later fill, trailing threshold/snapshot/duplicate changes,
+  Margin Call value, ordering and a consistent event+snapshot impossible
+  state, spurious/duplicate/unknown events, swapped rejection recaps, and
+  exact-string decimals replaced by JSON numbers; it also verifies two positive
   failed-run fixtures (forward-time and out-of-order faults) under the
   `max(lastProcessedQuote, failureQuote)` rule and rejects a tampered failure
-  identity or a run-end time that ignores the rule.
+  identity, a run-end time that ignores the rule or a numeric `failureBid`.
 - **Derived M1 candle cache (fail-closed provenance).** The cache was generated
   into `E:\MarketLab\data\lean\xauusd-m1-candles`: 90 monthly CSVs, 2,332
   partitions and 413,750,130 source rows read, 2,655,664 candle rows,
@@ -2142,7 +2145,7 @@ review. Phase F-I have not started.**
   `evidence/20261002-phase-e-replay-export/candle-cache-manifest.json`
   (SHA-256 `75f1d241...`).
 - **Evidence and records.** Compact evidence with a SHA-256 manifest
-  (`2ea521d7...`) is under `evidence/20261002-phase-e-replay-export/`; the result
+  (`264e00b4...`) is under `evidence/20261002-phase-e-replay-export/`; the result
   record is [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md)
   and the package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). The full
   telemetry shards, engine logs, result packets and the candle cache remain

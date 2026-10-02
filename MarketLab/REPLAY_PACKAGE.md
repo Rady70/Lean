@@ -2,7 +2,7 @@
 
 Status: **implemented and corrected after independent review; the authoritative
 package was produced by the corrected Phase E export run and qualified by the
-strengthened package verifier (PASS, 25,727 checks including 24,191
+strengthened package verifier (PASS, 30,467 checks including 28,917
 authoritative payload-parity comparisons, bound to the byte-identical Phase D
 result).
 Phase E is ready for re-review; later replay/visualization phases (F–I) have not
@@ -162,35 +162,51 @@ activation against the earliest authoritative hard-BE attempt across
 `LegTrace`, `LiquidationTrace` and tail `RejectionTrace` rows, every trailing
 activation threshold re-derived from the verified anchor step, surviving
 inventory and parameters, every Margin Call transition against its snapshot
-state, and the run-end counters/snapshot/failure identity against the final
-account, margin and `results.failure` state. It also proves every significant
-event's snapshot is the account state at that event's exact time and quote and
-compares all overlapping account values to it, proves the hard-BE activation
-snapshot is the pre-attempt inventory derived from the parity-verified
-entry/liquidation events, asserts the causal same-timestamp lifecycle order
-(hard-BE activation before its enabling attempt, Margin Call alternation and
-active state at Stop Out, each Stop Out before its episode's first forced
-liquidation and after the previous episode's last one, `basket_liquidated`
-after the last forced close), verifies event ids/order/counts, exact-decimal
-strings in every event and telemetry class, event-snapshot coverage, the actual
+state and against the configured Margin Call condition, and the run-end
+counters/snapshot/failure identity against the final account, margin and
+`results.failure` state. It also proves every significant event's snapshot is
+the account state at that event's exact time and applicable quote (including
+the post-entry inventory for entries, the post-close account for forced
+liquidation, `0` at run start and `quoteTicksProcessed` at run end), compares
+all overlapping account values to that snapshot, checks the account-arithmetic
+identities (`equity = balance + floatingProfit`, `freeMargin = equity -
+usedMargin`, the exact `MarginLevelPercent` ratio) to a numeric-scale
+tolerance, asserts the causal same-timestamp lifecycle order (hard-BE
+activation before its enabling attempt, Margin Call alternation and active
+state at Stop Out, each Stop Out before its episode's first forced liquidation
+and after the previous episode's last one, `basket_liquidated` after the last
+forced close, trailing activation before the close, ascending same-quote
+liquidation ordinals), enforces the published event-type whitelist with exactly
+one `run_started`/`run_ended` and the one-to-one trailing-activation lifecycle,
+binds `first_entry_skipped` to `SkippedFirstEntryTrace`, maps a
+`hard_breakeven_violated` event to the documented
+`StrategyInvariant`/`HardBreakevenViolatedByFill` failure, verifies event
+ids/order/counts, exact-decimal strings in every event and telemetry class
+(including the manifest parameter blocks), event-snapshot coverage, the actual
 `telemetryIntervalSeconds` periodic rule while positions are open, and (with
 `-ExpectedResultsSha256`) the Phase D binding. A failed run's run-end time is
 checked against the documented `max(lastProcessedQuote, failureQuote)` rule.
 
-`tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 22 mutation cases over
+`tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 36 mutation cases over
 an expanded synthetic package (including the hard-BE reject-then-later-fill
-sequence, a trailing activation and a Margin Call pair): changed trade number,
-fill price, forced-liquidation ordinal/price, Stop Out time, same-quote
-reorder, manifest identity/outcome, file hash, deleted event, deleted
+sequence, a trailing activation, a Margin Call pair and two rejection
+episodes): changed trade number, fill price, forced-liquidation
+ordinal/price/commission, Stop Out time, same-quote reorder, manifest
+identity/outcome/parameter representation, file hash, deleted event, deleted
 snapshot, over-frequent periodic sample, hard-BE activation snapshot replaced
 by the following entry snapshot, hard-BE activation moved after its enabling
 attempt or timed at the later fill, trailing threshold and snapshot/quote
-changes, Margin Call value and ordering changes, and a rejection decimal
-changed from exact string to JSON number; each must be rejected. It also
-verifies two positive fixtures of a valid failed package (a forward-time fault
-whose quote is later than the last accepted quote and an out-of-order fault
-whose quote precedes it) and rejects a tampered failure identity or a run-end
-time that ignores the `max` rule. The verifier writes
+changes, Margin Call value, ordering and impossible-state changes, entry
+snapshot quote/inventory changes, forced-liquidation snapshot time/quote and
+post-close account changes, a duplicated trailing activation, an extra
+`run_started`, a spurious `first_entry_skipped`, an unknown event type, swapped
+rejection recaps, and exact strings replaced by JSON numbers in events,
+forced-liquidation/close payloads and manifest parameters; each must be
+rejected. It also verifies two positive fixtures of a valid failed package (a
+forward-time fault whose quote is later than the last accepted quote and an
+out-of-order fault whose quote precedes it) and rejects a tampered failure
+identity, a run-end time that ignores the `max` rule or a numeric
+`failureBid`. The verifier writes
 `replay-package-verification.json` and exits 0 only on PASS. A mutation of the
 committed event values that preserves all hashes and counts is caught by the
 parity, derivation or ordering comparisons, not only by the repository's own
@@ -215,3 +231,14 @@ pwsh -File MarketLab\scripts\Test-SingleAnchorReplayPackage.ps1 `
 - Entry rejections are represented as one live event per distinct episode plus a
   run-end recap; individual attempts (hundreds of millions on the frozen run)
   are deliberately never exported.
+- Exact trailing-activation parity is limited by what Phase D retains: the
+  frozen `results.json` has no dedicated trailing-activation record, so the
+  verifier enforces the one-to-one lifecycle relation, the parity-derived
+  `activationThreshold`, the snapshot time/quote binding and `profit >=
+  threshold`, but the activation's `bid`/`ask`/`profit` are not independently
+  re-derived from a retained authoritative trace. Reconstructing the strategy
+  economics inside the gate is deliberately avoided.
+- The free-margin and margin-level identities are compared with a
+  numeric-scale tolerance of `1e-20`; the frozen run contains last-digit
+  decimal scale artifacts of order `1e-25`, far below any meaningful
+  corruption.
