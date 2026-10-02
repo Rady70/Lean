@@ -55,7 +55,7 @@
     },
     {
       "path": "replay-package-verification.json",
-      "sha256": "7bf06a12c532229ff9f05a2aaeb351c7560900b01b10a8011a403652a52e43a2",
+      "sha256": "8abc269861c4a3bbeaa65d44c571016475c33b5f4bccddb04f5558da89dc586c",
       "bytes": 2112,
       "origin": "derived by MarketLab\\scripts\\Test-SingleAnchorReplayPackage.ps1 on the exact run with the Phase D binding",
       "role": "Phase E package verifier PASS record (22,942 checks, 21,406 authoritative parity comparisons) with the Phase D results binding"

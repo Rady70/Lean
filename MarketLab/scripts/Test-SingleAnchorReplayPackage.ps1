@@ -1158,6 +1158,12 @@ try {
         }
     }
 
+    # A deterministic verification record: the event-type counts are emitted in sorted key order
+    # (a raw hashtable's enumeration order is not stable across runs).
+    $eventTypesOrdered = [ordered]@{}
+    foreach ($eventTypeKey in @($eventCounts.Keys | Sort-Object)) {
+        $eventTypesOrdered[$eventTypeKey] = $eventCounts[$eventTypeKey]
+    }
     $summary = [ordered]@{
         contract = 'marketlab-single-anchor-replay-package-verification-v1'
         runDirectory = $run
@@ -1171,7 +1177,7 @@ try {
         resultsBoundToPhaseD = if ($ExpectedResultsSha256) { $resultsSha256 -eq $ExpectedResultsSha256.ToLowerInvariant() } else { $null }
         packageSha256 = [string](Get-Property $manifest 'packageSha256')
         eventCount = $events.Count
-        eventTypes = $eventCounts
+        eventTypes = $eventTypesOrdered
         telemetryEventSnapshots = $eventSnapshots
         telemetryPeriodicSamples = $periodic
         telemetryShards = @($telemetryFileNames)

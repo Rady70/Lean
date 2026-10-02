@@ -141,7 +141,8 @@ The verifier returned **PASS** on the exact run - 22,942 checks including 21,406
 authoritative parity comparisons - with the Phase D binding enforced
 (`-ExpectedResultsSha256 bc3958b2...`); its record is
 `MarketLab/evidence/20261002-phase-e-replay-export/replay-package-verification.json`
-(SHA-256 `7bf06a12c532229ff9f05a2aaeb351c7560900b01b10a8011a403652a52e43a2`).
+(SHA-256 `8abc269861c4a3bbeaa65d44c571016475c33b5f4bccddb04f5558da89dc586c`;
+the record is byte-reproducible across verifier runs).
 
 ## 4. Determinism and local validation
 
@@ -201,7 +202,7 @@ the qualified tree into `E:\MarketLab\data\lean\xauusd-m1-candles`:
 
 Committed compact evidence under
 `MarketLab/evidence/20261002-phase-e-replay-export/` (manifest SHA-256
-`a8e800c789674a3e19fc9cec49c0e3b254dabd3819bda0ff45684f577ac57ce9`) with a
+`e36a5e8f8798eef861d8bbd13bfd23af659a1f47af115f6854c6561b66f5c6c5`) with a
 SHA-256 manifest:
 
 - the run's `baseline-build.json`, `corrected-history-preflight.json`,

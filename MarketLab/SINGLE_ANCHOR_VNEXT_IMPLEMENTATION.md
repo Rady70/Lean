@@ -2098,7 +2098,7 @@ review. Phase F-I have not started.**
   byte determinism, recorder-does-not-change-the-engine outcome, and the
   fail-closed publisher), PowerShell guards 40/40, invocation 12/12,
   failed-data 97/97, availability 12/12, corrected-classifier 160/160, delivery
-  end-to-end 40 checks, and 289/289 Python historical-data tests (the additive
+  end-to-end 40 checks, and 299/299 Python historical-data tests (the additive
   `candles` subcommand with its fail-closed qualification preflight and
   `verify-candles`). `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives
   11 verifier mutation cases (trade number, fill price, forced-liquidation
@@ -2125,7 +2125,7 @@ review. Phase F-I have not started.**
   partition zip hashes and partition set verified, 9/9 cache checks passed, and
   the certification record is committed with the evidence. The committed cache
   manifest is
-  `evidence/20261001-phase-e-replay-export/candle-cache-manifest.json`.
+  `evidence/20261002-phase-e-replay-export/candle-cache-manifest.json`.
 - **Evidence and records.** Compact evidence with a SHA-256 manifest
   (`a8e800c7...`) is under `evidence/20261002-phase-e-replay-export/`; the result
   record is [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md)
