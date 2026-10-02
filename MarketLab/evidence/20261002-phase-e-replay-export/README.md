@@ -104,8 +104,9 @@ exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
   it except run-end recaps), the terminal-violation fixture matches the engine's
   throw-before-EntryOpened path, a producer-level C# recorder test covers the same path, the
   NegativeEquity fixture triggers on a genuinely net-flat (zero used margin, undefined level)
-  inventory, and the base fixture's retained rejection counts and episode outcome are
-  corrected. The suite is 54 mutations with four positive fixtures; the real package, verifier
+  inventory whose second forced close is a MarginLevel close with coherent basket-close
+  economics, the terminal diagnostic snapshot is the exact post-fill account state, and the
+  base fixture's retained rejection counts and episode outcome are corrected. The suite is 54 mutations with four positive fixtures; the real package, verifier
   record and evidence counters are unchanged.
 - Fourth review: Margin Call transitions also require
   `equity = balance + floatingProfit`; Stop Out validation is reason-specific
