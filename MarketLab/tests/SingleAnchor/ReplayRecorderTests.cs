@@ -580,6 +580,20 @@ namespace MarketLab.SingleAnchor.Tests
                 Is.False,
                 "no later strategy continuation after the terminal diagnostic");
 
+            // The diagnostic snapshot is the post-fill account state: the engine observed the
+            // faulting fill before it re-verified hard-BE and raised the diagnostic.
+            var violationSnapshot = Telemetry(package)
+                .Where(t => (string)t["kind"]! == "event")
+                .Single(t => (long?)t["eventId"] == (long)violation["id"]!);
+            Assert.That(Convert.ToDecimal((string)violationSnapshot["balance"]!), Is.EqualTo(h.Account.Balance));
+            Assert.That(Convert.ToDecimal((string)violationSnapshot["equity"]!), Is.EqualTo(h.Account.Equity));
+            Assert.That(Convert.ToDecimal((string)violationSnapshot["floatingProfit"]!), Is.EqualTo(h.Account.FloatingProfit));
+            Assert.That(Convert.ToDecimal((string)violationSnapshot["usedMargin"]!), Is.EqualTo(h.Account.CurrentUsedMargin));
+            Assert.That(violationSnapshot["freeMargin"]!.Type, Is.EqualTo(JTokenType.Null), "margin is disabled in this harness");
+            Assert.That((int)violationSnapshot["openPositions"]!, Is.EqualTo(h.Account.CurrentOpenPositions));
+            Assert.That(Convert.ToDecimal((string)violationSnapshot["grossLots"]!), Is.EqualTo(h.Account.CurrentGrossLots));
+            Assert.That(Convert.ToDecimal((string)violationSnapshot["absoluteNetLots"]!), Is.EqualTo(h.Account.CurrentAbsoluteNetLots));
+
             var runEnded = events[events.Count - 1];
             Assert.That((string)runEnded["type"]!, Is.EqualTo("run_ended"));
             Assert.That((bool)runEnded["completed"]!, Is.False);

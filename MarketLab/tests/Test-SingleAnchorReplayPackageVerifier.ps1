@@ -1116,7 +1116,8 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
                 foreach ($key in $neAfterOne.Keys) { $row.('before' + $key.Substring(0, 1).ToUpper() + $key.Substring(1)) = $neAfterOne[$key] }
                 foreach ($key in $neAfterTwo.Keys) { $row.('after' + $key.Substring(0, 1).ToUpper() + $key.Substring(1)) = $neAfterTwo[$key] }
                 $row.realizedProfit = '-100.0'
-                $row.reason = 'NegativeEquity'
+                # The surviving leg is unmatched now, so the re-evaluated reason is MarginLevel.
+                $row.reason = 'MarginLevel'
                 $row.placedLot = '0.1'
                 $row.rawRequestedLot = '0.1'
                 $row.exactRequiredLot = $null
@@ -1129,6 +1130,7 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
         }
         elseif ([string]$row.type -eq 'basket_liquidated') {
             $row.buyLots = '0.1'; $row.sellLots = '0.1'; $row.grossLots = '0.2'; $row.netLots = '0.0'
+            $row.realizedProfit = '-250.0'; $row.liquidatedRealizedProfit = '-250.0'
         }
         elseif ([string]$row.type -eq 'run_ended') { $row.engineRealizedProfit = '-10150.00' }
     }
@@ -1203,7 +1205,8 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
     $episode.Liquidations[1].After.FreeMargin = [decimal]-150.0
     $episode.Liquidations[1].After.MarginLevelPercent = $null
     $episode.AfterLiquidation = $episode.Liquidations[1].After
-    foreach ($liquidation in $episode.Liquidations) { $liquidation.Leg.Reason = 'NegativeEquity' }
+    $episode.Liquidations[0].Leg.Reason = 'NegativeEquity'
+    $episode.Liquidations[1].Leg.Reason = 'MarginLevel'
     $results.researchMargin.CurrentUsedMargin = [decimal]0.0
     $results.researchMargin.CurrentFreeMargin = [decimal]-150.0
     $results.researchMargin.CurrentMarginLevelPercent = $null
@@ -1215,12 +1218,15 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
     $basketTwoRecord.SellLots = [decimal]0.1
     $basketTwoRecord.GrossLots = [decimal]0.2
     $basketTwoRecord.NetLots = [decimal]0.0
+    $basketTwoRecord.RealizedProfit = [decimal]-250.0
+    $basketTwoRecord.LiquidatedRealizedProfit = [decimal]-250.0
     $episode.Liquidations[1].Leg.PlacedLot = [decimal]0.1
     $episode.Liquidations[1].Leg.RawRequestedLot = [decimal]0.1
     $episode.Liquidations[1].Leg.NormalizedRequiredLot = [decimal]0.1
     $basketTwoRecord.LiquidationTrace[1].PlacedLot = [decimal]0.1
     $basketTwoRecord.LiquidationTrace[1].RawRequestedLot = [decimal]0.1
     $basketTwoRecord.LiquidationTrace[1].NormalizedRequiredLot = [decimal]0.1
+    $basketTwoRecord.LiquidationTrace[1].Reason = 'MarginLevel'
     Write-JsonFile $resultsPath $results
 
     $manifestPath = Get-ArtifactPath $directory 'manifest.json'
@@ -1242,6 +1248,21 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
 # the final open basket state without a normal entry_executed event, and no later close occurs.
 function New-HardBreakevenViolationFixture([string]$directory) {
     $failureTime = '2019-01-02T02:12:00.000Z'
+    # Capture the faulting trade-5 post-fill snapshot before its normal entry event is removed:
+    # the engine observes the fill before it re-verifies hard-BE and raises the diagnostic.
+    $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
+    $events = Read-JsonLinesArray $eventsPath
+    $faultingEntryId = $null
+    foreach ($row in $events) {
+        if ([string]$row.type -eq 'entry_executed' -and [long]$row.basket -eq 3 -and [long]$row.tradeNumber -eq 5) { $faultingEntryId = [long]$row.id }
+    }
+    if ($null -eq $faultingEntryId) { throw 'the faulting trade-5 entry event is missing' }
+    $telemetry = Read-JsonLinesArray (Get-ArtifactPath $directory 'telemetry-2019.jsonl')
+    $postFillSnapshot = $null
+    foreach ($row in $telemetry) {
+        if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $faultingEntryId) { $postFillSnapshot = $row }
+    }
+    if ($null -eq $postFillSnapshot) { throw 'the faulting trade-5 post-fill snapshot is missing' }
     Remove-EventsByFilter $directory {
         param($row)
         $type = [string]$row.type
@@ -1249,30 +1270,23 @@ function New-HardBreakevenViolationFixture([string]$directory) {
         if ($type -eq 'entry_executed' -and [long]$row.basket -eq 3 -and [long]$row.tradeNumber -eq 5) { return $true }
         return $false
     }
-    $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
     $events = Read-JsonLinesArray $eventsPath
     $rejectionIndex = -1
-    $activationId = $null
     for ($i = 0; $i -lt $events.Count; $i++) {
         if ([string]$events[$i].type -eq 'entry_rejected' -and [long]$events[$i].basket -eq 3) { $rejectionIndex = $i }
-        if ([string]$events[$i].type -eq 'hard_breakeven_activated') { $activationId = [long]$events[$i].id }
     }
-    if ($rejectionIndex -lt 0 -or $null -eq $activationId) { throw 'the rejected tail attempt or activation is missing' }
-    $telemetry = Read-JsonLinesArray (Get-ArtifactPath $directory 'telemetry-2019.jsonl')
-    $snapshotBase = $null
-    foreach ($row in $telemetry) {
-        if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $activationId) { $snapshotBase = $row }
-    }
-    if ($null -eq $snapshotBase) { throw 'the activation snapshot is missing' }
+    if ($rejectionIndex -lt 0) { throw 'the rejected tail attempt is missing' }
+    $snapshotBase = $postFillSnapshot
     $payload = [ordered]@{
         type = 'hard_breakeven_violated'; basket = 3; tradeNumber = 5; side = 'Buy'; quoteSequence = 306
         time = $failureTime; bid = '1013.0'; ask = '1013.4'; placedLot = '0.5'; fillPrice = '1013.4'
         hardBreakevenTarget = '1000.0'; projectedProfitAfterFill = '-0.5'; sizingProjectedProfitAfter = '15.0'
         message = 'Synthetic hard-BE violation.'
     }
-    # The faulting fill leaves five positions (gross 1.5, absolute net 0.3 under alternation).
+    # The diagnostic snapshot is the exact post-fill account state (the ledger and the account
+    # both already reflect the faulting fill).
     Insert-EventAndSnapshot $directory ($rejectionIndex + 1) $payload $snapshotBase @{
-        time = $failureTime; quoteSequence = 306; openPositions = 5; grossLots = '1.5'; absoluteNetLots = '0.3'
+        time = $failureTime; quoteSequence = 306
     }
 
     $resultsPath = Join-Path $directory 'storage\single-anchor\results.json'

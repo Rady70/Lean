@@ -285,6 +285,15 @@ package build instead of aborting the strategy run.
 - **Base fixture trace corrections.** The retained basket-3 rejection is one rejected attempt
   at its own quote (the later fill is not a second rejected attempt), and the fully closed
   Stop Out episode is sealed `AllPositionsLiquidated`.
+- **Post-fill diagnostic snapshot.** The terminal diagnostic's telemetry snapshot is now the
+  exact post-fill account state (captured from the removed trade-5 entry snapshot before it
+  is removed), matching the engine order ledger-add -> account observation -> hard-BE
+  verification -> diagnostic; the C# producer test asserts the snapshot equals the account's
+  post-fill balance/equity/floating/used-margin/positions/lots.
+- **NegativeEquity sequence.** The initial trigger is `NegativeEquity`; after the first forced
+  close the survivor is unmatched (defined negative margin level), so the second forced close
+  is `MarginLevel`, with one `stop_out_triggered` event. The basket close economics follow the
+  forced closes (`RealizedProfit`/`LiquidatedRealizedProfit` = -250).
 - **Mutations.** Two focused terminal-semantics mutations were added (restoring a normal
   entry for the faulting leg; appending a live continuation after the diagnostic); the suite
   is **54/54** mutations with **4/4** positive fixtures. The real package, verifier record
