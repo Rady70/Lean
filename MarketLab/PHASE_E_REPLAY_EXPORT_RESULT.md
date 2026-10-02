@@ -1,12 +1,16 @@
 # SingleAnchor Phase E authoritative replay export - result record
 
-Status: **implemented, corrected after independent review, and ready for
+Status: **implemented, corrected after two independent reviews, and ready for
 re-review** - the Phase E authoritative replay export was implemented in
-`Rady70/Lean`, corrected for the independent-review findings, produced again by
-one execution of the frozen corrected-full-history model, and qualified by the
-repository's corrected-full-history classifier (`EXPECTED`) and the strengthened
-Phase E package verifier. Phase E is additive: it does not rewrite the Phase D
-characterization, the Phase A/B/C records or any frozen value.
+`Rady70/Lean`, corrected for the first review's findings (hard-BE activation
+snapshot, authoritative parity, fail-closed persistence/candles), produced
+again by one execution of the frozen corrected-full-history model, and then
+corrected for the second review's findings (candle source re-derivation,
+comprehensive verifier parity/ordering/failure coverage, exact-string and
+evidence fixes). It is qualified by the repository's corrected-full-history
+classifier (`EXPECTED`) and the strengthened Phase E package verifier. Phase E
+is additive: it does not rewrite the Phase D characterization, the Phase A/B/C
+records or any frozen value.
 
 ```text
 Phase E implementation revision:  a2941581c02462a190f4d4289f371aed409cb1e3 (clean at run time)
@@ -22,10 +26,12 @@ Phase D binding:                  the run's storage/single-anchor/results.json i
 package contract:                 marketlab-single-anchor-replay-package-v1
 package sha256:                   5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a
 events / event snapshots / periodic samples: 1,454 / 1,452 / 98,866
-verifier:                         PASS, 22,942 checks (21,406 authoritative payload-parity comparisons), Phase D binding enforced
+verifier:                         PASS, 25,727 checks (24,191 authoritative payload-parity comparisons), Phase D binding enforced
 candle cache contract:            marketlab-xauusd-m1-candle-cache-v1
 candle cache content_sha256:      ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d
-candle cache verification:        verify-candles PASS (2,332/2,332 partitions), verify-candle-composition PASS (4 parts, 10/10 checks)
+candle cache manifest_sha256:     75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1
+candle source derivation:         the four month-aligned ranges were regenerated with the corrected generator; 90/90 monthly records equal the final cache bytes
+candle cache verification:        verify-candles PASS (2,332/2,332 partitions, qualification-record binding), verify-candle-composition PASS (4 re-derived parts, 10/10 checks)
 ```
 
 ## 1. Implementation and provenance
@@ -60,7 +66,7 @@ The package is emitted by the same run that persists the authoritative
 modify that result. The recorder is fault-guarded: a recorder defect refuses the
 package build instead of aborting the strategy run.
 
-### 1.1 Independent-review corrections (this revision)
+### 1.1 First independent-review corrections
 
 - **Hard-BE activation snapshot.** Previously the recorder reconstructed the
   activation inside the entry event, so the activation snapshot already
@@ -90,6 +96,62 @@ package build instead of aborting the strategy run.
   composition hash, exact partition-set equality, per-partition `zip_sha256`
   and streaming member name/size/row-count/member-SHA verification. The derived
   cache is certified by `verify-candles` and `verify-candle-composition`.
+
+### 1.2 Second independent-review corrections (this revision)
+
+- **Candle source derivation (the second review's blocker).** The four
+  month-aligned ranges (`2019-01-01..2020-11-30`, `2020-12-01..2022-10-31`,
+  `2022-11-01..2024-09-30`, `2024-10-01..2026-06-30`) were regenerated with the
+  corrected fail-closed generator under the reviewed revision. All **90/90**
+  regenerated monthly records (`sha256`, `bytes`, `rows`, `first_candle_utc`,
+  `last_candle_utc`) equal the existing final cache; the final CSV bytes were
+  **not changed**; the final manifest was rebuilt as the documented
+  byte-for-byte merge of the four corrected part manifests, which bind the PASS
+  qualification record (`e9c72d1a...`). The regenerated part manifests are
+  committed **byte-identically** (fixing the earlier line-ending hash
+  inconsistency). `verify-candles` now requires the qualification-record
+  binding (fail-closed) and passed 9/9 checks with 2,332/2,332 partition zip
+  hashes; `verify-candle-composition` passed 10/10 checks against the
+  re-derived parts.
+- **Verifier coverage completed.** `Test-SingleAnchorReplayPackage.ps1` now:
+  binds every significant event's telemetry snapshot to the event's exact time
+  and quote sequence and compares all overlapping account values to that
+  snapshot (Stop Out, Margin Call, forced liquidation); compares
+  `trailing_activated` thresholds against a derivation from the parity-verified
+  anchor step, surviving inventory and parameters (207/207 on this run);
+  compares `margin_call_entered/left` payloads and states; proves the hard-BE
+  activation snapshot is the pre-attempt inventory derived from the
+  parity-verified entry/liquidation events (11/11); selects the activation's
+  authoritative attempt as the earliest hard-BE attempt across `LegTrace`,
+  `LiquidationTrace` and tail `RejectionTrace` rows (fixing the
+  rejected-then-later-filled case); asserts the causal same-timestamp lifecycle
+  order (hard-BE activation before its enabling attempt, Margin Call
+  alternation and active state at Stop Out, each Stop Out before its episode's
+  first forced liquidation and after the previous episode's last, trailing
+  activation before the close, `basket_liquidated` after the last forced close,
+  ascending same-quote ordinals); completes the `run_ended` failure identity
+  (kind/condition/message/faulting quote) and computes the expected run-end
+  time with the documented `max(lastProcessedQuote, failureQuote)` rule (with
+  forward-time and out-of-order failed-run positive fixtures); compares
+  `manifest.algorithmTimeZone`, `startUtc`, `endUtc`, the `outcome` block,
+  `counters.engineRealizedProfit` and the documented payload-file order; and
+  enforces exact-string serialization for hard-BE targets, rejection decimals
+  and the remaining manifest decimals. The record is now byte-reproducible
+  (run-directory name only, sorted event-type counts).
+- **Verifier proof expanded.** The verifier record on the exact run is now
+  **PASS, 25,727 checks including 24,191 authoritative payload-parity
+  comparisons** (record SHA-256
+  `753eeda149d661a10726cc465867e0d6feaf2fd9b279577a4b0c26f9f97b9b4e`);
+  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` rejects **22/22**
+  mutations (including activation-snapshot replacement, activation ordering,
+  the later-fill time, trailing threshold, Margin Call value/order and
+  string-to-number decimal cases) and verifies **2/2** positive failed-run
+  fixtures.
+- **Evidence fixes.** The committed telemetry sample now contains all 11
+  hard-BE activation snapshots and the snapshot of the immediately following
+  attempt (pre-attempt 4 positions, post-entry 5); the committed part manifests
+  are byte-identical to the verified files. The previous evidence manifest and
+  its hash references are superseded.
 
 ## 2. Phase D preservation and binding
 
@@ -137,7 +199,7 @@ open positions, gross lots and absolute net lots at every significant event and
 at most every 300 simulated seconds while positions are open. No quote row is
 exported.
 
-The verifier returned **PASS** on the exact run - 22,942 checks including 21,406
+The verifier returned **PASS** on the exact run - 25,727 checks including 24,191
 authoritative parity comparisons - with the Phase D binding enforced
 (`-ExpectedResultsSha256 bc3958b2...`); its record is
 `MarketLab/evidence/20261002-phase-e-replay-export/replay-package-verification.json`
@@ -163,8 +225,9 @@ the record is byte-reproducible across verifier runs).
 - PowerShell: launch/build guards 40/40, baseline invocation 12/12,
   failed-data classifier 97/97, trading availability 12/12, corrected-full-
   history classifier tests 160/160, production delivery end-to-end 40 checks,
-  and the package-verifier mutation test **11/11**.
-- Python historical data: **299/299** tests, including the fail-closed candle
+  and the package-verifier suite (**22/22** mutations rejected plus two positive
+  failed-run fixtures verified).
+- Python historical data: **300/300** tests, including the fail-closed candle
   preflight, `verify-candles` and `verify-candle-composition`.
 - The corrected export run classified `EXPECTED` (exit 0, `invalidCount` 0)
   with the complete qualified stream and all 407 failed data requests
@@ -179,8 +242,9 @@ the qualified tree into `E:\MarketLab\data\lean\xauusd-m1-candles`:
   rows read, 2,655,664 candle rows, 172,160,895 bytes;
 - `content_sha256`
   `ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d`; the
-  cache manifest (SHA-256 `265ae887d65ba044e8d5bd9615b303eedd20d0b440342ceb16cbd5322f231b92`)
-  and every per-file hash are committed;
+  final cache manifest (SHA-256
+  `75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1`) and
+  every per-file hash are committed;
 - derivation: mid-of-best-bid/ask in exact decimal, UTC minutes, non-empty
   minutes only, absent minutes never filled; positive uncrossed quotes, the
   qualified composition, a PASS qualification record bound to the composition
@@ -194,26 +258,39 @@ the qualified tree into `E:\MarketLab\data\lean\xauusd-m1-candles`:
   `MarketLab/evidence/20261002-phase-e-replay-export/candle-parts/`, and
   `verify-candle-composition` proves the final cache is their exact contiguous
   union (10/10 checks);
-- `verify-candles` certifies the source identity and the cache:
-  2,332/2,332 partition zip hashes verified, 9/9 checks. The records are
-  `candle-cache-verification.json` and `candle-composition-verification.json`.
+- **source derivation proven (second review).** The same four ranges were
+  regenerated with the corrected fail-closed generator under the reviewed
+  revision; all **90/90** regenerated monthly records equal the existing final
+  cache byte-for-byte (the CSV bytes were not changed), and the final manifest
+  was rebuilt as the documented merge of the four corrected part manifests,
+  which bind the PASS qualification record (`e9c72d1a...`). The committed part
+  manifests are byte-identical to the verified files;
+- `verify-candles` certifies the source identity and the cache (now requiring
+  the qualification-record binding): 2,332/2,332 partition zip hashes verified,
+  9/9 checks. The records are `candle-cache-verification.json` and
+  `candle-composition-verification.json`.
 
 ## 6. Evidence
 
 Committed compact evidence under
 `MarketLab/evidence/20261002-phase-e-replay-export/` (manifest SHA-256
-`e36a5e8f8798eef861d8bbd13bfd23af659a1f47af115f6854c6561b66f5c6c5`) with a
+`2ea521d725b426a9ff3adbb631b2fb4e4768a21b4af25d410c93a778e3330944`) with a
 SHA-256 manifest:
 
 - the run's `baseline-build.json`, `corrected-history-preflight.json`,
   `marketlab-run-invocation.json`, `marketlab-run-outcome.json` and
   `corrected-full-history-classification.json` byte-identical copies;
-- the package verifier record (`replay-package-verification.json`) and the
+- the package verifier record (`replay-package-verification.json`, SHA-256
+  `753eeda149d661a10726cc465867e0d6feaf2fd9b279577a4b0c26f9f97b9b4e`) and the
   package manifest (`replay-manifest.json`);
 - the complete authoritative event stream (`replay-events.jsonl`) and a bounded
-  account-telemetry sample (`replay-telemetry-sample.jsonl`);
-- the candle cache manifest, `candle-cache-verification.json`,
-  `candle-composition-verification.json` and the four part manifests.
+  account-telemetry sample (`replay-telemetry-sample.jsonl`) that includes all
+  11 hard-BE activation snapshots and the snapshot of the immediately following
+  attempt;
+- the rebuilt candle cache manifest, `candle-cache-verification.json`,
+  `candle-composition-verification.json` and the four byte-identical
+  re-derived part manifests (A `d0489504...`, B `8f38b981...`, C `f329daa1...`,
+  D `20fdabec...`).
 
 The full telemetry shards (45.2 MB), the engine/algorithm logs, the LEAN result
 packets, the run console capture and the candle cache itself remain local run
@@ -234,7 +311,8 @@ artifact committed in the Phase D evidence directory.
   strategy run itself is never aborted by the recorder.
 - The merge of the four candle parts was performed by the documented recipe and
   is verified by `verify-candle-composition`; the merge itself is not a shipped
-  command.
+  command (the re-derived part caches and their 90 matching monthly records are
+  the derivation evidence).
 - The long run used a temporary AC power-plan change (standby and display
   disabled). Both original values were captured and restored exactly
   (`STANDBYIDLE` `0x00001c20`, `VIDEOIDLE` `0x00000258`).

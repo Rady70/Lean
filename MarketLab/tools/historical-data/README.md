@@ -746,8 +746,12 @@ file months cover exactly the declared `start_date..end_date` range with no
 gaps or duplicates, that each file name is month-aligned with its first/last
 candle months and the window boundaries, that `totals.source_rows` equals the
 composition's `counts.accepted_row_count`, that `totals.partitions` equals the
-composition partition count, and that the cache's recorded composition
-identity matches the qualified source. With `--output` it writes a
+composition partition count, and that the cache's recorded composition identity
+matches the qualified source. The cache manifest must also bind the PASS
+qualification record (`inputs.qualification_record.sha256` equal to the
+tree's record and `overall_qualification` PASS); a manifest that only names the
+composition identity is refused (`CacheSourceIdentityMissing`), because it does
+not say which qualification the cache bytes derive under. With `--output` it writes a
 deterministic JSON verification record (otherwise it prints it); it exits 0 on
 PASS, 1 on a verification failure, and 2 for a usage or source-configuration
 error.
@@ -784,6 +788,20 @@ deterministic JSON record (contract
 `marketlab-xauusd-m1-candle-composition-v1`, folder names only, no wall clock),
 otherwise it prints it; it exits 0 on PASS, 1 on a verification failure, and 2
 for a usage or configuration error.
+
+The source derivation of a merged cache is certified by re-running the same
+month-aligned part ranges with the current generator and comparing every
+monthly record with the final cache; the cache bytes are never rewritten. For
+the committed Phase E cache the four ranges were `2019-01-01..2020-11-30`,
+`2020-12-01..2022-10-31`, `2022-11-01..2024-09-30` and
+`2024-10-01..2026-06-30`, regenerated with `python -m
+marketlab_historical_data candles --data-folder <tree> --out <part> --start
+<first> --end <last>`; all 90 regenerated records (`sha256`, `bytes`, `rows`,
+`first_candle_utc`, `last_candle_utc`) were equal to the final cache, and the
+final manifest was rebuilt as the documented merge of those four corrected part
+manifests. A final manifest that predates a part schema change (for example one
+that does not carry `inputs.qualification_record`) must be rebuilt this way,
+never hand-edited.
 
 Candles are derived visualization/index data. Executions, events and account
 snapshots remain the authoritative LEAN output, and the qualified native

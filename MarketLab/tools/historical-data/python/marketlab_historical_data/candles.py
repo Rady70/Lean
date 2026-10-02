@@ -1007,6 +1007,27 @@ def _verify_cache_source_identity(
         failures.append(
             "CacheSourceIdentityMismatch: data_time_zone is not the qualified UTC"
         )
+    # A cache manifest must bind the PASS qualification record of the qualified source; a manifest
+    # that only names the composition identity does not prove which qualification it derives under.
+    qualification = inputs.get("qualification_record") if isinstance(inputs, dict) else None
+    if not isinstance(qualification, dict):
+        checks["cache_source_identity"] = False
+        failures.append(
+            "CacheSourceIdentityMissing: manifest.inputs.qualification_record is not an object; "
+            "a cache that does not bind the PASS qualification record cannot be source-verified"
+        )
+    else:
+        if qualification.get("sha256") != source.record_sha256:
+            checks["cache_source_identity"] = False
+            failures.append(
+                "CacheSourceIdentityMismatch: qualification_record sha256 "
+                f"{qualification.get('sha256')!r} != {source.record_sha256!r}"
+            )
+        if qualification.get("overall_qualification") != "PASS":
+            checks["cache_source_identity"] = False
+            failures.append(
+                "CacheSourceIdentityMismatch: qualification_record overall_qualification is not PASS"
+            )
 
 
 def verify_candles(data_folder: Path, cache: Path) -> CandleVerificationOutcome:

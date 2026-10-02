@@ -2,8 +2,9 @@
 
 Status: **implemented and corrected after independent review; the authoritative
 package was produced by the corrected Phase E export run and qualified by the
-strengthened package verifier (PASS, 22,942 checks including 21,406
-authoritative parity comparisons, bound to the byte-identical Phase D result).
+strengthened package verifier (PASS, 25,727 checks including 24,191
+authoritative payload-parity comparisons, bound to the byte-identical Phase D
+result).
 Phase E is ready for re-review; later replay/visualization phases (F–I) have not
 started.**
 
@@ -133,30 +134,67 @@ deterministic `manifest.json` with per-file hashes and the input identity. See
 `tools/historical-data/README.md` section 10. The cache is never an authority
 over the native source or over the authoritative LEAN events.
 
+The committed cache was additionally proven to derive from the qualified source
+under the corrected fail-closed generator: the same four month-aligned ranges
+were regenerated under the reviewed revision, every one of the 90 regenerated
+monthly CSV hashes (bytes, rows, first/last candle) equals the final cache
+exactly, the final CSV bytes were not changed, and the final manifest was
+rebuilt as the documented byte-for-byte merge of the four corrected part
+manifests, which bind the PASS qualification record
+(`inputs.qualification_record`). `verify-candles` requires that binding
+(fail-closed) and `verify-candle-composition` proves the final cache is the
+contiguous month-aligned union of those parts.
+
 ## 7. Verification
 
 `MarketLab/scripts/Test-SingleAnchorReplayPackage.ps1` is the Phase E evidence
 gate. It re-hashes every payload file against the manifest, recomputes the
 package fingerprint, verifies the manifest against the run's `results.json`
-(identity, parameters, margin parameters, session map, delivered stream and
-every counter), and then compares the replay stream itself against the
-authoritative `results.json` structures: every anchor against `AnchorEvent`,
-every surviving entry against `LegTrace`, every forced liquidation against
-`researchMargin.StopOutEpisodes[].Liquidations` (including before/after account
-state and same-quote ordering), every Stop Out against its episode, every
-rejection against `RejectionTrace`/summaries, every hard-BE activation against
-the first tail leg/attempt, and the run-end counters/snapshot against the final
-account and margin state. It also verifies event ids/order/counts, exact-decimal
-strings in events and telemetry, event-snapshot coverage, the actual
+(contract, identity, time zones, run bounds, parameters, margin parameters,
+session map, delivered stream, outcome/failure, payload-file order and every
+counter including `engineRealizedProfit`), and then compares the replay stream
+itself against the authoritative `results.json` structures: every anchor
+against `AnchorEvent`, every surviving entry against `LegTrace`, every forced
+liquidation against `researchMargin.StopOutEpisodes[].Liquidations` (including
+before/after account state and same-quote ordering), every Stop Out against its
+episode, every rejection against `RejectionTrace`/summaries, every hard-BE
+activation against the earliest authoritative hard-BE attempt across
+`LegTrace`, `LiquidationTrace` and tail `RejectionTrace` rows, every trailing
+activation threshold re-derived from the verified anchor step, surviving
+inventory and parameters, every Margin Call transition against its snapshot
+state, and the run-end counters/snapshot/failure identity against the final
+account, margin and `results.failure` state. It also proves every significant
+event's snapshot is the account state at that event's exact time and quote and
+compares all overlapping account values to it, proves the hard-BE activation
+snapshot is the pre-attempt inventory derived from the parity-verified
+entry/liquidation events, asserts the causal same-timestamp lifecycle order
+(hard-BE activation before its enabling attempt, Margin Call alternation and
+active state at Stop Out, each Stop Out before its episode's first forced
+liquidation and after the previous episode's last one, `basket_liquidated`
+after the last forced close), verifies event ids/order/counts, exact-decimal
+strings in every event and telemetry class, event-snapshot coverage, the actual
 `telemetryIntervalSeconds` periodic rule while positions are open, and (with
-`-ExpectedResultsSha256`) the Phase D binding. `tests\Test-SingleAnchorReplayPackageVerifier.ps1`
-drives 11 mutation cases (changed trade number, fill price, forced-liquidation
-ordinal/price, Stop Out time, same-quote reorder, manifest identity, file hash,
-deleted event, deleted snapshot and an over-frequent periodic sample); each must
-be rejected. The verifier writes `replay-package-verification.json` and exits 0
-only on PASS. A mutation of the committed event values that preserves all
-hashes and counts is caught by the parity comparison, not only by the
-repository's own replay of the same code.
+`-ExpectedResultsSha256`) the Phase D binding. A failed run's run-end time is
+checked against the documented `max(lastProcessedQuote, failureQuote)` rule.
+
+`tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 22 mutation cases over
+an expanded synthetic package (including the hard-BE reject-then-later-fill
+sequence, a trailing activation and a Margin Call pair): changed trade number,
+fill price, forced-liquidation ordinal/price, Stop Out time, same-quote
+reorder, manifest identity/outcome, file hash, deleted event, deleted
+snapshot, over-frequent periodic sample, hard-BE activation snapshot replaced
+by the following entry snapshot, hard-BE activation moved after its enabling
+attempt or timed at the later fill, trailing threshold and snapshot/quote
+changes, Margin Call value and ordering changes, and a rejection decimal
+changed from exact string to JSON number; each must be rejected. It also
+verifies two positive fixtures of a valid failed package (a forward-time fault
+whose quote is later than the last accepted quote and an out-of-order fault
+whose quote precedes it) and rejects a tampered failure identity or a run-end
+time that ignores the `max` rule. The verifier writes
+`replay-package-verification.json` and exits 0 only on PASS. A mutation of the
+committed event values that preserves all hashes and counts is caught by the
+parity, derivation or ordering comparisons, not only by the repository's own
+replay of the same code.
 
 ```powershell
 pwsh -File MarketLab\scripts\Test-SingleAnchorReplayPackage.ps1 `

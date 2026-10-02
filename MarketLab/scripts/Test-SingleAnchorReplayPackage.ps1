@@ -19,11 +19,24 @@ authoritative persisted result of the run:
   * every significant event has exactly one telemetry snapshot (the run-end entry_rejection_summary
     recaps deliberately have none), periodic samples exist only while positions are open and every
     account decimal is an exact JSON string (never a JSON number);
+  * every significant event's snapshot is the account state at that event's exact time and quote,
+    and every event that carries account values (Stop Out, Margin Call, forced liquidation) is
+    compared field by field to its own snapshot;
+  * the hard-BE activation snapshot is proven to be the pre-attempt state derived from the
+    parity-verified entry/liquidation events, and trailing activation thresholds are re-derived
+    from the parity-verified anchor step, surviving inventory and parameters;
+  * the causal lifecycle order is asserted: hard-BE activation before its enabling attempt,
+    Margin Call entry/exit alternation, Stop Out before its episode's first forced liquidation and
+    after the previous episode's last one, basket_liquidated after the last forced close, trailing
+    activation before the close, ascending same-quote liquidation ordinals;
   * telemetry times are non-decreasing in manifest shard order and consecutive periodic samples are
     at least manifest.telemetryIntervalSeconds apart while positions stay open;
   * every authoritative payload structure is compared, field by field, against the event stream:
     anchors, entries, strategy exits, forced liquidations, Stop Out episodes, rejection episodes,
-    hard-BE activations, the run-end identity/counters/delivery and the run-end account snapshot.
+    hard-BE activations, trailing activations, Margin Call transitions, the manifest identity,
+    outcome and payload order, the run-end identity/counters/delivery/failure and the run-end
+    account snapshot. A failed run's run-end time follows the documented
+    max(lastProcessedQuote, failureQuote) rule and its failure identity is compared completely.
 
 The payload parity comparison is tolerant about representation (JSON number vs exact decimal
 string, result timestamps with or without the trailing 'Z') but exact about value, case and
@@ -120,7 +133,19 @@ function Convert-ResultTime([object]$value, [string]$field) {
     }
     if ($value -isnot [string]) { throw "the field '$field' is not a timestamp" }
     $text = [string]$value
-    if ($text.EndsWith('Z')) { return (Convert-UtcTime $text $field) }
+    if ($text.EndsWith('Z')) {
+        # The authoritative writer emits optional fractional digits; the tolerant parser accepts
+        # both the canonical three-digit package form and the result form without them.
+        try {
+            return [datetime]::Parse(
+                $text,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+        }
+        catch {
+            throw "the authoritative field '$field' is not a timestamp: '$value'"
+        }
+    }
     try {
         return [datetime]::Parse(
             $text,
@@ -462,6 +487,31 @@ try {
             "manifest.delivered.lastCanonicalUtc"
     }
 
+    # Manifest run-identity, time zone and outcome parity. The manifest is part of the committed
+    # package, so its identity fields must equal the authoritative result, not just each other.
+    Test-TextParity (Get-Property $manifest 'algorithmTimeZone') (Get-Property $results 'algorithmTimeZone') "manifest.algorithmTimeZone"
+    Test-TextParity (Get-Property $manifest 'quoteTimeZone') (Get-Property $results 'quoteTimeZone') "manifest.quoteTimeZone"
+    # The manifest serializes the run bounds at the canonical millisecond precision, while the
+    # authoritative result keeps the full tick precision; compare the truncated instants.
+    $resultStartTime = Convert-ResultTime (Get-Property $results 'startUtc') "results.startUtc"
+    $resultEndTime = Convert-ResultTime (Get-Property $results 'endUtc') "results.endUtc"
+    Test-TimeParity (Get-Property $manifest 'startUtc') ($resultStartTime.AddTicks(-($resultStartTime.Ticks % [System.TimeSpan]::TicksPerMillisecond))) "manifest.startUtc"
+    Test-TimeParity (Get-Property $manifest 'endUtc') ($resultEndTime.AddTicks(-($resultEndTime.Ticks % [System.TimeSpan]::TicksPerMillisecond))) "manifest.endUtc"
+    $manifestOutcome = Get-Property $manifest 'outcome'
+    $resultFailure = Get-Property $results 'failure'
+    if ($null -eq $manifestOutcome) { Add-Failure "manifest.outcome is missing" }
+    else {
+        Test-BoolParity (Get-Property $manifestOutcome 'completed') (Get-Property $results 'completed') "manifest.outcome.completed"
+        if ($null -eq $resultFailure) {
+            Test-TextParity (Get-Property $manifestOutcome 'failureKind') $null "manifest.outcome.failureKind"
+            Test-TextParity (Get-Property $manifestOutcome 'failureCondition') $null "manifest.outcome.failureCondition"
+        }
+        else {
+            Test-TextParity (Get-Property $manifestOutcome 'failureKind') (Get-Property $resultFailure 'Kind') "manifest.outcome.failureKind"
+            Test-TextParity (Get-Property $manifestOutcome 'failureCondition') (Get-Property $resultFailure 'Condition') "manifest.outcome.failureCondition"
+        }
+    }
+
     $manifestCounters = Get-Property $manifest 'counters'
     foreach ($pair in @(
             @('quoteTicksProcessed', 'quoteTicksProcessed'),
@@ -483,10 +533,41 @@ try {
         Test-Check ([decimal]$left -eq [decimal]$right) `
             "manifest.counters.$($pair[0]) ($left) does not match results.$($pair[1]) ($right)"
     }
+    $manifestEngineRealized = Get-Property $manifestCounters 'engineRealizedProfit'
+    if ($null -eq $manifestEngineRealized) { Add-Failure "manifest.counters.engineRealizedProfit is missing" }
+    elseif ($manifestEngineRealized -isnot [string]) { Add-Failure "manifest.counters.engineRealizedProfit is not an exact string" }
+    else {
+        Test-NumberParity $manifestEngineRealized (Get-Property $results 'realizedProfit') "manifest.counters.engineRealizedProfit"
+    }
 
     # Manifest file identities and payload fingerprint.
     $fileRows = @(Get-Property $manifest 'files')
     Test-Check ($fileRows.Count -ge 2) "the manifest lists fewer than two payload files"
+    # The documented payload order: events.jsonl first, then the telemetry shards in strictly
+    # ascending year order, with no other file interleaved after the first telemetry shard.
+    if ($fileRows.Count -ge 1) {
+        Test-ParityCheck (([string](Get-Property $fileRows[0] 'name')) -ceq 'events.jsonl') `
+            "the manifest payload order must begin with events.jsonl"
+        $telemetryYears = New-Object System.Collections.Generic.List[int]
+        $orderViolation = $false
+        for ($i = 1; $i -lt $fileRows.Count; $i++) {
+            $rowName = [string](Get-Property $fileRows[$i] 'name')
+            if (-not $rowName.StartsWith('telemetry-') -or -not $rowName.EndsWith('.jsonl') -or $rowName.Length -lt 18) {
+                $orderViolation = $true
+                continue
+            }
+            $yearText = $rowName.Substring(10, 4)
+            $yearValue = 0
+            if (-not [int]::TryParse($yearText, [ref]$yearValue)) { $orderViolation = $true; continue }
+            [void]$telemetryYears.Add($yearValue)
+        }
+        Test-ParityCheck (-not $orderViolation) "the manifest lists a payload after the first telemetry shard that is not a year-named telemetry shard"
+        $ascendingYears = $true
+        for ($i = 1; $i -lt $telemetryYears.Count; $i++) {
+            if ($telemetryYears[$i] -le $telemetryYears[$i - 1]) { $ascendingYears = $false }
+        }
+        Test-ParityCheck $ascendingYears "the manifest telemetry shard order is not strictly ascending by year"
+    }
     $fingerprint = New-Object System.Text.StringBuilder
     foreach ($row in $fileRows) {
         $name = [string](Get-Property $row 'name')
@@ -595,20 +676,27 @@ try {
     # Event-level exact decimals: a B1-style regression must not be able to hide outside the
     # telemetry stream. Every event type's decimal identity is written as a JSON string.
     $eventDecimalFields = @{
-        'basket_anchored'     = @('bid', 'ask', 'anchor', 'step', 'upper', 'lower', 'lowerTarget', 'upperTarget')
-        'entry_executed'      = @('decisionBid', 'decisionAsk', 'placedLot', 'fillPrice', 'normalizedRequiredLot')
-        'trailing_activated'  = @('bid', 'ask', 'profit', 'activationThreshold')
-        'strategy_exit'       = @('bid', 'ask', 'anchor', 'buyLots', 'sellLots', 'grossLots', 'netLots', 'rawProfit', 'exitProfit', 'threshold', 'buyClosePrice', 'sellClosePrice', 'commission', 'realizedProfit', 'liquidatedRealizedProfit')
-        'basket_liquidated'   = @('bid', 'ask', 'anchor', 'buyLots', 'sellLots', 'grossLots', 'netLots', 'realizedProfit', 'liquidatedRealizedProfit')
-        'forced_liquidation'  = @('closePrice', 'realizedProfit', 'triggerBid', 'triggerAsk', 'placedLot', 'entryPrice', 'beforeBalance', 'beforeFloatingProfit', 'beforeEquity', 'beforeUsedMargin', 'afterBalance', 'afterFloatingProfit', 'afterEquity', 'afterUsedMargin')
-        'stop_out_triggered'  = @('bid', 'ask', 'balance', 'floatingProfit', 'equity', 'usedMargin', 'freeMargin')
-        'margin_call_entered' = @('bid', 'ask', 'balance', 'equity', 'usedMargin')
-        'margin_call_left'    = @('bid', 'ask', 'balance', 'equity', 'usedMargin')
+        'basket_anchored'          = @('bid', 'ask', 'anchor', 'step', 'upper', 'lower', 'lowerTarget', 'upperTarget')
+        'entry_executed'           = @('decisionBid', 'decisionAsk', 'placedLot', 'fillPrice', 'normalizedRequiredLot')
+        'trailing_activated'       = @('bid', 'ask', 'profit', 'activationThreshold')
+        'hard_breakeven_activated' = @('lowerTarget', 'upperTarget')
+        'strategy_exit'            = @('bid', 'ask', 'anchor', 'buyLots', 'sellLots', 'grossLots', 'netLots', 'rawProfit', 'exitProfit', 'threshold', 'buyClosePrice', 'sellClosePrice', 'commission', 'realizedProfit', 'liquidatedRealizedProfit')
+        'basket_liquidated'        = @('bid', 'ask', 'anchor', 'buyLots', 'sellLots', 'grossLots', 'netLots', 'realizedProfit', 'liquidatedRealizedProfit')
+        'forced_liquidation'       = @('closePrice', 'realizedProfit', 'triggerBid', 'triggerAsk', 'placedLot', 'entryPrice', 'beforeBalance', 'beforeFloatingProfit', 'beforeEquity', 'beforeUsedMargin', 'afterBalance', 'afterFloatingProfit', 'afterEquity', 'afterUsedMargin')
+        'stop_out_triggered'       = @('bid', 'ask', 'balance', 'floatingProfit', 'equity', 'usedMargin', 'freeMargin')
+        'entry_rejected'           = @('bid', 'ask', 'normalizedRequiredLots')
+        'entry_rejection_summary'  = @('firstBid', 'firstAsk', 'lastBid', 'lastAsk')
+        'margin_call_entered'      = @('bid', 'ask', 'balance', 'equity', 'usedMargin')
+        'margin_call_left'         = @('bid', 'ask', 'balance', 'equity', 'usedMargin')
     }
     $eventNullableDecimalFields = @{
-        'entry_executed'     = @('rawRequestedLot', 'exactRequiredLot', 'hardBreakevenTarget', 'targetSpread', 'targetBid', 'targetAsk', 'existingProfitAtTarget', 'marginalProfitPerLot', 'projectedProfitAfter')
-        'stop_out_triggered' = @('marginLevelPercent')
-        'forced_liquidation' = @('rawRequestedLot', 'exactRequiredLot', 'beforeFreeMargin', 'beforeMarginLevelPercent', 'afterFreeMargin', 'afterMarginLevelPercent')
+        'entry_executed'          = @('rawRequestedLot', 'exactRequiredLot', 'hardBreakevenTarget', 'targetSpread', 'targetBid', 'targetAsk', 'existingProfitAtTarget', 'marginalProfitPerLot', 'projectedProfitAfter')
+        'stop_out_triggered'      = @('marginLevelPercent')
+        'forced_liquidation'      = @('rawRequestedLot', 'exactRequiredLot', 'beforeFreeMargin', 'beforeMarginLevelPercent', 'afterFreeMargin', 'afterMarginLevelPercent')
+        'entry_rejected'          = @('rawRequestedLots', 'exactRequiredLots', 'maximumVolume', 'hardBreakevenTarget', 'targetSpread', 'targetBid', 'targetAsk', 'existingProfitAtTarget', 'marginalProfitPerLot', 'projectedProfitAfter', 'accountUsedMargin', 'accountFreeMargin', 'accountMarginLevelPercent', 'projectedUsedMargin', 'projectedFreeMargin')
+        'entry_rejection_summary' = @('minNormalizedRequiredLots', 'maxNormalizedRequiredLots', 'minProjectedFreeMargin', 'maxProjectedFreeMargin')
+        'margin_call_entered'     = @('freeMargin', 'marginLevelPercent')
+        'margin_call_left'        = @('freeMargin', 'marginLevelPercent')
     }
     foreach ($event in $events) {
         $type = [string](Get-Property $event 'type')
@@ -644,15 +732,46 @@ try {
         Test-TimeParity (Get-Property $runEnded 'deliveryLastUtc') (Get-Property $resultDelivered 'last_canonical_utc') "run_ended.deliveryLastUtc"
     }
     Test-BoolParity (Get-Property $runEnded 'completed') (Get-Property $results 'completed') "run_ended.completed"
-    $lastProcessed = Get-Property $results 'lastProcessedQuote'
-    if ($null -ne $lastProcessed -and $null -ne (Get-Property $lastProcessed 'Time')) {
-        Test-TimeParity (Get-Property $runEnded 'time') (Get-Property $lastProcessed 'Time') "run_ended.time"
+    # The complete failure identity: kind, condition, message and faulting quote.
+    $failure = Get-Property $results 'failure'
+    if ($null -eq $failure) {
+        foreach ($field in @('failureKind', 'failureCondition', 'failureMessage', 'failureQuoteTime', 'failureBid', 'failureAsk')) {
+            Test-TextParity (Get-Property $runEnded $field) $null "run_ended.$field (no authoritative failure)"
+        }
     }
     else {
-        $fallbackStart = Get-Property $results 'startUtc'
-        if ($null -eq $fallbackStart) { $fallbackStart = Get-Property $manifest 'startUtc' }
-        Test-TimeParity (Get-Property $runEnded 'time') $fallbackStart "run_ended.time"
+        Test-TextParity (Get-Property $runEnded 'failureKind') (Get-Property $failure 'Kind') "run_ended.failureKind"
+        Test-TextParity (Get-Property $runEnded 'failureCondition') (Get-Property $failure 'Condition') "run_ended.failureCondition"
+        Test-TextParity (Get-Property $runEnded 'failureMessage') (Get-Property $failure 'Message') "run_ended.failureMessage"
+        $failureQuote = Get-Property $failure 'Quote'
+        if ($null -eq $failureQuote) { Add-Failure "results.failure.Quote is missing" }
+        else {
+            Test-TimeParity (Get-Property $runEnded 'failureQuoteTime') (Get-Property $failureQuote 'Time') "run_ended.failureQuoteTime"
+            Test-NumberParity (Get-Property $runEnded 'failureBid') (Get-Property $failureQuote 'Bid') "run_ended.failureBid"
+            Test-NumberParity (Get-Property $runEnded 'failureAsk') (Get-Property $failureQuote 'Ask') "run_ended.failureAsk"
+        }
     }
+    # The documented end-time rule: the run-end time is the later of the last accepted quote and
+    # the rejected faulting quote (a forward-time invalid quote may be later); with no accepted
+    # quote at all it is the declared end of the run.
+    $lastProcessed = Get-Property $results 'lastProcessedQuote'
+    $expectedEndValue = $null
+    if ($null -ne $lastProcessed -and $null -ne (Get-Property $lastProcessed 'Time')) {
+        $expectedEndValue = Get-Property $lastProcessed 'Time'
+    }
+    else {
+        $expectedEndValue = Get-Property $results 'endUtc'
+        if ($null -eq $expectedEndValue) { $expectedEndValue = Get-Property $manifest 'endUtc' }
+    }
+    if ($null -ne $failure) {
+        $failureQuoteTime = Get-Property (Get-Property $failure 'Quote') 'Time'
+        if ($null -ne $failureQuoteTime) {
+            $baseTime = Convert-ResultTime $expectedEndValue "the run-end time base"
+            $faultTime = Convert-ResultTime $failureQuoteTime "results.failure.Quote.Time"
+            if ($faultTime -gt $baseTime) { $expectedEndValue = $failureQuoteTime }
+        }
+    }
+    Test-TimeParity (Get-Property $runEnded 'time') $expectedEndValue "run_ended.time"
 
     # ---- Authoritative payload parity ----
     # Every comparison below is a check and is counted in parityChecks. Numeric values compare via
@@ -1013,41 +1132,63 @@ try {
         Test-ParityCheck ($matches.Count -eq 1) "hard_breakeven_activated parity: $($matches.Count) events for hard-BE basket $sequence, expected exactly one"
         if ($matches.Count -lt 1) { continue }
         $event = $matches[0]
-        $referenceTradeNumber = $null
-        $referenceTime = $null
-        $firstHardBreakevenLeg = $null
+        # The activation belongs to the earliest hard-BE attempt, whichever authoritative record
+        # carries it: a filled leg, a leg that was later liquidated, or a first rejected tail
+        # attempt (a rejected-then-later-filled trade must bind to the rejection's first time).
+        $candidates = New-Object System.Collections.Generic.List[object]
         foreach ($legRow in @(Get-Property $basketRecord 'LegTrace')) {
             if (([string](Get-Property $legRow 'Regime')) -cne 'HardBreakeven') { continue }
-            $tradeNumberCandidate = [long](Get-Property $legRow 'TradeNumber')
-            if ($null -eq $firstHardBreakevenLeg -or $tradeNumberCandidate -lt $firstHardBreakevenLeg) {
-                $firstHardBreakevenLeg = $tradeNumberCandidate
-                $referenceTradeNumber = $tradeNumberCandidate
-                $referenceTime = Get-Property $legRow 'Time'
-            }
+            [void]$candidates.Add([pscustomobject]@{
+                    tradeNumber   = [long](Get-Property $legRow 'TradeNumber')
+                    quoteSequence = [long](Get-Property $legRow 'QuoteSequence')
+                    time          = Convert-ResultTime (Get-Property $legRow 'Time') "HardBreakeven LegTrace[$sequence].Time"
+                    source        = 'LegTrace'
+                })
         }
         foreach ($liquidationRow in @(Get-Property $basketRecord 'LiquidationTrace')) {
             if (([string](Get-Property $liquidationRow 'Regime')) -cne 'HardBreakeven') { continue }
             $tradeNumberCandidate = [long](Get-Property $liquidationRow 'TradeNumber')
-            if ($null -eq $firstHardBreakevenLeg -or $tradeNumberCandidate -lt $firstHardBreakevenLeg) {
-                $firstHardBreakevenLeg = $tradeNumberCandidate
-                $referenceTradeNumber = $tradeNumberCandidate
-                $referenceTime = Get-Property $liquidationRow 'EntryTime'
+            $quoteSequenceCandidate = [long]::MaxValue
+            $entryKey = "$sequence/$tradeNumberCandidate"
+            if ($entryEventByKey.ContainsKey($entryKey)) {
+                $quoteSequenceCandidate = [long](Get-Property $entryEventByKey[$entryKey] 'quoteSequence')
             }
+            [void]$candidates.Add([pscustomobject]@{
+                    tradeNumber   = $tradeNumberCandidate
+                    quoteSequence = $quoteSequenceCandidate
+                    time          = Convert-ResultTime (Get-Property $liquidationRow 'EntryTime') "HardBreakeven LiquidationTrace[$sequence].EntryTime"
+                    source        = 'LiquidationTrace'
+                })
         }
-        if ($null -eq $referenceTradeNumber) {
-            $rejectionRows = @(Get-Property $basketRecord 'RejectionTrace')
-            if ($rejectionRows.Count -ge 1) {
-                $firstRejection = $rejectionRows[0]
-                $referenceTradeNumber = [long](Get-Property $firstRejection 'TradeNumber')
-                $referenceTime = Get-Property $firstRejection 'FirstTime'
-            }
+        $normalTradeCount = [int](Get-Property $resultParameters 'NormalTradeCount')
+        foreach ($rejectionRow in @(Get-Property $basketRecord 'RejectionTrace')) {
+            $tradeNumberCandidate = [long](Get-Property $rejectionRow 'TradeNumber')
+            $isTailAttempt = ($tradeNumberCandidate -gt $normalTradeCount) -or
+                ($null -ne (Get-Property $rejectionRow 'HardBreakevenTarget')) -or
+                ($null -ne (Get-Property $rejectionRow 'ExactRequiredLots'))
+            if (-not $isTailAttempt) { continue }
+            [void]$candidates.Add([pscustomobject]@{
+                    tradeNumber   = $tradeNumberCandidate
+                    quoteSequence = [long](Get-Property $rejectionRow 'FirstQuoteSequence')
+                    time          = Convert-ResultTime (Get-Property $rejectionRow 'FirstTime') "HardBreakeven RejectionTrace[$sequence].FirstTime"
+                    source        = 'RejectionTrace'
+                })
         }
-        if ($null -eq $referenceTradeNumber) {
-            Add-Failure "hard_breakeven_activated parity: basket $sequence has no HardBreakeven entry or RejectionTrace row to locate its activation attempt"
+        $reference = $null
+        foreach ($candidate in $candidates) {
+            if ($null -eq $reference -or $candidate.time -lt $reference.time) { $reference = $candidate; continue }
+            if ($candidate.time -eq $reference.time -and $candidate.quoteSequence -lt $reference.quoteSequence) { $reference = $candidate; continue }
+            if ($candidate.time -eq $reference.time -and $candidate.quoteSequence -eq $reference.quoteSequence -and $candidate.tradeNumber -lt $reference.tradeNumber) { $reference = $candidate }
+        }
+        if ($null -eq $reference) {
+            Add-Failure "hard_breakeven_activated parity: basket $sequence has no HardBreakeven entry, liquidation or tail rejection to locate its activation attempt"
             continue
         }
-        Test-NumberParity (Get-Property $event 'tradeNumber') $referenceTradeNumber "hard_breakeven_activated[$sequence].tradeNumber"
-        Test-TimeParity (Get-Property $event 'time') $referenceTime "hard_breakeven_activated[$sequence].time"
+        Test-NumberParity (Get-Property $event 'tradeNumber') $reference.tradeNumber "hard_breakeven_activated[$sequence].tradeNumber"
+        Test-TimeParity (Get-Property $event 'time') $reference.time "hard_breakeven_activated[$sequence].time (earliest authoritative hard-BE attempt: $($reference.source))"
+        if ($reference.quoteSequence -ne [long]::MaxValue) {
+            Test-NumberParity (Get-Property $event 'quoteSequence') $reference.quoteSequence "hard_breakeven_activated[$sequence].quoteSequence"
+        }
         $anchor = Get-Property $basketRecord 'AnchorEvent'
         Test-NumberParity (Get-Property $event 'lowerTarget') (Get-Property $anchor 'LowerTarget') "hard_breakeven_activated[$sequence].lowerTarget"
         Test-NumberParity (Get-Property $event 'upperTarget') (Get-Property $anchor 'UpperTarget') "hard_breakeven_activated[$sequence].upperTarget"
@@ -1132,6 +1273,219 @@ try {
     Test-Check ((Get-Property $manifestTelemetry 'event') -eq $eventSnapshots) "manifest telemetry event count does not match the telemetry file"
     Test-Check ((Get-Property $manifestTelemetry 'periodic') -eq $periodic) "manifest telemetry periodic count does not match the telemetry file"
 
+    # ---- Event-snapshot binding, derived pre-attempt state and lifecycle ordering ----
+    # Every significant event's telemetry snapshot must be the account state at the event's exact
+    # time and quote; event classes that carry overlapping account values compare them to the
+    # snapshot, so tampering one side alone cannot pass. The hard-BE activation snapshot is
+    # additionally proven to be the pre-attempt state derived from the parity-verified
+    # entry/liquidation events, and trailing activation thresholds are re-derived from the
+    # parity-verified anchor step, the surviving inventory and the parity-verified parameters.
+    $snapshotAccountFields = @{
+        'stop_out_triggered'  = @('balance', 'floatingProfit', 'equity', 'usedMargin', 'freeMargin', 'marginLevelPercent', 'openPositions')
+        'margin_call_entered' = @('balance', 'equity', 'usedMargin', 'freeMargin', 'marginLevelPercent', 'openPositions')
+        'margin_call_left'    = @('balance', 'equity', 'usedMargin', 'freeMargin', 'marginLevelPercent', 'openPositions')
+    }
+    $anchorStepByBasket = @{}
+    foreach ($basketRecord in $expectedBasketRecords) {
+        $anchorStepByBasket[[long](Get-Property $basketRecord 'Sequence')] = Get-Property (Get-Property $basketRecord 'AnchorEvent') 'Step'
+    }
+    $trailingUnitsValue = [decimal](Get-Property $resultParameters 'TrailingActivationUnits')
+    $pointValueValue = [decimal](Get-Property $resultParameters 'PointValuePerLot')
+    $openLegs = @{}
+    foreach ($event in $events) {
+        $type = [string](Get-Property $event 'type')
+        $eventId = [long](Get-Property $event 'id')
+        if ($type -eq 'entry_executed') {
+            $basket = [long](Get-Property $event 'basket')
+            if (-not $openLegs.ContainsKey($basket)) { $openLegs[$basket] = @{} }
+            $openLegs[$basket][[long](Get-Property $event 'tradeNumber')] = [pscustomobject]@{
+                side = [string](Get-Property $event 'side')
+                lot  = [decimal](Get-Property $event 'placedLot')
+            }
+            continue
+        }
+        if ($type -eq 'forced_liquidation') {
+            $basket = [long](Get-Property $event 'basket')
+            if ($openLegs.ContainsKey($basket)) { [void]$openLegs[$basket].Remove([long](Get-Property $event 'tradeNumber')) }
+            continue
+        }
+        if ($type -eq 'entry_rejection_summary') { continue }
+        if (-not $snapshotByEventId.ContainsKey($eventId)) { continue }
+        $snapshot = $snapshotByEventId[$eventId]
+        try {
+            $eventTime = Convert-UtcTime (Get-Property $event 'time') "event[$eventId].time"
+            Test-TimeParity (Get-Property $snapshot 'time') $eventTime "telemetry[$eventId].time"
+        }
+        catch { Add-Failure $_.Exception.Message }
+        if (Has-Property $event 'quoteSequence') {
+            Test-NumberParity (Get-Property $snapshot 'quoteSequence') (Get-Property $event 'quoteSequence') "telemetry[$eventId].quoteSequence"
+        }
+        if ($snapshotAccountFields.ContainsKey($type)) {
+            foreach ($field in $snapshotAccountFields[$type]) {
+                Test-NumberParity (Get-Property $snapshot $field) (Get-Property $event $field) "telemetry[$eventId].$field"
+            }
+        }
+        if ($type -eq 'forced_liquidation') {
+            foreach ($pair in @(@('balance', 'afterBalance'), @('floatingProfit', 'afterFloatingProfit'), @('equity', 'afterEquity'),
+                    @('usedMargin', 'afterUsedMargin'), @('freeMargin', 'afterFreeMargin'),
+                    @('marginLevelPercent', 'afterMarginLevelPercent'), @('openPositions', 'afterOpenPositions'))) {
+                Test-NumberParity (Get-Property $snapshot $pair[0]) (Get-Property $event $pair[1]) "telemetry[$eventId].$($pair[1])"
+            }
+        }
+        if ($type -eq 'margin_call_entered') {
+            Test-BoolParity (Get-Property $snapshot 'marginCallActive') $true "telemetry[$eventId].marginCallActive (entered)"
+        }
+        if ($type -eq 'margin_call_left') {
+            Test-BoolParity (Get-Property $snapshot 'marginCallActive') $false "telemetry[$eventId].marginCallActive (left)"
+        }
+        if ($type -eq 'hard_breakeven_activated' -or $type -eq 'trailing_activated') {
+            $basket = [long](Get-Property $event 'basket')
+            $legs = if ($openLegs.ContainsKey($basket)) { $openLegs[$basket] } else { @{} }
+            $count = 0
+            $gross = [decimal]0
+            $net = [decimal]0
+            $smallest = $null
+            foreach ($leg in $legs.Values) {
+                $count++
+                $gross += $leg.lot
+                if ($leg.side -ceq 'Buy') { $net += $leg.lot } else { $net -= $leg.lot }
+                if ($null -eq $smallest -or $leg.lot -lt $smallest) { $smallest = $leg.lot }
+            }
+            if ($type -eq 'hard_breakeven_activated') {
+                # The activation is published before sizing/placing the first tail attempt, so the
+                # snapshot must show the surviving pre-attempt inventory.
+                Test-NumberParity (Get-Property $snapshot 'openPositions') $count "telemetry[$eventId].openPositions (derived pre-attempt)"
+                Test-NumberParity (Get-Property $snapshot 'grossLots') $gross "telemetry[$eventId].grossLots (derived pre-attempt)"
+                Test-NumberParity (Get-Property $snapshot 'absoluteNetLots') ([math]::Abs($net)) "telemetry[$eventId].absoluteNetLots (derived pre-attempt)"
+            }
+            else {
+                # activationThreshold = TrailingActivationUnits * Step * ExitSensitivityLots *
+                # PointValuePerLot, evaluated with the engine's exact decimal operations over the
+                # surviving inventory.
+                if ($count -eq 0) { Add-Failure "trailing_activated[$eventId] fired with no open legs on basket $basket" }
+                else {
+                    $sensitivity = if ($net -eq 0) { $smallest } else { [math]::Abs($net) }
+                    $step = [decimal]$anchorStepByBasket[$basket]
+                    $stepMoney = $step * $sensitivity * $pointValueValue
+                    $expectedThreshold = $trailingUnitsValue * $stepMoney
+                    Test-NumberParity (Get-Property $event 'activationThreshold') $expectedThreshold "trailing_activated[$eventId].activationThreshold (derived)"
+                    Test-ParityCheck ([decimal](Get-Property $event 'profit') -ge $expectedThreshold) "trailing_activated[$eventId].profit is below the derived activation threshold"
+                }
+            }
+        }
+    }
+
+    # Lifecycle ordering: same-timestamp causal order is part of the contract.
+    $indexOfId = @{}
+    for ($i = 0; $i -lt $events.Count; $i++) { $indexOfId[[long](Get-Property $events[$i] 'id')] = $i }
+    # (a) hard-BE activation strictly before the attempt it enables, on the same quote. The
+    # enabling attempt is whichever of the first rejection of that trade or its later fill
+    # appears first in the stream (a rejected-then-later-filled trade activates on the rejection).
+    foreach ($activationEvent in @(Get-EventsOfType 'hard_breakeven_activated')) {
+        $basket = [long](Get-Property $activationEvent 'basket')
+        $tradeNumber = [long](Get-Property $activationEvent 'tradeNumber')
+        $key = "$basket/$tradeNumber"
+        $attempt = $null
+        $attemptIndex = [int]::MaxValue
+        if ($entryEventByKey.ContainsKey($key)) {
+            $attemptIndex = $indexOfId[[long](Get-Property $entryEventByKey[$key] 'id')]
+            $attempt = $entryEventByKey[$key]
+        }
+        $rejected = @($entryRejectedEvents | Where-Object { [long](Get-Property $_ 'basket') -eq $basket -and [long](Get-Property $_ 'tradeNumber') -eq $tradeNumber })
+        foreach ($rejectedEvent in $rejected) {
+            $rejectedIndex = $indexOfId[[long](Get-Property $rejectedEvent 'id')]
+            if ($rejectedIndex -lt $attemptIndex) { $attemptIndex = $rejectedIndex; $attempt = $rejectedEvent }
+        }
+        if ($null -eq $attempt) {
+            Add-Failure "hard_breakeven_activated[$basket/$tradeNumber] has no enabling attempt event"
+            continue
+        }
+        $activationIndex = $indexOfId[[long](Get-Property $activationEvent 'id')]
+        Test-ParityCheck ($activationIndex -lt $attemptIndex) "hard_breakeven_activated[$basket/$tradeNumber] does not precede its enabling attempt"
+        Test-TimeParity (Get-Property $activationEvent 'time') (Get-Property $attempt 'time') "hard_breakeven_activated[$basket/$tradeNumber].time vs enabling attempt"
+    }
+    # (b) Margin Call entry/exit alternation; stop-out requires an active Margin Call.
+    $marginEnabledFlag = $false
+    $marginCallState = $false
+    foreach ($event in $events) {
+        $type = [string](Get-Property $event 'type')
+        if ($type -eq 'entry_rejection_summary') { continue }
+        if ($type -eq 'margin_call_entered') {
+            $marginEnabledFlag = $true
+            Test-ParityCheck (-not $marginCallState) "margin_call_entered while already active (event id $([long](Get-Property $event 'id')))"
+            $marginCallState = $true
+        }
+        elseif ($type -eq 'margin_call_left') {
+            $marginEnabledFlag = $true
+            Test-ParityCheck $marginCallState "margin_call_left while not active (event id $([long](Get-Property $event 'id')))"
+            $marginCallState = $false
+        }
+        elseif ($type -eq 'stop_out_triggered') {
+            if ($marginEnabledFlag -or $null -ne $margin) {
+                Test-ParityCheck $marginCallState "stop_out_triggered without an active Margin Call (event id $([long](Get-Property $event 'id')))"
+            }
+        }
+    }
+    if ($null -ne $margin) {
+        Test-ParityCheck ($marginCallState -eq [bool](Get-Property $margin 'MarginCallActive')) "the Margin Call state at the end of the event stream does not match researchMargin.MarginCallActive"
+    }
+    # (c) Each Stop Out trigger precedes that episode's first forced liquidation and follows the
+    # previous episode's last one; (d) each basket_liquidated follows the last forced close.
+    $stopOutEventIndexes = @()
+    foreach ($stopOutEvent in @(Get-EventsOfType 'stop_out_triggered')) { $stopOutEventIndexes += $indexOfId[[long](Get-Property $stopOutEvent 'id')] }
+    $forcedEventIndexes = @()
+    foreach ($forcedEvent in @(Get-EventsOfType 'forced_liquidation')) { $forcedEventIndexes += $indexOfId[[long](Get-Property $forcedEvent 'id')] }
+    $flatIndex = 0
+    for ($episodeIndex = 0; $episodeIndex -lt $episodes.Count; $episodeIndex++) {
+        $liquidationCount = @(Get-Property $episodes[$episodeIndex] 'Liquidations').Count
+        if ($episodeIndex -lt $stopOutEventIndexes.Count -and $liquidationCount -gt 0) {
+            $triggerIndex = $stopOutEventIndexes[$episodeIndex]
+            $firstForcedIndex = $forcedEventIndexes[$flatIndex]
+            Test-ParityCheck ($triggerIndex -lt $firstForcedIndex) `
+                "stop_out_triggered[$episodeIndex] does not precede the episode's first forced liquidation"
+            if ($episodeIndex -gt 0) {
+                Test-ParityCheck ($triggerIndex -gt $forcedEventIndexes[$flatIndex - 1]) `
+                    "stop_out_triggered[$episodeIndex] precedes the previous episode's forced liquidations"
+            }
+        }
+        $flatIndex += $liquidationCount
+    }
+    $lastForcedIndexByBasket = @{}
+    foreach ($forcedEvent in @(Get-EventsOfType 'forced_liquidation')) {
+        $lastForcedIndexByBasket[[long](Get-Property $forcedEvent 'basket')] = $indexOfId[[long](Get-Property $forcedEvent 'id')]
+    }
+    foreach ($liquidatedEvent in @(Get-EventsOfType 'basket_liquidated')) {
+        $basket = [long](Get-Property $liquidatedEvent 'basket')
+        if ($lastForcedIndexByBasket.ContainsKey($basket)) {
+            Test-ParityCheck ($indexOfId[[long](Get-Property $liquidatedEvent 'id')] -gt $lastForcedIndexByBasket[$basket]) `
+                "basket_liquidated[$basket] does not follow the basket's last forced liquidation"
+        }
+    }
+    # (e) Trailing activation precedes the basket's close; same-quote forced liquidations keep
+    # strictly ascending ordinals.
+    $closeIndexByBasket = @{}
+    foreach ($closeEvent in @(@(Get-EventsOfType 'strategy_exit') + @(Get-EventsOfType 'basket_liquidated'))) {
+        $closeIndexByBasket[[long](Get-Property $closeEvent 'basket')] = $indexOfId[[long](Get-Property $closeEvent 'id')]
+    }
+    foreach ($trailingEvent in @(Get-EventsOfType 'trailing_activated')) {
+        $basket = [long](Get-Property $trailingEvent 'basket')
+        if ($closeIndexByBasket.ContainsKey($basket)) {
+            Test-ParityCheck ($indexOfId[[long](Get-Property $trailingEvent 'id')] -lt $closeIndexByBasket[$basket]) `
+                "trailing_activated[$basket] does not precede the basket close"
+        }
+    }
+    $previousForcedOrdinal = $null
+    $previousForcedQuote = $null
+    foreach ($forcedEvent in @(Get-EventsOfType 'forced_liquidation')) {
+        $ordinal = [long](Get-Property $forcedEvent 'ordinal')
+        $triggerQuote = [long](Get-Property $forcedEvent 'triggerQuoteSequence')
+        if ($null -ne $previousForcedOrdinal -and $triggerQuote -eq $previousForcedQuote -and $ordinal -le $previousForcedOrdinal) {
+            Add-Failure "same-quote forced liquidations are not in ascending ordinal order at event id $([long](Get-Property $forcedEvent 'id'))"
+        }
+        $previousForcedOrdinal = $ordinal
+        $previousForcedQuote = $triggerQuote
+    }
+
     # H (continued). run_ended account snapshot against the final research account and margin state.
     $runEndedId = [long](Get-Property $runEnded 'id')
     if (-not $snapshotByEventId.ContainsKey($runEndedId)) {
@@ -1159,14 +1513,16 @@ try {
     }
 
     # A deterministic verification record: the event-type counts are emitted in sorted key order
-    # (a raw hashtable's enumeration order is not stable across runs).
+    # (a raw hashtable's enumeration order is not stable across runs) and the run identity is the
+    # directory name only, never its absolute path, so the record is byte-reproducible when the
+    # same package is verified in another location.
     $eventTypesOrdered = [ordered]@{}
     foreach ($eventTypeKey in @($eventCounts.Keys | Sort-Object)) {
         $eventTypesOrdered[$eventTypeKey] = $eventCounts[$eventTypeKey]
     }
     $summary = [ordered]@{
         contract = 'marketlab-single-anchor-replay-package-verification-v1'
-        runDirectory = $run
+        runDirectory = [System.IO.Path]::GetFileName($run)
         pass = ($script:failures.Count -eq 0)
         checks = $script:checks
         parityChecks = $script:parityChecks

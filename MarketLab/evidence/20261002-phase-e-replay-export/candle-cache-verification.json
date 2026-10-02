@@ -6,7 +6,7 @@
     "end_date": "2026-06-30",
     "files": 90,
     "manifest": "manifest.json",
-    "manifest_sha256": "265ae887d65ba044e8d5bd9615b303eedd20d0b440342ceb16cbd5322f231b92",
+    "manifest_sha256": "75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1",
     "start_date": "2019-01-01"
   },
   "cache_folder_name": "xauusd-m1-candles",

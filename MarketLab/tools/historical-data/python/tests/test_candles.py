@@ -679,6 +679,25 @@ class CandleContractTests(unittest.TestCase):
             len(composition["native"]["partitions"]),
         )
 
+    def test_verify_candles_fails_without_the_qualification_record_binding(self):
+        build_qualified_tree(
+            self.data,
+            [(datetime(2019, 1, 2, 0, 0, 0, tzinfo=UTC), D("1"), D("2"))],
+        )
+        outcome = generate_candles(self.data, self.out)
+        self.assertEqual(outcome.exit_code, 0, outcome.failures)
+        manifest = load_manifest(self.out)
+        del manifest["inputs"]["qualification_record"]
+        (self.out / "manifest.json").write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        verification = verify_candles(self.data, self.out)
+        self.assertEqual(verification.exit_code, 1)
+        self.assertFalse(verification.record["checks"]["cache_source_identity"])
+        self.assertTrue(
+            any("qualification_record" in f for f in verification.failures)
+        )
+
     def test_verify_candles_fails_on_a_tampered_csv(self):
         build_qualified_tree(
             self.data,

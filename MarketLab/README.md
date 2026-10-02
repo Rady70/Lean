@@ -740,12 +740,18 @@ emitted package (`marketlab-single-anchor-replay-package-v1`, package SHA-256
 `5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`) contains
 1,454 authoritative events, 1,452 exact event account snapshots and 98,866
 bounded periodic samples; the strengthened package verifier
-(`scripts\Test-SingleAnchorReplayPackage.ps1`) returned PASS with 22,942 checks
-including 21,406 authoritative parity comparisons and the Phase D binding
-enforced, and its 11 mutation cases are all rejected. The reviewed defects were
-fixed: the hard-BE activation snapshot is now the exact pre-attempt state
-(11/11), package publication is fail-closed, and candle generation is
-fail-closed on the qualified source identity with `verify-candles` and
+(`scripts\Test-SingleAnchorReplayPackage.ps1`) returned PASS with 25,727 checks
+including 24,191 authoritative payload-parity comparisons and the Phase D
+binding enforced (event-snapshot binding, derived hard-BE/trailing states,
+causal lifecycle ordering, full failure identity under the
+`max(lastProcessedQuote, failureQuote)` rule, manifest identity/outcome/file
+order and exact-string coverage); its 22 mutation cases are all rejected and
+both positive failed-run fixtures verify. The reviewed defects were fixed: the
+hard-BE activation snapshot is the exact pre-attempt state (11/11, now also in
+the committed telemetry sample), package publication is fail-closed, and the
+M1 candle cache was re-derived from the qualified source under the corrected
+generator (90/90 monthly records equal the cache bytes; the rebuilt manifest
+binds the PASS qualification record) with `verify-candles` and
 `verify-candle-composition` certification. The result record is
 [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md), the compact
 evidence is under `MarketLab\evidence\20261002-phase-e-replay-export\` and the

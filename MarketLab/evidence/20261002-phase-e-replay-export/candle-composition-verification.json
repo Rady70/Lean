@@ -26,7 +26,7 @@
     "end_month": "2026-06",
     "files": 90,
     "folder_name": "xauusd-m1-candles",
-    "manifest_sha256": "265ae887d65ba044e8d5bd9615b303eedd20d0b440342ceb16cbd5322f231b92",
+    "manifest_sha256": "75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1",
     "recomputed_content_sha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
     "start_date": "2019-01-01",
     "start_month": "2019-01",
@@ -44,7 +44,7 @@
       "end_month": "2020-11",
       "files": 23,
       "folder_name": "partA",
-      "manifest_sha256": "391a8c6723033a396e68b119fb067aefd81db746877f48261d6f37051ac71b30",
+      "manifest_sha256": "d04895049bbc3ac11128fb221c59de8498618291cf1b814ddb42890edc73505f",
       "start_date": "2019-01-01",
       "start_month": "2019-01",
       "totals": {
@@ -59,7 +59,7 @@
       "end_month": "2022-10",
       "files": 23,
       "folder_name": "partB",
-      "manifest_sha256": "045aa61d6add92759cf7e621166266acd97495981c4a2814305da3ff601486f1",
+      "manifest_sha256": "8f38b981e7db20d56fb67fb790045ca76b84e0c7d3ed6751a6b11b58ccad3f6c",
       "start_date": "2020-12-01",
       "start_month": "2020-12",
       "totals": {
@@ -74,7 +74,7 @@
       "end_month": "2024-09",
       "files": 23,
       "folder_name": "partC",
-      "manifest_sha256": "8a8d87880213ded3138135f91aed81b7bf31334dd077a76a02b0b6acf8d47597",
+      "manifest_sha256": "f329daa1a92566ba15af8def5ab734e66302a91d6d460c762ef48c878ef1bc23",
       "start_date": "2022-11-01",
       "start_month": "2022-11",
       "totals": {
@@ -89,7 +89,7 @@
       "end_month": "2026-06",
       "files": 21,
       "folder_name": "partD",
-      "manifest_sha256": "98cb0105a41b99739d4ff46a878aecca033e8d2e73d0c844dd3f281bfc10bedc",
+      "manifest_sha256": "20fdabecb22dcac643e383619640352b3a73573724cdd8ac73b5ab6984a93a5f",
       "start_date": "2024-10-01",
       "start_month": "2024-10",
       "totals": {

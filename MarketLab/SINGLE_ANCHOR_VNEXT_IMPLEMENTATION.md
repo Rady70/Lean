@@ -2073,7 +2073,7 @@ review. Phase F-I have not started.**
   to the Phase D artifact
   (`bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad`).
   `scripts/Test-SingleAnchorReplayPackage.ps1` verified the package on that
-  exact run with the binding enforced: **PASS, 22,942 checks including 21,406
+  exact run with the binding enforced: **PASS, 25,727 checks including 24,191
   authoritative payload-parity comparisons**, package SHA-256
   `5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`.
 - **Package contents.** 1,454 events (280 anchors, 555 entries = 490 surviving
@@ -2098,13 +2098,22 @@ review. Phase F-I have not started.**
   byte determinism, recorder-does-not-change-the-engine outcome, and the
   fail-closed publisher), PowerShell guards 40/40, invocation 12/12,
   failed-data 97/97, availability 12/12, corrected-classifier 160/160, delivery
-  end-to-end 40 checks, and 299/299 Python historical-data tests (the additive
-  `candles` subcommand with its fail-closed qualification preflight and
-  `verify-candles`). `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives
-  11 verifier mutation cases (trade number, fill price, forced-liquidation
-  ordinal and price, Stop Out time, same-quote reorder, manifest identity, file
-  hash, event deletion, snapshot deletion and an over-frequent periodic sample),
-  each of which the verifier rejects.
+  end-to-end 40 checks, and 300/300 Python historical-data tests (the additive
+  `candles` subcommand with its fail-closed qualification preflight,
+  `verify-candles` and `verify-candle-composition`).
+  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 22 verifier mutation
+  cases over an expanded synthetic package (including a hard-BE
+  reject-then-later-fill basket, a trailing activation and a Margin Call pair):
+  changed trade number/fill price, forced-liquidation ordinal/price, Stop Out
+  time, same-quote reorder, manifest identity/outcome, file hash, event and
+  snapshot deletion, over-frequent periodic sample, activation snapshot
+  swapped with the following entry snapshot, activation moved after its
+  enabling attempt or timed at the later fill, trailing threshold and
+  snapshot/quote changes, Margin Call value and ordering changes, and an
+  exact-string decimal replaced by a JSON number; it also verifies two positive
+  failed-run fixtures (forward-time and out-of-order faults) under the
+  `max(lastProcessedQuote, failureQuote)` rule and rejects a tampered failure
+  identity or a run-end time that ignores the rule.
 - **Derived M1 candle cache (fail-closed provenance).** The cache was generated
   into `E:\MarketLab\data\lean\xauusd-m1-candles`: 90 monthly CSVs, 2,332
   partitions and 413,750,130 source rows read, 2,655,664 candle rows,
@@ -2120,14 +2129,20 @@ review. Phase F-I have not started.**
   produced in four contiguous month-aligned ranges and merged byte-for-byte with
   a reviewed merge-verification step that recomputes the generator's manifest
   recipe; the component ranges and manifests are preserved in the committed
-  evidence. The existing cache is certified by the new
-  `verify-candles --data-folder <tree> --cache <dir>` command: 2,332/2,332
-  partition zip hashes and partition set verified, 9/9 cache checks passed, and
-  the certification record is committed with the evidence. The committed cache
-  manifest is
-  `evidence/20261002-phase-e-replay-export/candle-cache-manifest.json`.
+  evidence. The cache bytes are **source-derivation proven**: the same four
+  ranges were regenerated with the corrected fail-closed generator under the
+  reviewed revision, all **90/90** regenerated monthly records equal the final
+  cache, the CSV bytes are unchanged, and the final manifest was rebuilt as the
+  documented merge of the corrected part manifests, which bind the PASS
+  qualification record (`e9c72d1a...`). `verify-candles --data-folder <tree>
+  --cache <dir>` now also requires that binding and passed 9/9 checks with
+  2,332/2,332 partition zip hashes; `verify-candle-composition` passed 10/10
+  checks against the re-derived parts; the part manifests are committed
+  byte-identically. The committed cache manifest is
+  `evidence/20261002-phase-e-replay-export/candle-cache-manifest.json`
+  (SHA-256 `75f1d241...`).
 - **Evidence and records.** Compact evidence with a SHA-256 manifest
-  (`a8e800c7...`) is under `evidence/20261002-phase-e-replay-export/`; the result
+  (`2ea521d7...`) is under `evidence/20261002-phase-e-replay-export/`; the result
   record is [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md)
   and the package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). The full
   telemetry shards, engine logs, result packets and the candle cache remain

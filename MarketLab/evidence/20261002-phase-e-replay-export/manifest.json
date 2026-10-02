@@ -1,6 +1,6 @@
 {
   "contract": "marketlab-phase-e-replay-export-evidence-v1",
-  "role": "Corrected Phase E authoritative replay export: the frozen corrected-full-history model executed with the corrected replay recorder, classified EXPECTED, bound byte-for-byte to the Phase D result, with the strengthened authoritative-parity package verification and the certified derived M1 candle cache",
+  "role": "Corrected Phase E authoritative replay export: the frozen corrected-full-history model executed with the corrected replay recorder, classified EXPECTED, bound byte-for-byte to the Phase D result, with comprehensive authoritative-parity package verification and a re-derived, source-certified M1 candle cache",
   "runDateUtc": "2026-10-01/2026-10-02",
   "implementationCommit": "a2941581c02462a190f4d4289f371aed409cb1e3",
   "baselineContract": "MarketLab/config/baseline-contract.json",
@@ -14,8 +14,46 @@
   "resultsByteIdenticalToPhaseD": true,
   "replayPackageContract": "marketlab-single-anchor-replay-package-v1",
   "replayPackageSha256": "5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a",
+  "replayVerificationChecks": 25727,
+  "replayVerificationParityChecks": 24191,
+  "verifierMutationCases": 22,
+  "positiveFailedRunFixtures": 2,
   "candleCacheContract": "marketlab-xauusd-m1-candle-cache-v1",
   "candleCacheContentSha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
+  "candleCacheManifestSha256": "75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1",
+  "candleQualificationRecordSha256": "e9c72d1abf15b1cc6ae9c2d2ff793c49091a26b2439258341c2d32a793632c8d",
+  "candleReDerivation": {
+    "generatorRevision": "a2941581c02462a190f4d4289f371aed409cb1e3",
+    "ranges": [
+      {
+        "folder": "partA",
+        "start": "2019-01-01",
+        "end": "2020-11-30",
+        "manifestSha256": "d04895049bbc3ac11128fb221c59de8498618291cf1b814ddb42890edc73505f"
+      },
+      {
+        "folder": "partB",
+        "start": "2020-12-01",
+        "end": "2022-10-31",
+        "manifestSha256": "8f38b981e7db20d56fb67fb790045ca76b84e0c7d3ed6751a6b11b58ccad3f6c"
+      },
+      {
+        "folder": "partC",
+        "start": "2022-11-01",
+        "end": "2024-09-30",
+        "manifestSha256": "f329daa1a92566ba15af8def5ab734e66302a91d6d460c762ef48c878ef1bc23"
+      },
+      {
+        "folder": "partD",
+        "start": "2024-10-01",
+        "end": "2026-06-30",
+        "manifestSha256": "20fdabecb22dcac643e383619640352b3a73573724cdd8ac73b5ab6984a93a5f"
+      }
+    ],
+    "monthlyRecordsEqual": 90,
+    "monthlyRecordsCompared": 90,
+    "finalCsvBytesUnchanged": true
+  },
   "sourceRunDirectory": "MarketLab/output/20261001-221831-SingleAnchorVNextAlgorithm",
   "artifacts": [
     {
@@ -55,10 +93,10 @@
     },
     {
       "path": "replay-package-verification.json",
-      "sha256": "8abc269861c4a3bbeaa65d44c571016475c33b5f4bccddb04f5558da89dc586c",
-      "bytes": 2112,
+      "sha256": "753eeda149d661a10726cc465867e0d6feaf2fd9b279577a4b0c26f9f97b9b4e",
+      "bytes": 2072,
       "origin": "derived by MarketLab\\scripts\\Test-SingleAnchorReplayPackage.ps1 on the exact run with the Phase D binding",
-      "role": "Phase E package verifier PASS record (22,942 checks, 21,406 authoritative parity comparisons) with the Phase D results binding"
+      "role": "Phase E package verifier PASS record (25,727 checks, 24,191 authoritative payload-parity comparisons) with the Phase D results binding; byte-reproducible"
     },
     {
       "path": "replay-manifest.json",
@@ -76,59 +114,59 @@
     },
     {
       "path": "replay-telemetry-sample.jsonl",
-      "sha256": "15757f590672f36fce8db9dff7899a45ff29c4411e990bf80f571cce0339ea70",
-      "bytes": 10604,
-      "origin": "derived bounded sample of the package telemetry shards",
-      "role": "bounded exact-string account-telemetry sample (2019 head, 2020 head, the 2021 and 2026 event snapshots)"
+      "sha256": "76f623f387dc30d297ce5127753b81f8f79907adb7be9bbb96fe825de7536be7",
+      "bytes": 20430,
+      "origin": "derived bounded sample of the package telemetry shards (heads plus the 11 hard-BE activation/attempt snapshot pairs)",
+      "role": "bounded exact-string account-telemetry sample: 2019/2020 heads, the 2021 and 2026 event snapshots, and the 11 hard-BE activation + following attempt snapshot pairs (pre-attempt 4 positions, post-entry 5)"
     },
     {
       "path": "candle-cache-manifest.json",
-      "sha256": "265ae887d65ba044e8d5bd9615b303eedd20d0b440342ceb16cbd5322f231b92",
-      "bytes": 27762,
-      "origin": "E:\\MarketLab\\data\\lean\\xauusd-m1-candles\\manifest.json",
-      "role": "the derived full M1 candle-cache manifest (90 monthly files, per-file hashes, content fingerprint ab1b0c7f...)"
+      "sha256": "75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1",
+      "bytes": 27425,
+      "origin": "E:\\MarketLab\\data\\lean\\xauusd-m1-candles\\manifest.json (rebuilt as the documented byte-for-byte merge of the four re-derived part manifests)",
+      "role": "the derived full M1 candle-cache manifest (90 monthly files, per-file hashes, content fingerprint ab1b0c7f..., qualification-record binding e9c72d1a...)"
     },
     {
       "path": "candle-cache-verification.json",
-      "sha256": "d613f02acec1a71cf4d29864078b0d5df2ffa8cd2d49b0eea478d8fcc9651938",
+      "sha256": "05bd41032037ea34cb5e142af211faeedd2b42d2916f7045547fae70bd8f776d",
       "bytes": 1402,
-      "origin": "derived by marketlab_historical_data verify-candles on the qualified tree and the full cache",
-      "role": "verify-candles PASS: 2,332/2,332 qualified partitions hashed, cache files and month coverage verified"
+      "origin": "derived by marketlab_historical_data verify-candles on the qualified tree and the full cache (the manifest must bind the PASS qualification record)",
+      "role": "verify-candles PASS: 2,332/2,332 qualified partitions hashed, cache files, month coverage and the qualification-record binding verified (9/9 checks)"
     },
     {
       "path": "candle-composition-verification.json",
-      "sha256": "36bb44459e93cef5b295603af4e310348ab20be1b6c3820efb3b1319d003df9a",
+      "sha256": "c2abf1b068f157156db96b2dbe7a8dbf0da7ccdab47bd6d86781c34a94cf3d06",
       "bytes": 2993,
-      "origin": "derived by marketlab_historical_data verify-candle-composition on the four part caches and the final cache",
-      "role": "verify-candle-composition PASS: the final cache is the contiguous month-aligned union of the four preserved part caches"
+      "origin": "derived by marketlab_historical_data verify-candle-composition on the four re-derived part caches and the final cache",
+      "role": "verify-candle-composition PASS (10/10 checks): the final cache is the contiguous month-aligned union of the four re-derived part caches"
     },
     {
       "path": "candle-parts/partA-manifest.json",
-      "sha256": "af980b6c1e4492cc88f88be7c350a3b7d6218c064e49f96aa25d4e2c3070847b",
-      "bytes": 7993,
-      "origin": "E:\\MarketLab\\data\\lean\\_candles-parts\\partA\\manifest.json",
-      "role": "a preserved month-aligned component manifest of the full-cache merge"
+      "sha256": "d04895049bbc3ac11128fb221c59de8498618291cf1b814ddb42890edc73505f",
+      "bytes": 8192,
+      "origin": "E:\\MarketLab\\data\\lean\\_candles-rederive\\partA\\manifest.json (byte-identical copy)",
+      "role": "a re-derived month-aligned part manifest binding the PASS qualification record; every one of its monthly records equals the final cache byte-for-byte"
     },
     {
       "path": "candle-parts/partB-manifest.json",
-      "sha256": "ac4e21154e727432382fa0bca56de1bf8f2cc6875e4c7aee2bf46b806317c7de",
-      "bytes": 7994,
-      "origin": "E:\\MarketLab\\data\\lean\\_candles-parts\\partB\\manifest.json",
-      "role": "a preserved month-aligned component manifest of the full-cache merge"
+      "sha256": "8f38b981e7db20d56fb67fb790045ca76b84e0c7d3ed6751a6b11b58ccad3f6c",
+      "bytes": 8193,
+      "origin": "E:\\MarketLab\\data\\lean\\_candles-rederive\\partB\\manifest.json (byte-identical copy)",
+      "role": "a re-derived month-aligned part manifest binding the PASS qualification record; every one of its monthly records equals the final cache byte-for-byte"
     },
     {
       "path": "candle-parts/partC-manifest.json",
-      "sha256": "f8a591ec4fa2f2215ccf8062618145cde558a7c83e7848ca8c929cb073a2577a",
-      "bytes": 7993,
-      "origin": "E:\\MarketLab\\data\\lean\\_candles-parts\\partC\\manifest.json",
-      "role": "a preserved month-aligned component manifest of the full-cache merge"
+      "sha256": "f329daa1a92566ba15af8def5ab734e66302a91d6d460c762ef48c878ef1bc23",
+      "bytes": 8192,
+      "origin": "E:\\MarketLab\\data\\lean\\_candles-rederive\\partC\\manifest.json (byte-identical copy)",
+      "role": "a re-derived month-aligned part manifest binding the PASS qualification record; every one of its monthly records equals the final cache byte-for-byte"
     },
     {
       "path": "candle-parts/partD-manifest.json",
-      "sha256": "eed2c33715fd6f4d3c1569d5c19b1f494e038a42562d46049a0fd1a017a2fc70",
-      "bytes": 7404,
-      "origin": "E:\\MarketLab\\data\\lean\\_candles-parts\\partD\\manifest.json",
-      "role": "a preserved month-aligned component manifest of the full-cache merge"
+      "sha256": "20fdabecb22dcac643e383619640352b3a73573724cdd8ac73b5ab6984a93a5f",
+      "bytes": 7619,
+      "origin": "E:\\MarketLab\\data\\lean\\_candles-rederive\\partD\\manifest.json (byte-identical copy)",
+      "role": "a re-derived month-aligned part manifest binding the PASS qualification record; every one of its monthly records equals the final cache byte-for-byte"
     }
   ],
   "notCommitted": [
@@ -196,16 +234,22 @@
       "path": "candle cache (E:\\MarketLab\\data\\lean\\xauusd-m1-candles)",
       "sha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
       "bytes": 172160895,
-      "reason": "the full derived M1 cache (90 CSVs, 2,655,664 rows); the committed manifest, verify-candles record and composition record carry every identity"
+      "reason": "the full derived M1 cache (90 CSVs, 2,655,664 rows); the CSV bytes are unchanged and every one of the 90 records equals the re-derived part output; the committed merged manifest, verify-candles record and composition record carry every identity"
+    },
+    {
+      "path": "re-derived part caches (E:\\MarketLab\\data\\lean\\_candles-rederive\\partA..D)",
+      "sha256": "d04895049bbc3ac11128fb221c59de8498618291cf1b814ddb42890edc73505f, 8f38b981e7db20d56fb67fb790045ca76b84e0c7d3ed6751a6b11b58ccad3f6c, f329daa1a92566ba15af8def5ab734e66302a91d6d460c762ef48c878ef1bc23, 20fdabecb22dcac643e383619640352b3a73573724cdd8ac73b5ab6984a93a5f",
+      "bytes": 172160895,
+      "reason": "the regenerated part CSVs and caches (172 MB); the committed byte-identical part manifests are their identity"
     }
   ],
   "notes": [
     "Corrected Phase E run: 2026-10-01T22:18:31Z .. 2026-10-02T00:02:39Z (6,248 s), LEAN exit 0, helper exit 0, engine-error audit performed with zero engine errors, 407/407 failed data requests reconciled exactly as in Phase D.",
     "Phase D binding: the run's storage/single-anchor/results.json is byte-identical to the Phase D artifact bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad.",
-    "Hard-BE activation correction: the engine publishes an observational HardBreakevenActivated event before the first tail attempt is sized or placed; all 11 activation snapshots in this package show the pre-attempt state (the following entry adds exactly one position). This was the blocker fixed after independent review; the review also required authoritative event parity in the verifier and fail-closed source qualification for candles.",
-    "Package verification: MarketLab\\scripts\\Test-SingleAnchorReplayPackage.ps1 returned PASS on the exact run with -ExpectedResultsSha256 bc3958b2... (22,942 checks, 21,406 authoritative payload-parity comparisons): anchors, surviving entries, forced liquidations including before/after state and same-quote ordering, Stop Out episodes, rejections, hard-BE activations, run-end provenance/account state, the telemetry periodic rule and the Phase D binding. tests\\Test-SingleAnchorReplayPackageVerifier.ps1 proves 11/11 mutation cases are rejected.",
+    "Hard-BE activation correction: the engine publishes an observational HardBreakevenActivated event before the first tail attempt is sized or placed; all 11 activation snapshots in this package show the pre-attempt state (the committed sample contains all 11 activation/attempt snapshot pairs).",
+    "Package verification: MarketLab\\scripts\\Test-SingleAnchorReplayPackage.ps1 returned PASS on the exact run with -ExpectedResultsSha256 bc3958b2... (25,727 checks, 24,191 authoritative payload-parity comparisons). It binds every significant event snapshot to the event time/quote, compares all overlapping account values to that snapshot, derives the hard-BE pre-attempt state and the trailing thresholds from parity-verified data, asserts the causal lifecycle order, checks the manifest identity/outcome/file order and the complete run-end failure identity under the max(lastProcessedQuote, failureQuote) rule, and enforces the Phase D binding. The verification record is byte-reproducible (directory name only, sorted counts). tests\\Test-SingleAnchorReplayPackageVerifier.ps1 proves 22/22 mutations are rejected and 2/2 positive failed-run fixtures (forward-time and out-of-order) verify.",
+    "Candle source derivation: the same four month-aligned ranges were regenerated with the corrected fail-closed generator (a2941581c); all 90 regenerated monthly records (sha256, bytes, rows, first/last candle) equal the final cache and the final CSV bytes were not changed. The final manifest was rebuilt as the documented merge of the four corrected part manifests, which bind the PASS qualification record e9c72d1a...; verify-candles (9/9 checks, 2,332/2,332 partition zip hashes, qualification-record binding required) and verify-candle-composition (10/10 checks) both PASS. The committed part manifests are byte-identical to the verified files.",
     "Determinism: two identical bounded executions over 2019-01-01..2019-02-15 (including hard-BE activations) produced byte-identical results.json and package files; the corrected run additionally reproduced the Phase D results.json byte-for-byte.",
-    "Candle cache: the full cache was certified by the new fail-closed tooling. verify-candles verified 2,332/2,332 qualified partition zip hashes and 9/9 cache checks; verify-candle-composition verified the final cache as the contiguous month-aligned union of the four preserved part caches (10/10 checks). The cache itself remains a local artifact identified by hash.",
     "The long run used a temporary AC power-plan change (standby and display disabled). Both original values were captured before the change and restored exactly afterwards (STANDBYIDLE 0x00001c20, VIDEOIDLE 0x00000258).",
     "No Phase D rerun as a characterization, no historical-data qualification rerun, no parameter optimization and no hosted CI dispatch occurred."
   ]

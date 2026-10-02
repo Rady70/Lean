@@ -12,9 +12,17 @@
     "composition": {
       "relative_path": "marketlab-qualification/continuous-composition.json",
       "sha256": "a147f20a5b59bfc6cdb0c3cd785e84636bf40665c8203c119a18da6774ab8757",
+      "contract": "marketlab-historical-data-qualification-v1",
+      "composition_contract": "marketlab-continuous-history-composition-v1",
       "data_time_zone": "UTC",
       "ordered_source_semantic_digest": "sha256:231cf63850cd033ea8167ab7d0017bdfbd7744f40412c1a899c2b9d98942886a",
-      "accepted_row_count": 413750130
+      "accepted_row_count": 413750130,
+      "partition_count": 2332
+    },
+    "qualification_record": {
+      "relative_path": "marketlab-qualification/continuous-qualification-record.json",
+      "sha256": "e9c72d1abf15b1cc6ae9c2d2ff793c49091a26b2439258341c2d32a793632c8d",
+      "overall_qualification": "PASS"
     },
     "session_map": {
       "relative_path": "marketlab-sessions/xauusd-sessions.json",
