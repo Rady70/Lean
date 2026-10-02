@@ -745,7 +745,7 @@ including 31,255 authoritative payload-parity comparisons and the Phase D
 binding enforced (event-snapshot binding, derived hard-BE/trailing states,
 causal lifecycle ordering, full failure identity under the
 `max(lastProcessedQuote, failureQuote)` rule, manifest identity/outcome/file
-order and exact-string coverage); its 52 mutation cases are all rejected and
+order and exact-string coverage); its 54 mutation cases are all rejected and
 both positive failed-run fixtures verify. The reviewed defects were fixed: the
 hard-BE activation snapshot is the exact pre-attempt state (11/11, now also in
 the committed telemetry sample), package publication is fail-closed, and the

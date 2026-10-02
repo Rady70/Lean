@@ -63,7 +63,7 @@ package was then verified against that binding by the strengthened
 `MarketLab\scripts\Test-SingleAnchorReplayPackage.ps1`, whose authoritative
 parity comparisons, derivations, ordering checks and mutation behavior are
 exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
-(52/52 mutations rejected, 4/4 positive failed-run fixtures verified).
+(54/54 mutations rejected, 4/4 positive failed-run fixtures verified).
 
 ## Review corrections in this revision
 
@@ -98,6 +98,15 @@ exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
   coverage includes the remaining event classes and the manifest parameter
   blocks; Margin Call conditions and the account-arithmetic identities are
   checked (tolerance `1e-20`).
+- Sixth review (focused cleanup): the terminal hard-BE violation semantics are enforced
+  (the single diagnostic key must be exactly one leg of the final open basket, without a
+  normal entry event, bound to that leg's side/lot/fill/time/quote, with no live event after
+  it except run-end recaps), the terminal-violation fixture matches the engine's
+  throw-before-EntryOpened path, a producer-level C# recorder test covers the same path, the
+  NegativeEquity fixture triggers on a genuinely net-flat (zero used margin, undefined level)
+  inventory, and the base fixture's retained rejection counts and episode outcome are
+  corrected. The suite is 54 mutations with four positive fixtures; the real package, verifier
+  record and evidence counters are unchanged.
 - Fourth review: Margin Call transitions also require
   `equity = balance + floatingProfit`; Stop Out validation is reason-specific
   (`MarginLevel` vs `NegativeEquity`, mirroring `EvaluateSurvival`); the
@@ -109,7 +118,7 @@ exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
   bidirectional hard-BE violation mapping. The base fixture is a
   contract-consistent synthetic verifier fixture (producer-contract ledger/parity/
   account identities with quotes constructed for the exercised rules), the suite
-  is 52 mutations, and the four positive fixtures include a NegativeEquity Stop
+  is 54 mutations, and the four positive fixtures include a NegativeEquity Stop
   Out and a terminal hard-BE violation whose faulting leg stays in the open basket
   state without a normal entry event.
 

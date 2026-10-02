@@ -2091,7 +2091,7 @@ review. Phase F-I have not started.**
   the bounded March 2020 (`81ba0304...`) and low-cash rejection (`697bd85e...`)
   windows are byte-identical to their pre-correction results, and the full
   corrected run reproduced the Phase D result exactly.
-- **Tests.** 314/314 C# tests (17 new Phase E tests: recorder event/snapshot
+- **Tests.** 315/315 C# tests (18 new Phase E tests: recorder event/snapshot
   ordering, the pre-attempt hard-BE activation snapshot on both the filled and
   rejected tail paths, Margin Call transitions, Stop Out/forced/full
   liquidation parity, failure identity, rejection recaps, manifest/decimals,
@@ -2101,7 +2101,7 @@ review. Phase F-I have not started.**
   end-to-end 40 checks, and 300/300 Python historical-data tests (the additive
   `candles` subcommand with its fail-closed qualification preflight,
   `verify-candles` and `verify-candle-composition`).
-  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 52 verifier mutation
+  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 54 verifier mutation
   cases over a contract-consistent synthetic verifier fixture
   (sequential baskets, monotone quote sequences, a legal 20% MarginLevel Stop
   Out with an active Margin Call, a valid skipped-first-entry trace, the
@@ -2156,7 +2156,7 @@ review. Phase F-I have not started.**
   `evidence/20261002-phase-e-replay-export/candle-cache-manifest.json`
   (SHA-256 `75f1d241...`).
 - **Evidence and records.** Compact evidence with a SHA-256 manifest
-  (`e4985b48...`) is under `evidence/20261002-phase-e-replay-export/`; the result
+  (`825239f7...`) is under `evidence/20261002-phase-e-replay-export/`; the result
   record is [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md)
   and the package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). The full
   telemetry shards, engine logs, result packets and the candle cache remain

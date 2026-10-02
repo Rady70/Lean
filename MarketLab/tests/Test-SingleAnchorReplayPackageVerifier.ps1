@@ -576,7 +576,7 @@ function New-SyntheticResultPackage([string]$directory) {
         MaximumVolume = [decimal]50.0
         ProjectedUsedMargin = [decimal]100.0; ProjectedFreeMargin = [decimal]-150.0
         Message = 'Synthetic tail attempt rejected; hard-BE mode stays active and the trade may be retried.'
-        Attempts = 2; LastQuoteSequence = 306; LastTime = Format-UtcZ $entryFourFiveTime
+        Attempts = 1; LastQuoteSequence = 305; LastTime = Format-UtcZ $activationFourTime
         LastBid = [decimal]1013.0; LastAsk = [decimal]1013.4
         ParityAlgorithm = 'synthetic parity algorithm'; ParityHash = '0123456789abcdef'
         MinNormalizedRequiredLots = [decimal]0.5; MaxNormalizedRequiredLots = [decimal]0.5
@@ -602,7 +602,7 @@ function New-SyntheticResultPackage([string]$directory) {
             [ordered]@{ Leg = $liquidationLegOne; Before = $beforeOne; After = $afterOne },
             [ordered]@{ Leg = $liquidationLegTwo; Before = $afterOne; After = $afterTwo }
         )
-        Outcome = 'MarginRestored'; ResolvedTime = Format-UtcZ $stopOutTime; AfterLiquidation = $afterTwo
+        Outcome = 'AllPositionsLiquidated'; ResolvedTime = Format-UtcZ $stopOutTime; AfterLiquidation = $afterTwo
     }
 
     $parameters = [ordered]@{
@@ -661,7 +661,7 @@ function New-SyntheticResultPackage([string]$directory) {
             Time = Format-UtcZ $runEndTime; Bid = [decimal]990.0; Ask = [decimal]990.4
             Mid = [decimal]990.2; Spread = [decimal]0.4; IsValid = $true
         }
-        legsOpened = 8; skippedFirstEntryQuotes = 3; distinctRejectedEntries = 2; rejectedEntryAttempts = 3
+        legsOpened = 8; skippedFirstEntryQuotes = 3; distinctRejectedEntries = 2; rejectedEntryAttempts = 2
         basketsClosed = 2; basketsLiquidated = 1; forcedLiquidations = 2; realizedProfit = [decimal]8.48
         researchAccount = $researchAccount; researchMargin = $researchMargin
         closedBaskets = @($basketOne, $basketTwo, $basketFour)
@@ -880,10 +880,10 @@ function New-SyntheticResultPackage([string]$directory) {
         })
     Add-SyntheticEvent $events ([ordered]@{
             type = 'entry_rejection_summary'; basket = 3; tradeNumber = 5; side = 'Buy'
-            reason = 'InsufficientMargin'; outcome = $null; attempts = 2
+            reason = 'InsufficientMargin'; outcome = $null; attempts = 1
             firstQuoteSequence = 305; firstTime = Format-UtcZ $activationFourTime
             firstBid = Format-Decimal 1012.0; firstAsk = Format-Decimal 1012.4
-            lastQuoteSequence = 306; lastTime = Format-UtcZ $entryFourFiveTime
+            lastQuoteSequence = 305; lastTime = Format-UtcZ $activationFourTime
             lastBid = Format-Decimal 1013.0; lastAsk = Format-Decimal 1013.4
             parityAlgorithm = 'synthetic parity algorithm'; parityHash = '0123456789abcdef'
             minNormalizedRequiredLots = Format-Decimal 0.5; maxNormalizedRequiredLots = Format-Decimal 0.5
@@ -896,7 +896,7 @@ function New-SyntheticResultPackage([string]$directory) {
             failureQuoteTime = $null; failureBid = $null; failureAsk = $null
             quoteTicksProcessed = $quoteTicksProcessed; quoteOnlyQuotes = 1; strategyEligibleQuotes = 4; legsOpened = 8
             basketsClosed = 2; basketsLiquidated = 1; forcedLiquidations = 2; distinctRejectedEntries = 2
-            rejectedEntryAttempts = 3; skippedFirstEntryQuotes = 3; engineRealizedProfit = Format-Decimal 8.48
+            rejectedEntryAttempts = 2; skippedFirstEntryQuotes = 3; engineRealizedProfit = Format-Decimal 8.48
             deliveryQuoteCount = 3; deliverySemanticDigest = $delivered.semantic_digest
             deliveryFirstUtc = $delivered.first_canonical_utc; deliveryLastUtc = $delivered.last_canonical_utc
         })
@@ -993,7 +993,7 @@ function New-SyntheticResultPackage([string]$directory) {
         counters = [ordered]@{
             quoteTicksProcessed = 400; quoteOnlyQuotes = 1; strategyEligibleQuotes = 4; legsOpened = 8
             basketsClosed = 2; basketsLiquidated = 1; forcedLiquidations = 2; distinctRejectedEntries = 2
-            rejectedEntryAttempts = 3; skippedFirstEntryQuotes = 3; engineRealizedProfit = Format-Decimal 8.48
+            rejectedEntryAttempts = 2; skippedFirstEntryQuotes = 3; engineRealizedProfit = Format-Decimal 8.48
         }
         eventCounts = [pscustomobject]$eventCounts
         telemetryCounts = [ordered]@{ event = $eventSnapshotCount; periodic = $periodicCount }
@@ -1077,14 +1077,14 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
     Remove-EventsByType $directory @('margin_call_entered', 'margin_call_left')
 
     # Frozen used margin: uncovered lots * contract size * weighted average entry price / leverage.
-    $neUsedBefore = [decimal]0.1 * [decimal]100.0 * [decimal]1005.8 / [decimal]500.0
-    $neUsedAfterOne = [decimal]0.2 * [decimal]100.0 * [decimal]1005.8 / [decimal]500.0
+    $neUsedBefore = [decimal]0.0
+    $neUsedAfterOne = [decimal]0.1 * [decimal]100.0 * [decimal]1005.8 / [decimal]500.0
     $neEquityBefore = [decimal]-50.0
     $neEquityAfterOne = [decimal]-130.0
     $neBefore = @{
         balance = '100.0'; floatingProfit = '-150.0'; equity = (Format-Decimal $neEquityBefore)
-        usedMargin = (Format-Decimal $neUsedBefore); freeMargin = (Format-Decimal ($neEquityBefore - $neUsedBefore))
-        marginLevelPercent = (Format-Decimal ($neEquityBefore / $neUsedBefore * 100)); openPositions = 2
+        usedMargin = '0.0'; freeMargin = (Format-Decimal $neEquityBefore)
+        marginLevelPercent = $null; openPositions = 2
     }
     $neAfterOne = @{
         balance = '-50.0'; floatingProfit = '-80.0'; equity = (Format-Decimal $neEquityAfterOne)
@@ -1117,7 +1117,18 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
                 foreach ($key in $neAfterTwo.Keys) { $row.('after' + $key.Substring(0, 1).ToUpper() + $key.Substring(1)) = $neAfterTwo[$key] }
                 $row.realizedProfit = '-100.0'
                 $row.reason = 'NegativeEquity'
+                $row.placedLot = '0.1'
+                $row.rawRequestedLot = '0.1'
+                $row.exactRequiredLot = $null
+                $row.normalizedRequiredLot = '0.1'
             }
+        }
+        elseif ([string]$row.type -eq 'entry_executed' -and [long]$row.basket -eq 2 -and [long]$row.tradeNumber -eq 2) {
+            $row.placedLot = '0.1'; $row.rawRequestedLot = '0.1'; $row.exactRequiredLot = $null
+            $row.normalizedRequiredLot = '0.1'
+        }
+        elseif ([string]$row.type -eq 'basket_liquidated') {
+            $row.buyLots = '0.1'; $row.sellLots = '0.1'; $row.grossLots = '0.2'; $row.netLots = '0.0'
         }
         elseif ([string]$row.type -eq 'run_ended') { $row.engineRealizedProfit = '-10150.00' }
     }
@@ -1126,8 +1137,10 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
     $events = Read-JsonLinesArray $eventsPath
     $liquidationIds = New-Object System.Collections.Generic.List[long]
     $runEndedId = $null
+    $entryTwoId = $null
     foreach ($row in $events) {
         if ([string]$row.type -eq 'forced_liquidation') { [void]$liquidationIds.Add([long]$row.id) }
+        if ([string]$row.type -eq 'entry_executed' -and [long]$row.basket -eq 2 -and [long]$row.tradeNumber -eq 2) { $entryTwoId = [long]$row.id }
         if ([string]$row.type -eq 'run_ended') { $runEndedId = [long]$row.id }
     }
     $telemetryPath = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
@@ -1137,9 +1150,12 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
         if ([long]$row.eventId -eq $stopOutId) {
             foreach ($key in $neBefore.Keys) { $row.$key = $neBefore[$key] }
         }
+        elseif ($null -ne $entryTwoId -and [long]$row.eventId -eq $entryTwoId) {
+            $row.grossLots = '0.2'; $row.absoluteNetLots = '0.0'
+        }
         elseif ($liquidationIds.Count -ge 1 -and [long]$row.eventId -eq $liquidationIds[0]) {
             foreach ($key in $neAfterOne.Keys) { $row.$key = $neAfterOne[$key] }
-            $row.grossLots = '0.2'; $row.absoluteNetLots = '0.2'
+            $row.grossLots = '0.1'; $row.absoluteNetLots = '0.1'
         }
         elseif ($liquidationIds.Count -ge 2 -and [long]$row.eventId -eq $liquidationIds[1]) {
             foreach ($key in $neAfterTwo.Keys) { $row.$key = $neAfterTwo[$key] }
@@ -1168,9 +1184,9 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
     $episode.Liquidations[0].Before.Balance = [decimal]100.0
     $episode.Liquidations[0].Before.FloatingProfit = [decimal]-150.0
     $episode.Liquidations[0].Before.Equity = [decimal]-50.0
-    $episode.Liquidations[0].Before.UsedMargin = $neUsedBefore
-    $episode.Liquidations[0].Before.FreeMargin = $neEquityBefore - $neUsedBefore
-    $episode.Liquidations[0].Before.MarginLevelPercent = $neEquityBefore / $neUsedBefore * 100
+    $episode.Liquidations[0].Before.UsedMargin = [decimal]0.0
+    $episode.Liquidations[0].Before.FreeMargin = [decimal]-50.0
+    $episode.Liquidations[0].Before.MarginLevelPercent = $null
     $episode.Liquidations[0].Leg.RealizedProfit = [decimal]-150.0
     $episode.Liquidations[0].After.Balance = [decimal]-50.0
     $episode.Liquidations[0].After.FloatingProfit = [decimal]-80.0
@@ -1194,6 +1210,17 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
     $results.researchMargin.MarginCallActive = $false
     $results.researchMargin.MarginCallEpisodes = 0
     $results.researchMargin.MarginCallObservations = 0
+    $basketTwoRecord = @($results.closedBaskets | Where-Object { [long]$_.Sequence -eq 2 })[0]
+    $basketTwoRecord.BuyLots = [decimal]0.1
+    $basketTwoRecord.SellLots = [decimal]0.1
+    $basketTwoRecord.GrossLots = [decimal]0.2
+    $basketTwoRecord.NetLots = [decimal]0.0
+    $episode.Liquidations[1].Leg.PlacedLot = [decimal]0.1
+    $episode.Liquidations[1].Leg.RawRequestedLot = [decimal]0.1
+    $episode.Liquidations[1].Leg.NormalizedRequiredLot = [decimal]0.1
+    $basketTwoRecord.LiquidationTrace[1].PlacedLot = [decimal]0.1
+    $basketTwoRecord.LiquidationTrace[1].RawRequestedLot = [decimal]0.1
+    $basketTwoRecord.LiquidationTrace[1].NormalizedRequiredLot = [decimal]0.1
     Write-JsonFile $resultsPath $results
 
     $manifestPath = Get-ArtifactPath $directory 'manifest.json'
@@ -2158,6 +2185,63 @@ $violationCases = @(
             }
             if ($violationIndex -lt 0) { throw 'no hard_breakeven_violated event' }
             Insert-DuplicateEvent $directory $violationIndex
+        }),
+    (New-Case 'terminal violation with a normal entry restored for the faulting leg' @('events.jsonl', 'telemetry-2019.jsonl') {
+            param($directory)
+            $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
+            $events = Read-JsonLinesArray $eventsPath
+            $violationIndex = -1
+            $violation = $null
+            for ($i = 0; $i -lt $events.Count; $i++) {
+                if ([string]$events[$i].type -eq 'hard_breakeven_violated') { $violationIndex = $i; $violation = $events[$i]; break }
+            }
+            if ($violationIndex -lt 0) { throw 'no hard_breakeven_violated event' }
+            $payload = [ordered]@{
+                type = 'entry_executed'; basket = [long]$violation.basket; tradeNumber = [long]$violation.tradeNumber
+                quoteSequence = [long]$violation.quoteSequence; time = [string]$violation.time
+                decisionBid = '1013.0'; decisionAsk = '1013.4'; side = [string]$violation.side
+                placedLot = [string]$violation.placedLot; fillPrice = [string]$violation.fillPrice; regime = 'HardBreakeven'
+                rawRequestedLot = '0.5'; exactRequiredLot = '0.5'; normalizedRequiredLot = '0.5'
+                hardBreakevenTarget = '1000.0'; targetSpread = '0.5'; targetBid = '1000.0'; targetAsk = '1000.5'
+                existingProfitAtTarget = '10.0'; marginalProfitPerLot = '5.0'; projectedProfitAfter = '15.0'
+                sizingOutcome = 'Feasible'
+            }
+            $telemetry = Read-JsonLinesArray (Get-ArtifactPath $directory 'telemetry-2019.jsonl')
+            $snapshotBase = $null
+            foreach ($row in $telemetry) {
+                if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq [long]$violation.id) { $snapshotBase = $row }
+            }
+            if ($null -eq $snapshotBase) { throw 'the violation snapshot is missing' }
+            Insert-EventAndSnapshot $directory $violationIndex $payload $snapshotBase @{
+                time = [string]$violation.time; quoteSequence = [long]$violation.quoteSequence
+                openPositions = 5; grossLots = '1.5'; absoluteNetLots = '0.3'
+            }
+        }),
+    (New-Case 'strategy continuation after the terminal violation' @('events.jsonl', 'telemetry-2019.jsonl') {
+            param($directory)
+            $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
+            $events = Read-JsonLinesArray $eventsPath
+            $violationIndex = -1
+            $violation = $null
+            for ($i = 0; $i -lt $events.Count; $i++) {
+                if ([string]$events[$i].type -eq 'hard_breakeven_violated') { $violationIndex = $i; $violation = $events[$i]; break }
+            }
+            if ($violationIndex -lt 0) { throw 'no hard_breakeven_violated event' }
+            $payload = [ordered]@{
+                type = 'basket_close_failed'; basket = [long]$violation.basket; reason = 'ExecutorFailed'
+                quoteSequence = [long]$violation.quoteSequence; time = [string]$violation.time
+                bid = '1013.0'; ask = '1013.4'; message = 'Synthetic continuation after the terminal violation.'
+            }
+            $telemetry = Read-JsonLinesArray (Get-ArtifactPath $directory 'telemetry-2019.jsonl')
+            $snapshotBase = $null
+            foreach ($row in $telemetry) {
+                if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq [long]$violation.id) { $snapshotBase = $row }
+            }
+            if ($null -eq $snapshotBase) { throw 'the violation snapshot is missing' }
+            Insert-EventAndSnapshot $directory ($violationIndex + 1) $payload $snapshotBase @{
+                time = [string]$violation.time; quoteSequence = [long]$violation.quoteSequence
+                openPositions = 5; grossLots = '1.5'; absoluteNetLots = '0.3'
+            }
         })
 )
 foreach ($case in $violationCases) {

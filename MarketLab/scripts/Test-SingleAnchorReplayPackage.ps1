@@ -1043,6 +1043,52 @@ try {
     Test-ParityCheck ($entryEvents.Count -eq ($entryTraceRows - $exemptEntryRows)) `
         "entry_executed parity: the package has $($entryEvents.Count) entries but the authoritative LegTrace plus LiquidationTrace population is $entryTraceRows minus $exemptEntryRows terminal-fault exemption(s)"
 
+    # Terminal hard-BE violation semantics: the single diagnostic key must be exactly one leg of
+    # the final open basket with no normal entry event, bound field by field to that leg, and no
+    # live event may follow it other than the run-end recaps and run_ended.
+    if ($violationCondition -ceq 'HardBreakevenViolatedByFill') {
+        $openViolationMatches = 0
+        $openViolationLeg = $null
+        if ($null -ne $openBasket -and $null -ne $violationLegKey) {
+            foreach ($legRow in @(Get-Property $openBasket 'LegTrace')) {
+                if ("$([long](Get-Property $openBasket 'Sequence'))/$([long](Get-Property $legRow 'TradeNumber'))" -ceq $violationLegKey) {
+                    $openViolationLeg = $legRow
+                    $openViolationMatches++
+                }
+            }
+        }
+        Test-ParityCheck ($openViolationMatches -eq 1) `
+            "the hard-BE faulting leg must appear exactly once in the final open basket LegTrace, found $openViolationMatches"
+        if ($null -ne $violationLegKey) {
+            Test-ParityCheck (-not $entryEventByKey.ContainsKey($violationLegKey)) `
+                "the hard-BE faulting leg must not have a normal entry_executed event"
+        }
+        if ($null -ne $openViolationLeg) {
+            $violationEventsForBinding = @(Get-EventsOfType 'hard_breakeven_violated')
+            if ($violationEventsForBinding.Count -eq 1) {
+                $violationEvent = $violationEventsForBinding[0]
+                Test-NumberParity (Get-Property $violationEvent 'tradeNumber') (Get-Property $openViolationLeg 'TradeNumber') "hard_breakeven_violated.tradeNumber vs the faulting leg"
+                Test-TextParity (Get-Property $violationEvent 'side') (Get-Property $openViolationLeg 'Side') "hard_breakeven_violated.side vs the faulting leg"
+                Test-NumberParity (Get-Property $violationEvent 'placedLot') (Get-Property $openViolationLeg 'PlacedLot') "hard_breakeven_violated.placedLot vs the faulting leg"
+                Test-NumberParity (Get-Property $violationEvent 'fillPrice') (Get-Property $openViolationLeg 'FillPrice') "hard_breakeven_violated.fillPrice vs the faulting leg"
+                Test-TimeParity (Get-Property $violationEvent 'time') (Get-Property $openViolationLeg 'Time') "hard_breakeven_violated.time vs the faulting leg"
+                Test-NumberParity (Get-Property $violationEvent 'quoteSequence') (Get-Property $openViolationLeg 'QuoteSequence') "hard_breakeven_violated.quoteSequence vs the faulting leg"
+            }
+        }
+        $terminalIndex = -1
+        for ($i = 0; $i -lt $events.Count; $i++) {
+            if ([string](Get-Property $events[$i] 'type') -ceq 'hard_breakeven_violated') { $terminalIndex = $i; break }
+        }
+        if ($terminalIndex -ge 0) {
+            for ($i = $terminalIndex + 1; $i -lt $events.Count; $i++) {
+                $laterType = [string](Get-Property $events[$i] 'type')
+                if ($laterType -cne 'entry_rejection_summary' -and $laterType -cne 'run_ended') {
+                    Add-Failure "a $laterType event follows the terminal hard_breakeven_violated diagnostic"
+                }
+            }
+        }
+    }
+
     # C. Strategy exits: the closed baskets that were not broker-liquidated, in closing order,
     # each with a strategy_exit event whose close fields, realized figures and lots all agree.
     $closedBasketRecords = @(Get-Property $results 'closedBaskets')

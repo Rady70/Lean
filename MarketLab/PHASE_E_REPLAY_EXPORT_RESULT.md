@@ -234,7 +234,7 @@ package build instead of aborting the strategy run.
   **PASS, 32,805 checks including 31,255 authoritative payload-parity
   comparisons** (record SHA-256
   `273350ca61342f8b8541bf5c29e9d79431a881daad399d4d05fdfccd663063f6`);
-  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` rejects **52/52**
+  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` rejects **54/54**
   mutations and verifies **4/4** positive fixtures (forward-time fault,
   out-of-order fault, negative-equity Stop Out, terminal hard-BE violation).
   The evidence manifest is now `e4985b48...`.
@@ -265,6 +265,30 @@ package build instead of aborting the strategy run.
 - No verifier behavior changed for the real package: the verification record
   and evidence manifest hashes are unchanged
   (`273350ca...` and `e4985b48...`).
+
+### 1.6 Sixth-round terminal-violation fixture and enforcement cleanup (this revision)
+
+- **Verifier terminal enforcement.** For a `HardBreakevenViolatedByFill` failure the verifier
+  now requires the diagnostic key to be exactly one leg of the final `openBasket.LegTrace`
+  (not merely somewhere in a LegTrace), with no normal `entry_executed` for it, binds the
+  diagnostic `tradeNumber`/`side`/`placedLot`/`fillPrice`/`time`/`quoteSequence` to that leg,
+  and rejects any live event after the diagnostic other than run-end recaps and `run_ended`.
+- **Producer-level C# test.**
+  `ReplayRecorderTests.ATerminalHardBreakevenViolationIsRecordedWithoutAnEntryEvent` drives
+  the real engine/recorder path with an off-model fill: the faulting leg stays in the
+  terminal basket ledger with no entry event, the single diagnostic binds to it, and no
+  continuation is recorded (C# tests now **315/315**, 18 Phase E tests).
+- **NegativeEquity fixture.** The initial trigger is now a genuinely net-flat inventory
+  (zero used margin, undefined margin level) so it really exercises the `NegativeEquity`
+  branch; later re-evaluations may legitimately become `MarginLevel`.
+- **Base fixture trace corrections.** The retained basket-3 rejection is one rejected attempt
+  at its own quote (the later fill is not a second rejected attempt), and the fully closed
+  Stop Out episode is sealed `AllPositionsLiquidated`.
+- **Mutations.** Two focused terminal-semantics mutations were added (restoring a normal
+  entry for the faulting leg; appending a live continuation after the diagnostic); the suite
+  is **54/54** mutations with **4/4** positive fixtures. The real package, verifier record
+  (`273350ca...`) and the package/Phase D identities are unchanged; the evidence manifest is
+  now `825239f7...`.
 
 ## 2. Phase D preservation and binding
 
@@ -332,13 +356,13 @@ the record is byte-reproducible across verifier runs).
   window (`results 697bd85e...`, 206 checks) are byte-identical to the results
   produced before the corrections, and the full corrected run reproduced the
   Phase D result exactly.
-- Focused tests: **314/314** C# tests (17 new Phase E tests including the
+- Focused tests: **315/315** C# tests (18 new Phase E tests including the
   pre-attempt hard-BE activation snapshots on the filled and rejected paths and
   the fail-closed publisher).
 - PowerShell: launch/build guards 40/40, baseline invocation 12/12,
   failed-data classifier 97/97, trading availability 12/12, corrected-full-
   history classifier tests 160/160, production delivery end-to-end 40 checks,
-  and the package-verifier suite (**52/52** mutations rejected plus four positive
+  and the package-verifier suite (**54/54** mutations rejected plus four positive
   failed-run fixtures verified).
 - Python historical data: **300/300** tests, including the fail-closed candle
   preflight, `verify-candles` and `verify-candle-composition`.
@@ -387,7 +411,7 @@ the qualified tree into `E:\MarketLab\data\lean\xauusd-m1-candles`:
 
 Committed compact evidence under
 `MarketLab/evidence/20261002-phase-e-replay-export/` (manifest SHA-256
-`e4985b48e8bebf6723aa7a96d466722ef0dc4eed75e639cb5804714fc1b29cbd`) with a
+`825239f7af217879049f6032eda09db83a2093706fee12acaf78b1ef447a564c`) with a
 SHA-256 manifest:
 
 - the run's `baseline-build.json`, `corrected-history-preflight.json`,

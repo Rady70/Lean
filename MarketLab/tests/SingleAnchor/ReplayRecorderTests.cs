@@ -531,6 +531,62 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(h.Account.MaxOpenPositions, Is.EqualTo(baselineAccount.MaxOpenPositions));
         }
 
+        /// <summary>
+        /// The terminal hard-BE violation producer path: the failable tail order fills and enters
+        /// the basket ledger, the engine throws before EntriesOpened/EntryOpened and before any
+        /// continuation, and the package records exactly one diagnostic bound to the faulting leg
+        /// with no normal entry_executed for it.
+        /// </summary>
+        [Test]
+        public void ATerminalHardBreakevenViolationIsRecordedWithoutAnEntryEvent()
+        {
+            var h = new RecorderHarness(Harness.NoExits(), 10000m);
+            h.Feed(1999.9m, 2000.1m);   // anchor
+            h.Feed(2019.8m, 2020m);     // BUY 0.01 @ 2020
+            h.Feed(1980m, 1980.2m);     // SELL 0.02 @ 1980
+            h.Feed(2019.8m, 2020m);     // BUY 0.03 @ 2020
+            h.Feed(1980m, 1980.2m);     // SELL 0.04 @ 1980
+            h.Executor.EntryOverride = _ => EntryExecution.Filled(2030m); // departs from the sizing model
+
+            var faultingQuote = new Quote(Harness.T0.AddSeconds(5), 2019.8m, 2020m);
+            var fault = Assert.Throws<StrategyInvariantException>(() => h.Engine.OnQuote(faultingQuote))!;
+            Assert.That(fault.Invariant, Is.EqualTo(StrategyInvariant.HardBreakevenViolatedByFill));
+            Assert.That(h.Engine.EntriesOpened, Is.EqualTo(4), "the faulting fill is not counted as an opened entry");
+
+            var basket = h.Engine.Basket!;
+            Assert.That(basket.OpenPositions, Is.EqualTo(5), "the faulting leg stays in the terminal basket ledger");
+            var faultingLeg = basket.Legs.Single(leg => leg.TradeNumber == 5);
+
+            var package = h.Build(false, "StrategyInvariant", "HardBreakevenViolatedByFill", "synthetic violation", fault.Quote);
+            var events = Events(package);
+            var violations = events.Where(e => (string)e["type"]! == "hard_breakeven_violated").ToList();
+            Assert.That(violations, Has.Count.EqualTo(1));
+            var violation = violations[0];
+            Assert.That((int)violation["basket"]!, Is.EqualTo(basket.Sequence));
+            Assert.That((int)violation["tradeNumber"]!, Is.EqualTo(5));
+            Assert.That((string)violation["side"]!, Is.EqualTo(faultingLeg.Side.ToString()));
+            Assert.That(Convert.ToDecimal((string)violation["placedLot"]!), Is.EqualTo(faultingLeg.Lots));
+            Assert.That(Convert.ToDecimal((string)violation["fillPrice"]!), Is.EqualTo(faultingLeg.EntryPrice));
+            Assert.That((string)violation["time"]!, Is.EqualTo(ReplayPackage.FormatUtc(faultingLeg.EntryTime)));
+            Assert.That((long)violation["quoteSequence"]!, Is.EqualTo(faultingLeg.QuoteSequence));
+
+            Assert.That(
+                events.Any(e => (string)e["type"]! == "entry_executed" && (int)e["basket"]! == basket.Sequence && (int)e["tradeNumber"]! == 5),
+                Is.False,
+                "the faulting leg is never published as a normal entry");
+            Assert.That(events.Count(e => (string)e["type"]! == "entry_executed"), Is.EqualTo(4));
+            Assert.That(
+                events.Any(e => (string)e["type"]! is "strategy_exit" or "basket_liquidated" or "trailing_activated"),
+                Is.False,
+                "no later strategy continuation after the terminal diagnostic");
+
+            var runEnded = events[events.Count - 1];
+            Assert.That((string)runEnded["type"]!, Is.EqualTo("run_ended"));
+            Assert.That((bool)runEnded["completed"]!, Is.False);
+            Assert.That((string)runEnded["failureCondition"]!, Is.EqualTo("HardBreakevenViolatedByFill"));
+            Assert.That(events[events.Count - 2], Is.SameAs(violation), "the diagnostic immediately precedes run_ended");
+        }
+
         /// <summary>Feeds the trailing scenario into an engine the caller built directly.</summary>
         private sealed class HarnessLike
         {

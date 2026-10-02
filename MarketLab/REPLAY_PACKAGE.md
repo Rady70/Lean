@@ -202,7 +202,7 @@ actual `telemetryIntervalSeconds` periodic rule while positions are open, and
 time is checked against the documented
 `max(lastProcessedQuote, failureQuote)` rule.
 
-`tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 52 mutation cases over
+`tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 54 mutation cases over
 a contract-consistent synthetic verifier fixture (strictly sequential baskets,
 monotone quote sequences, a legal 20% MarginLevel Stop Out with an active
 Margin Call, a valid skipped-first-entry trace, the hard-BE
@@ -227,9 +227,10 @@ rejected. It also verifies **four positive fixtures**: a forward-time fault
 whose quote is later than the last accepted quote, an out-of-order fault whose
 quote precedes it, a NegativeEquity Stop Out with no active Margin Call, and a
 terminal hard-BE violation with exactly one diagnostic event whose faulting leg
-stays in the final open basket ledger without a normal `entry_executed` event
-and without any later strategy continuation (the verifier exempts only that
-leg); it rejects a tampered
+is exactly one leg of the final open basket ledger without a normal
+`entry_executed` event and without any later live event other than the run-end
+recaps (the verifier binds the diagnostic to that leg and exempts only it, and
+rejects a restored entry or any continuation); it rejects a tampered
 failure identity, a run-end time that ignores the `max` rule, a numeric
 `failureBid`, a missing violation event behind the failure and a duplicate
 violation event. The verifier writes
