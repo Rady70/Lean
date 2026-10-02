@@ -2,7 +2,7 @@
 
 Status: **implemented and corrected after independent review; the authoritative
 package was produced by the corrected Phase E export run and qualified by the
-strengthened package verifier (PASS, 30,467 checks including 28,917
+strengthened package verifier (PASS, 32,805 checks including 31,255
 authoritative payload-parity comparisons, bound to the byte-identical Phase D
 result).
 Phase E is ready for re-review; later replay/visualization phases (F–I) have not
@@ -162,51 +162,72 @@ activation against the earliest authoritative hard-BE attempt across
 `LegTrace`, `LiquidationTrace` and tail `RejectionTrace` rows, every trailing
 activation threshold re-derived from the verified anchor step, surviving
 inventory and parameters, every Margin Call transition against its snapshot
-state and against the configured Margin Call condition, and the run-end
-counters/snapshot/failure identity against the final account, margin and
-`results.failure` state. It also proves every significant event's snapshot is
-the account state at that event's exact time and applicable quote (including
-the post-entry inventory for entries, the post-close account for forced
-liquidation, `0` at run start and `quoteTicksProcessed` at run end), compares
-all overlapping account values to that snapshot, checks the account-arithmetic
-identities (`equity = balance + floatingProfit`, `freeMargin = equity -
-usedMargin`, the exact `MarginLevelPercent` ratio) to a numeric-scale
-tolerance, asserts the causal same-timestamp lifecycle order (hard-BE
-activation before its enabling attempt, Margin Call alternation and active
-state at Stop Out, each Stop Out before its episode's first forced liquidation
-and after the previous episode's last one, `basket_liquidated` after the last
-forced close, trailing activation before the close, ascending same-quote
-liquidation ordinals), enforces the published event-type whitelist with exactly
-one `run_started`/`run_ended` and the one-to-one trailing-activation lifecycle,
-binds `first_entry_skipped` to `SkippedFirstEntryTrace`, maps a
-`hard_breakeven_violated` event to the documented
-`StrategyInvariant`/`HardBreakevenViolatedByFill` failure, verifies event
-ids/order/counts, exact-decimal strings in every event and telemetry class
-(including the manifest parameter blocks), event-snapshot coverage, the actual
-`telemetryIntervalSeconds` periodic rule while positions are open, and (with
-`-ExpectedResultsSha256`) the Phase D binding. A failed run's run-end time is
-checked against the documented `max(lastProcessedQuote, failureQuote)` rule.
+state, the configured Margin Call condition and the full
+`equity = balance + floatingProfit` identity, every Stop Out against the
+reason-specific `EvaluateSurvival` contract (`MarginLevel`: defined level at or
+below `StopOutLevelPercent`, open positions, active Margin Call;
+`NegativeEquity`: negative equity with open positions and no defined-level
+requirement), and the run-end counters/snapshot/failure identity against the
+final account, margin and `results.failure` state. It also proves every
+significant event's snapshot is the account state at that event's exact time
+and applicable quote (including the post-entry inventory for entries, the
+post-close account for forced liquidation, `0` at run start and
+`quoteTicksProcessed` at run end), compares all overlapping account values to
+that snapshot, checks the account-arithmetic identities
+(`equity = balance + floatingProfit`, `freeMargin = equity - usedMargin`, the
+exact `MarginLevelPercent` ratio) to a numeric-scale tolerance, asserts the
+causal same-timestamp lifecycle order (hard-BE activation before its enabling
+attempt, Margin Call alternation and active state for MarginLevel Stop Outs,
+each Stop Out before its episode's first forced liquidation and after the
+previous episode's last one, `basket_liquidated` after the last forced close,
+trailing activation before the close, ascending same-quote liquidation
+ordinals), enforces the **one-active-basket lifecycle** (an anchor closes the
+previous basket; only the last basket may remain open), live and telemetry
+**quote-sequence monotonicity/range** against `quoteTicksProcessed`, run-start
+`time` equality with `manifest.startUtc`, the published event-type whitelist
+with exactly one `run_started`/`run_ended` and positive `eventCounts` keys
+only, the one-to-one trailing-activation lifecycle, the
+`first_entry_skipped`/`SkippedFirstEntryTrace` binding with emission semantics
+(`attempts == 1`, authoritative first-quote spread, attempts sum equal to
+`skippedFirstEntryQuotes`), the `entry_executed` `sizingOutcome` by regime,
+rejection `sizingOutcome`/`maximumVolume`, the manifest
+`securityType`/`researchAccountEnabled`/`marginEnabled`/`delivered`-presence
+and per-file/per-row year identities, and the bidirectional
+`hard_breakeven_violated` ⇔ `StrategyInvariant`/`HardBreakevenViolatedByFill`
+mapping (exactly one event, bound to `results.failure.Quote`). It verifies
+event ids/order/counts, exact-decimal strings in every event and telemetry
+class (including the manifest parameter blocks), event-snapshot coverage, the
+actual `telemetryIntervalSeconds` periodic rule while positions are open, and
+(with `-ExpectedResultsSha256`) the Phase D binding. A failed run's run-end
+time is checked against the documented
+`max(lastProcessedQuote, failureQuote)` rule.
 
-`tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 36 mutation cases over
-an expanded synthetic package (including the hard-BE reject-then-later-fill
-sequence, a trailing activation, a Margin Call pair and two rejection
-episodes): changed trade number, fill price, forced-liquidation
-ordinal/price/commission, Stop Out time, same-quote reorder, manifest
-identity/outcome/parameter representation, file hash, deleted event, deleted
-snapshot, over-frequent periodic sample, hard-BE activation snapshot replaced
-by the following entry snapshot, hard-BE activation moved after its enabling
-attempt or timed at the later fill, trailing threshold and snapshot/quote
-changes, Margin Call value, ordering and impossible-state changes, entry
-snapshot quote/inventory changes, forced-liquidation snapshot time/quote and
-post-close account changes, a duplicated trailing activation, an extra
+`tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 52 mutation cases over
+a synthetic package that is itself a possible SingleAnchor run (strictly
+sequential baskets, monotone quote sequences, a legal 20% MarginLevel Stop Out
+with an active Margin Call, a valid skipped-first-entry trace, the hard-BE
+reject-then-later-fill sequence, a trailing activation, two rejection
+episodes): changed trade number, fill price, entry snapshot quote/inventory,
+forced-liquidation ordinal/price/commission and snapshot time/trigger
+quote/post-close account, Stop Out time and an impossible MarginLevel state,
+same-quote reorder, backward event+snapshot quote sequences, run-start time,
+manifest identity/outcome/parameter representation/securityType/delivered
+presence/file year/eventCounts keys, file hashes, deleted events and snapshots,
+over-frequent periodic sample, hard-BE activation snapshot replacement,
+ordering and later-fill time, entry/rejection sizing outcomes and maximum
+volume, trailing threshold/snapshot/duplicate changes, Margin Call value,
+ordering, impossible state and joint balance corruption, skipped-entry
+attempts/spread/counter changes, a duplicated trailing activation, an extra
 `run_started`, a spurious `first_entry_skipped`, an unknown event type, swapped
 rejection recaps, and exact strings replaced by JSON numbers in events,
 forced-liquidation/close payloads and manifest parameters; each must be
-rejected. It also verifies two positive fixtures of a valid failed package (a
-forward-time fault whose quote is later than the last accepted quote and an
-out-of-order fault whose quote precedes it) and rejects a tampered failure
-identity, a run-end time that ignores the `max` rule or a numeric
-`failureBid`. The verifier writes
+rejected. It also verifies **four positive fixtures**: a forward-time fault
+whose quote is later than the last accepted quote, an out-of-order fault whose
+quote precedes it, a NegativeEquity Stop Out with no active Margin Call, and a
+terminal hard-BE violation with its one diagnostic event; it rejects a tampered
+failure identity, a run-end time that ignores the `max` rule, a numeric
+`failureBid`, a missing violation event behind the failure and a duplicate
+violation event. The verifier writes
 `replay-package-verification.json` and exits 0 only on PASS. A mutation of the
 committed event values that preserves all hashes and counts is caught by the
 parity, derivation or ordering comparisons, not only by the repository's own
@@ -235,9 +256,22 @@ pwsh -File MarketLab\scripts\Test-SingleAnchorReplayPackage.ps1 `
   frozen `results.json` has no dedicated trailing-activation record, so the
   verifier enforces the one-to-one lifecycle relation, the parity-derived
   `activationThreshold`, the snapshot time/quote binding and `profit >=
-  threshold`, but the activation's `bid`/`ask`/`profit` are not independently
-  re-derived from a retained authoritative trace. Reconstructing the strategy
-  economics inside the gate is deliberately avoided.
+  threshold`, but the activation's exact historical identity - `time`,
+  `quoteSequence`, `bid`, `ask` and `profit` - is not independently re-derived
+  from a retained authoritative trace. Reconstructing the strategy economics
+  inside the gate is deliberately avoided.
+- The Margin Call transitions have the same provenance limit: Phase D retains
+  the episode count, the final `MarginCallActive` state and the Stop Out
+  episodes, but not every enter/leave `time`/`quoteSequence`/`bid`/`ask`. The
+  verifier therefore provides state/lifecycle qualification (alternation,
+  count, threshold relation, event-to-snapshot equality, complete arithmetic
+  identities, margin-call-active at MarginLevel Stop Outs) rather than exact
+  Phase-D-retained payload parity for those transitions.
+- `basket_close_failed` is a producer-observed diagnostic with no independent
+  Phase D trace. The verifier constrains it structurally (published type,
+  snapshot time/quote binding, exact-string decimals, membership of the active
+  basket) but cannot prove its occurrence from retained results; the frozen run
+  contains none. Deliberately no second exit/close implementation is added.
 - The free-margin and margin-level identities are compared with a
   numeric-scale tolerance of `1e-20`; the frozen run contains last-digit
   decimal scale artifacts of order `1e-25`, far below any meaningful

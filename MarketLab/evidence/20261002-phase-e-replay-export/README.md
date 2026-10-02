@@ -21,7 +21,7 @@ path, after the independent-review corrections.
   classification (`EXPECTED`, `invalidCount` 0): full qualified stream delivery
   and the 407/407 failed-request reconciliation.
 - `replay-package-verification.json` - the strengthened Phase E package
-  verifier PASS record (30,467 checks, 28,917 authoritative payload-parity
+  verifier PASS record (32,805 checks, 31,255 authoritative payload-parity
   comparisons, `resultsBoundToPhaseD: true`; byte-reproducible).
 - `replay-manifest.json` - the authoritative replay package manifest: run
   identity, event/telemetry counts, per-file hashes and the package fingerprint
@@ -63,7 +63,7 @@ package was then verified against that binding by the strengthened
 `MarketLab\scripts\Test-SingleAnchorReplayPackage.ps1`, whose authoritative
 parity comparisons, derivations, ordering checks and mutation behavior are
 exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
-(36/36 mutations rejected, 2/2 positive failed-run fixtures verified).
+(52/52 mutations rejected, 4/4 positive failed-run fixtures verified).
 
 ## Review corrections in this revision
 
@@ -98,6 +98,17 @@ exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
   coverage includes the remaining event classes and the manifest parameter
   blocks; Margin Call conditions and the account-arithmetic identities are
   checked (tolerance `1e-20`).
+- Fourth review: Margin Call transitions also require
+  `equity = balance + floatingProfit`; Stop Out validation is reason-specific
+  (`MarginLevel` vs `NegativeEquity`, mirroring `EvaluateSurvival`); the
+  verifier enforces the one-active-basket lifecycle, live/telemetry quote
+  monotonicity and range, run-start time, the manifest
+  `securityType`/account/margin flags, `delivered` presence and per-file/row
+  year identity, `sizingOutcome` by regime, rejection
+  `sizingOutcome`/`maximumVolume`, positive-only `eventCounts` keys and the
+  bidirectional hard-BE violation mapping. The synthetic base package is now a
+  possible engine run, the suite is 52 mutations, and the four positive
+  fixtures include a NegativeEquity Stop Out and a terminal hard-BE violation.
 
 The Phase A-D evidence, the frozen contracts and the qualified data identity are
 unchanged. The 413,750,130-row historical-data qualification was not rerun, no

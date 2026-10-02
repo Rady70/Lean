@@ -740,12 +740,12 @@ emitted package (`marketlab-single-anchor-replay-package-v1`, package SHA-256
 `5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`) contains
 1,454 authoritative events, 1,452 exact event account snapshots and 98,866
 bounded periodic samples; the strengthened package verifier
-(`scripts\Test-SingleAnchorReplayPackage.ps1`) returned PASS with 30,467 checks
-including 28,917 authoritative payload-parity comparisons and the Phase D
+(`scripts\Test-SingleAnchorReplayPackage.ps1`) returned PASS with 32,805 checks
+including 31,255 authoritative payload-parity comparisons and the Phase D
 binding enforced (event-snapshot binding, derived hard-BE/trailing states,
 causal lifecycle ordering, full failure identity under the
 `max(lastProcessedQuote, failureQuote)` rule, manifest identity/outcome/file
-order and exact-string coverage); its 36 mutation cases are all rejected and
+order and exact-string coverage); its 52 mutation cases are all rejected and
 both positive failed-run fixtures verify. The reviewed defects were fixed: the
 hard-BE activation snapshot is the exact pre-attempt state (11/11, now also in
 the committed telemetry sample), package publication is fail-closed, and the
