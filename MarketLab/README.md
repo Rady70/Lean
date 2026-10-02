@@ -43,7 +43,9 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `scripts\Build-SingleAnchorBaseline.ps1` | rebuilds an explicitly reviewed clean revision and records the source, contract and complete runtime dependency identity |
 | `scripts\Test-SingleAnchorBaselineFailedData.ps1` | classifies every failed data request of a baseline run against the frozen contract and the qualified continuous tree |
 | `scripts\Test-SingleAnchorCorrectedFullHistory.ps1` | preflight and post-run classification of the corrected full-history (Phase D) run: descriptor and frozen pins, source-bound build, complete qualified tree, current-model delivery (full stream or exact terminal prefix) and failed-data reconciliation |
-| `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm) |
+| `REPLAY_PACKAGE.md` | the Phase E authoritative replay package contract: files, event stream, bounded account telemetry, determinism/provenance, the Phase D binding and the candle/authority separation |
+| `scripts\Test-SingleAnchorReplayPackage.ps1` | the Phase E package verifier: manifest/file hashes, package fingerprint, identity and counters against `results.json`, event order/counts, exact-decimal strings, telemetry coverage/periodic bound and the optional Phase D `results.json` binding |
+| `src\SingleAnchor\` | the strategy assembly (`MarketLab.SingleAnchor.csproj`: engine, LEAN algorithm and the Phase E replay recorder/package writer) |
 | `tests\SingleAnchor\` | its NUnit behaviour tests on synthetic quotes |
 | `tests\SingleAnchor\BaselineDecisionAuditTests.cs` | the Windows-local drift check for the audit register, the implementation defaults and the PR #13 evidence |
 | `tests\SingleAnchor\BaselineContractTests.cs` | the Windows-local checks for the frozen contract: completeness, values, identity, invocation, data/margin identity and run policy |
@@ -725,6 +727,37 @@ are unchanged. See
 [CORRECTED_FULL_HISTORY_CONTRACT.md](CORRECTED_FULL_HISTORY_CONTRACT.md) and
 sections 15-16 of
 [SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md](SINGLE_ANCHOR_VNEXT_IMPLEMENTATION.md).
+
+The Phase E authoritative replay export is **implemented, corrected after
+independent review, and ready for re-review on branch
+`marketlab/single-anchor-phase-e-replay-export`**. The corrected export run
+executed the same frozen corrected-full-history command from the clean revision
+`a2941581c02462a190f4d4289f371aed409cb1e3`; the classifier returned `EXPECTED`
+(`invalidCount` 0) and the run's `results.json` is **byte-identical** to the
+Phase D artifact
+(`bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad`). The
+emitted package (`marketlab-single-anchor-replay-package-v1`, package SHA-256
+`5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`) contains
+1,454 authoritative events, 1,452 exact event account snapshots and 98,866
+bounded periodic samples; the strengthened package verifier
+(`scripts\Test-SingleAnchorReplayPackage.ps1`) returned PASS with 32,805 checks
+including 31,255 authoritative payload-parity comparisons and the Phase D
+binding enforced (event-snapshot binding, derived hard-BE/trailing states,
+causal lifecycle ordering, full failure identity under the
+`max(lastProcessedQuote, failureQuote)` rule, manifest identity/outcome/file
+order and exact-string coverage); its 54 mutation cases are all rejected and
+both positive failed-run fixtures verify. The reviewed defects were fixed: the
+hard-BE activation snapshot is the exact pre-attempt state (11/11, now also in
+the committed telemetry sample), package publication is fail-closed, and the
+M1 candle cache was re-derived from the qualified source under the corrected
+generator (90/90 monthly records equal the cache bytes; the rebuilt manifest
+binds the PASS qualification record) with `verify-candles` and
+`verify-candle-composition` certification. The result record is
+[PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md), the compact
+evidence is under `MarketLab\evidence\20261002-phase-e-replay-export\` and the
+package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). Parameter
+optimization remains not started, and the LuxAlgo and Fincept phases (F-I) have
+not started.
 
 ## 10. When required data is missing
 

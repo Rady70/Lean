@@ -360,7 +360,9 @@ exact invocation is recorded in [BASELINE_CONTRACT.md](BASELINE_CONTRACT.md).
 - **Financing / swap** until continuous financing behaviour is specified: the
   single-anchor engine currently rejects non-zero swap configurations instead
   of allowing the hard ceiling to drift after a tail entry.
-- Replay, optimization, UI, charting, live trading, broker connectivity.
+- Parameter optimization, UI/charting (LuxAlgo and Fincept), live trading and
+  broker connectivity. (The Phase E authoritative replay export is implemented
+  and qualified; section 17.)
 - A full performance report (equity curve, basket-depth distribution, the
   first full-history baseline tables) and the Python/MT5 parity comparison from
   the strategy's own results; PR 2 adds the run-level account values and the
@@ -2035,3 +2037,130 @@ and the frozen baseline values unchanged. The mandatory corrected preflight
   strategy parameter, account/margin value or liquidation rule changed; the
   413,750,130-row qualification was not rerun; parameter optimization has not
   started; Phase E has not started.
+
+## 17. Phase E authoritative replay export (2026-10-01): implemented and qualified
+
+**Status: implemented and qualified on the branch; ready for independent
+review. Phase F-I have not started.**
+
+- **What was added (additive; no strategy/account semantics changed).**
+  `src/SingleAnchor/ReplayPackage.cs` defines the package contract
+  `marketlab-single-anchor-replay-package-v1`, the canonical UTC/decimal text
+  and hashing. `src/SingleAnchor/ReplayRecorder.cs` observes the engine's
+  existing events and the research account's existing observations and builds
+  `events.jsonl`, per-year `telemetry-YYYY.jsonl` and `manifest.json` under the
+  run's `single-anchor/replay/` object-store directory.
+  `SingleAnchorVNextAlgorithm.cs` wires the recorder as the engine's observer
+  only after the account itself has observed the same event (the account stays
+  the engine's risk guard) and saves the package after `results.json`.
+  `ResearchAccount.cs` gains four read-only accessors
+  (`CurrentUsedMargin`, `CurrentFreeMargin`, `CurrentMarginLevelPercent`,
+  `MarginCallActive`) used only by the recorder. The engine raises an
+  observational `HardBreakevenActivated` event at the existing hard-BE mode
+  transition, before the first tail attempt is sized or placed, so the recorder's
+  activation snapshot is the exact **pre-attempt** state (trade 5 activation
+  snapshots show 4 open positions, not the post-fill 5). The recorder is
+  fault-guarded: a recorder defect refuses the package build instead of aborting
+  the run. Publication is fail-closed: the package is only attempted after
+  `results.json` persisted, every payload is saved before the manifest, and a
+  failed payload suppresses the manifest so an incomplete package is never
+  advertised.
+- **Validation and the Phase D binding.** The corrected export run executed the
+  frozen corrected-full-history command from the clean Phase E revision
+  `a2941581c02462a190f4d4289f371aed409cb1e3` in 6,248 s; the
+  corrected-full-history classifier returned `EXPECTED` (exit 0, `invalidCount`
+  0) and the run's `storage/single-anchor/results.json` is **byte-identical**
+  to the Phase D artifact
+  (`bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad`).
+  `scripts/Test-SingleAnchorReplayPackage.ps1` verified the package on that
+  exact run with the binding enforced: **PASS, 32,805 checks including 31,255
+  authoritative payload-parity comparisons**, package SHA-256
+  `5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`.
+- **Package contents.** 1,454 events (280 anchors, 555 entries = 490 surviving
+  `LegTrace` rows plus 65 `LiquidationTrace` identities, 278 strategy exits,
+  1 basket liquidation, 5 Stop Out triggers, 65 forced liquidations, 11 hard-BE
+  activations, 207 trailing activations, 23 Margin Call enter/leave pairs,
+  2 rejection episodes plus 2 run-end recaps, run start/end), 1,452 exact
+  per-event account snapshots and 98,866 bounded periodic samples in four
+  telemetry shards; every decimal is an exact JSON string.
+- **Determinism and behavior invariance.** Two identical bounded executions over
+  `2019-01-01..2019-02-15` (including hard-BE activations) produced byte-identical
+  `results.json` (`07ab303d...`), `events.jsonl`, telemetry and `manifest.json`
+  (package SHA-256
+  `344db104429c648645282a719d23f765328dfc41b18e1173ad2eb11300e9326d`);
+  the bounded March 2020 (`81ba0304...`) and low-cash rejection (`697bd85e...`)
+  windows are byte-identical to their pre-correction results, and the full
+  corrected run reproduced the Phase D result exactly.
+- **Tests.** 315/315 C# tests (18 new Phase E tests: recorder event/snapshot
+  ordering, the pre-attempt hard-BE activation snapshot on both the filled and
+  rejected tail paths, Margin Call transitions, Stop Out/forced/full
+  liquidation parity, failure identity, rejection recaps, manifest/decimals,
+  byte determinism, recorder-does-not-change-the-engine outcome, and the
+  fail-closed publisher), PowerShell guards 40/40, invocation 12/12,
+  failed-data 97/97, availability 12/12, corrected-classifier 160/160, delivery
+  end-to-end 40 checks, and 300/300 Python historical-data tests (the additive
+  `candles` subcommand with its fail-closed qualification preflight,
+  `verify-candles` and `verify-candle-composition`).
+  `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 54 verifier mutation
+  cases over a contract-consistent synthetic verifier fixture
+  (sequential baskets, monotone quote sequences, a legal 20% MarginLevel Stop
+  Out with an active Margin Call, a valid skipped-first-entry trace, the
+  hard-BE reject-then-later-fill basket, a trailing activation and two
+  rejection episodes; its ledger, parity and account identities follow the
+  producer's contracts and its quotes are constructed for the exercised rules,
+  so it is not a full strategy replay): changed trade number/fill price, entry snapshot
+  quote/inventory and hard-BE sizingOutcome, forced-liquidation
+  ordinal/price/commission and snapshot/post-close state, Stop Out time and an
+  impossible MarginLevel state, backward event+snapshot quote sequences,
+  run-start time, manifest identity/outcome/numeric parameters/securityType/
+  delivered presence/shard year/eventCounts keys, file hash, event and
+  snapshot deletion, over-frequent periodic sample, activation snapshot
+  swapped with the following entry snapshot, activation moved after its
+  enabling attempt or timed at the later fill, trailing
+  threshold/snapshot/duplicate changes, Margin Call value, ordering, joint
+  balance corruption and a consistent event+snapshot impossible state,
+  skipped-entry attempts/spread/counter changes, rejection
+  maximumVolume/sizingOutcome, spurious/duplicate/unknown events, swapped
+  rejection recaps, and exact-string decimals replaced by JSON numbers. It
+  also verifies four positive fixtures (forward-time fault, out-of-order
+  fault, NegativeEquity Stop Out with no active Margin Call, and terminal
+  hard-BE violation with exactly one bound diagnostic event) and rejects a
+  tampered failure identity, a run-end time that ignores the
+  `max(lastProcessedQuote, failureQuote)` rule, a numeric `failureBid`, a
+  missing violation event behind the failure and a duplicate violation event.
+- **Derived M1 candle cache (fail-closed provenance).** The cache was generated
+  into `E:\MarketLab\data\lean\xauusd-m1-candles`: 90 monthly CSVs, 2,332
+  partitions and 413,750,130 source rows read, 2,655,664 candle rows,
+  172,160,895 bytes, `content_sha256`
+  `ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d`.
+  Generation now requires the qualified composition and a PASS qualification
+  record bound to the actual composition hash, requires the on-disk partition
+  set to equal the composition exactly, and verifies each selected partition's
+  `zip_sha256` plus its member name/size/row count and member SHA-256 while
+  reading. Month independence only holds for month-aligned `--start/--end`
+  bounds; a mid-month bound produces a partial-month file. Because the local
+  command runner terminates a single command at about one hour, the cache was
+  produced in four contiguous month-aligned ranges and merged byte-for-byte with
+  a reviewed merge-verification step that recomputes the generator's manifest
+  recipe; the component ranges and manifests are preserved in the committed
+  evidence. The cache bytes are **source-derivation proven**: the same four
+  ranges were regenerated with the corrected fail-closed generator under the
+  reviewed revision, all **90/90** regenerated monthly records equal the final
+  cache, the CSV bytes are unchanged, and the final manifest was rebuilt as the
+  documented merge of the corrected part manifests, which bind the PASS
+  qualification record (`e9c72d1a...`). `verify-candles --data-folder <tree>
+  --cache <dir>` now also requires that binding and passed 9/9 checks with
+  2,332/2,332 partition zip hashes; `verify-candle-composition` passed 10/10
+  checks against the re-derived parts; the part manifests are committed
+  byte-identically. The committed cache manifest is
+  `evidence/20261002-phase-e-replay-export/candle-cache-manifest.json`
+  (SHA-256 `75f1d241...`).
+- **Evidence and records.** Compact evidence with a SHA-256 manifest
+  (`825239f7...`) is under `evidence/20261002-phase-e-replay-export/`; the result
+  record is [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md)
+  and the package contract is [REPLAY_PACKAGE.md](REPLAY_PACKAGE.md). The full
+  telemetry shards, engine logs, result packets and the candle cache remain
+  local run artifacts identified by hash; the four candle part manifests and the
+  two candle verification records are committed. The Phase A-D evidence is
+  unchanged, the 413,750,130-row qualification was not rerun, no parameter was
+  optimized and no hosted CI was dispatched.

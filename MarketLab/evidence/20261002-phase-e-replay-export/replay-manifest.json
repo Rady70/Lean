@@ -1,0 +1,142 @@
+{
+  "contract": "marketlab-single-anchor-replay-package-v1",
+  "modelRevision": "marketlab-single-anchor-broker-liquidation-v1",
+  "stopOutModel": "BrokerLiquidation",
+  "symbol": "XAUUSD",
+  "market": "dukascopy",
+  "securityType": "Cfd",
+  "algorithmTimeZone": "UTC",
+  "quoteTimeZone": "UTC",
+  "startDate": "2019-01-01",
+  "endDate": "2026-06-30",
+  "startUtc": "2019-01-01T00:00:00.000Z",
+  "endUtc": "2026-06-30T23:59:59.999Z",
+  "researchAccountEnabled": true,
+  "marginEnabled": true,
+  "telemetryIntervalSeconds": 300,
+  "parameters": {
+    "StepPercent": "0.25",
+    "BaseLot": "0.10",
+    "NormalTradeCount": "4",
+    "HardBreakevenCeilingPercent": "4.478",
+    "EscapeEnabled": true,
+    "EscapeProfitUnits": "0.05",
+    "EscapeMinimumOpenPositions": "2",
+    "FixedTakeProfitUnits": "0",
+    "TrailingEnabled": true,
+    "TrailingActivationUnits": "0.50",
+    "TrailingDropUnits": "0.25",
+    "CommissionBuffer": "0",
+    "PointValuePerLot": "100",
+    "VolumeStep": "0.01",
+    "MinimumVolume": "0.01",
+    "MaximumVolume": "50",
+    "CommissionPerLot": "0",
+    "Slippage": "0",
+    "ProjectedSpread": "0.50",
+    "BuySwapPerLotPerDay": "0",
+    "SellSwapPerLotPerDay": "0"
+  },
+  "marginParameters": {
+    "ContractSize": "100",
+    "Leverage": "500",
+    "MarginCallLevelPercent": "50",
+    "StopOutLevelPercent": "20"
+  },
+  "sessionMap": {
+    "Map": "marketlab-sessions/xauusd-sessions.json",
+    "Sha256": "33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949",
+    "Symbol": "XAUUSD",
+    "JunctionTimeZone": "America/New_York",
+    "Sessions": 1935,
+    "FirstSessionStartUtc": "2019-01-01T23:00:07.151Z",
+    "FinalSessionEndObservable": false,
+    "SourceFileCount": 90,
+    "SourceRowCount": 413750130,
+    "SourceSha256Aggregate": "eafd8709f750f439af1faad6cdac79acbf8b20cd5a577253a145df788b73f885",
+    "SourceFirstQuoteUtc": "2019-01-01T23:00:07.151Z",
+    "SourceLastQuoteUtc": "2026-06-30T23:59:59.678Z"
+  },
+  "delivered": {
+    "quoteCount": 413750130,
+    "semanticDigest": "sha256:231cf63850cd033ea8167ab7d0017bdfbd7744f40412c1a899c2b9d98942886a",
+    "firstCanonicalUtc": "2019-01-01T23:00:07.151Z",
+    "lastCanonicalUtc": "2026-06-30T23:59:59.678Z"
+  },
+  "outcome": {
+    "completed": true,
+    "failureKind": null,
+    "failureCondition": null
+  },
+  "counters": {
+    "quoteTicksProcessed": 413750130,
+    "quoteOnlyQuotes": 1347651,
+    "strategyEligibleQuotes": 412402479,
+    "legsOpened": 555,
+    "basketsClosed": 278,
+    "basketsLiquidated": 1,
+    "forcedLiquidations": 65,
+    "distinctRejectedEntries": 2,
+    "rejectedEntryAttempts": 346942369,
+    "skippedFirstEntryQuotes": 0,
+    "engineRealizedProfit": "-20090.41800"
+  },
+  "eventCounts": {
+    "basket_anchored": 280,
+    "basket_liquidated": 1,
+    "entry_executed": 555,
+    "entry_rejected": 2,
+    "entry_rejection_summary": 2,
+    "forced_liquidation": 65,
+    "hard_breakeven_activated": 11,
+    "margin_call_entered": 23,
+    "margin_call_left": 23,
+    "run_ended": 1,
+    "run_started": 1,
+    "stop_out_triggered": 5,
+    "strategy_exit": 278,
+    "trailing_activated": 207
+  },
+  "telemetryCounts": {
+    "event": 1452,
+    "periodic": 98866
+  },
+  "files": [
+    {
+      "name": "events.jsonl",
+      "year": null,
+      "sha256": "2eb4d8464d2ef4e7c95e6862a3253a9afbd952222f3c5e5ce9818cd96e67cc42",
+      "bytes": 679227,
+      "lines": 1454
+    },
+    {
+      "name": "telemetry-2019.jsonl",
+      "year": 2019,
+      "sha256": "b4260d475416bb640f484c092465a353287639a887eb60af7fd6a23318ec6212",
+      "bytes": 30417274,
+      "lines": 67559
+    },
+    {
+      "name": "telemetry-2020.jsonl",
+      "year": 2020,
+      "sha256": "213f2bb7542bf3fdb6533c745d9ff55b001e776ff352c26000c6cd5bb2163b76",
+      "bytes": 14784016,
+      "lines": 32757
+    },
+    {
+      "name": "telemetry-2021.jsonl",
+      "year": 2021,
+      "sha256": "9372cbf681392fc3e0e4046281a5acb13c5c30fb6c516228dfec86df87490494",
+      "bytes": 363,
+      "lines": 1
+    },
+    {
+      "name": "telemetry-2026.jsonl",
+      "year": 2026,
+      "sha256": "2cdee0240eaeba8ac8e8616b163a10e2a0ba76d1230c8914f9ef1ed9d521d7d1",
+      "bytes": 363,
+      "lines": 1
+    }
+  ],
+  "packageSha256": "5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a"
+}

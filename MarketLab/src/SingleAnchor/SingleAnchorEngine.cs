@@ -242,6 +242,12 @@ namespace MarketLab.SingleAnchor
         /// <summary>Raised when trailing activates.</summary>
         public event Action<TrailingActivatedEvent>? TrailingActivated;
 
+        /// <summary>
+        /// The basket entered hard-BE mode at the first tail attempt, before that attempt is sized
+        /// or placed. Observational only; it does not change the strategy decision.
+        /// </summary>
+        public event Action<HardBreakevenActivatedEvent>? HardBreakevenActivated;
+
         /// <summary>Raised when a basket is closed.</summary>
         public event Action<BasketClosedEvent>? BasketClosed;
 
@@ -726,7 +732,14 @@ namespace MarketLab.SingleAnchor
             else
             {
                 regime = SizingRegime.HardBreakeven;
+                var hardBreakevenActivated = !basket.HardBreakevenModeActive;
                 basket.ActivateHardBreakevenMode();
+                if (hardBreakevenActivated)
+                {
+                    // Published before this first tail attempt is sized, priced or placed, so a
+                    // replay consumer sees the exact pre-attempt basket/account state.
+                    HardBreakevenActivated.Raise(new HardBreakevenActivatedEvent(basket, tradeNumber, quote));
+                }
                 var tail = HardBreakevenSizer.Size(basket, side, quote, _p);
                 if (!tail.IsFeasible)
                 {

@@ -1,0 +1,763 @@
+{
+  "contract": "marketlab-xauusd-m1-candle-cache-v1",
+  "symbol": "XAUUSD",
+  "market": "dukascopy",
+  "resolution": "M1",
+  "price_basis": "mid_of_best_bid_ask",
+  "time_basis": "UTC",
+  "empty_minutes": "absent",
+  "inputs": {
+    "data_folder_name": "xauusd-dukascopy",
+    "native_directory": "cfd/dukascopy/tick/xauusd",
+    "composition": {
+      "relative_path": "marketlab-qualification/continuous-composition.json",
+      "sha256": "a147f20a5b59bfc6cdb0c3cd785e84636bf40665c8203c119a18da6774ab8757",
+      "contract": "marketlab-historical-data-qualification-v1",
+      "composition_contract": "marketlab-continuous-history-composition-v1",
+      "data_time_zone": "UTC",
+      "ordered_source_semantic_digest": "sha256:231cf63850cd033ea8167ab7d0017bdfbd7744f40412c1a899c2b9d98942886a",
+      "accepted_row_count": 413750130,
+      "partition_count": 2332
+    },
+    "qualification_record": {
+      "relative_path": "marketlab-qualification/continuous-qualification-record.json",
+      "sha256": "e9c72d1abf15b1cc6ae9c2d2ff793c49091a26b2439258341c2d32a793632c8d",
+      "overall_qualification": "PASS"
+    },
+    "session_map": {
+      "relative_path": "marketlab-sessions/xauusd-sessions.json",
+      "sha256": "33fa8fa35d8c9ef6d8b1751cced47657e430b238bb454126d77c010d63434949"
+    }
+  },
+  "start_date": "2019-01-01",
+  "end_date": "2026-06-30",
+  "totals": {
+    "partitions": 2332,
+    "source_rows": 413750130,
+    "candle_rows": 2655664,
+    "candle_bytes": 172160895
+  },
+  "files": [
+    {
+      "name": "xauusd-m1-2019-01.csv",
+      "rows": 30079,
+      "bytes": 1973726,
+      "sha256": "d0394a2a7235b374a44c90997bc152f8f0684eb2d7a0ccf9ba2128b7dce07ee1",
+      "first_candle_utc": "2019-01-01T23:00:00.000Z",
+      "last_candle_utc": "2019-01-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-02.csv",
+      "rows": 27236,
+      "bytes": 1788400,
+      "sha256": "00a5e9585883a06257d26179b78ec2553388bfbcd659c7ca18b9d2765e537db7",
+      "first_candle_utc": "2019-02-01T00:00:00.000Z",
+      "last_candle_utc": "2019-02-28T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-03.csv",
+      "rows": 28841,
+      "bytes": 1898124,
+      "sha256": "205acb246d97e23f7c1b52cae68336ae9508d5b32206f4fc8347be299bf2530f",
+      "first_candle_utc": "2019-03-01T00:00:00.000Z",
+      "last_candle_utc": "2019-03-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-04.csv",
+      "rows": 28853,
+      "bytes": 1890479,
+      "sha256": "46141f8ed2fc95d30eabb039771df103ce29454e7923e2c9fbae1687b09c3300",
+      "first_candle_utc": "2019-04-01T00:00:00.000Z",
+      "last_candle_utc": "2019-04-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-05.csv",
+      "rows": 31251,
+      "bytes": 2042967,
+      "sha256": "c51d32f256ebfb1385d2f199833a39edbe6aeca64a141994678b205294d2486a",
+      "first_candle_utc": "2019-05-01T00:00:00.000Z",
+      "last_candle_utc": "2019-05-31T20:58:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-06.csv",
+      "rows": 27668,
+      "bytes": 1822831,
+      "sha256": "30861db824dff76c30fa08d06b6bbb8f5a6f60463b19ef15a3cf559debb627b1",
+      "first_candle_utc": "2019-06-02T22:00:00.000Z",
+      "last_candle_utc": "2019-06-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-07.csv",
+      "rows": 31489,
+      "bytes": 2066412,
+      "sha256": "9c8810f7be13969dfcc999cc23c3e4da3283dbf1b250d8651470860103ab75d2",
+      "first_candle_utc": "2019-07-01T00:00:00.000Z",
+      "last_candle_utc": "2019-07-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-08.csv",
+      "rows": 30218,
+      "bytes": 1988594,
+      "sha256": "1673062e3d82792647be3c1d435fb782e2f8d1f3ed37253bc24b038963201041",
+      "first_candle_utc": "2019-08-01T00:00:00.000Z",
+      "last_candle_utc": "2019-08-30T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-09.csv",
+      "rows": 28860,
+      "bytes": 1898046,
+      "sha256": "31d99ca510db3c7d35dcc39f0452afb33ff9d5328d463834779ce89294725541",
+      "first_candle_utc": "2019-09-01T22:00:00.000Z",
+      "last_candle_utc": "2019-09-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-10.csv",
+      "rows": 31694,
+      "bytes": 2088072,
+      "sha256": "7da9f110ba9071e34690f67c288be9f1fc0976c251d805c3086193e32c554ca3",
+      "first_candle_utc": "2019-10-01T00:00:00.000Z",
+      "last_candle_utc": "2019-10-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-11.csv",
+      "rows": 28396,
+      "bytes": 1864380,
+      "sha256": "2aacb2e63d70f8386ecd712c418f23989fbef86701e9e79ccb158a30247020c6",
+      "first_candle_utc": "2019-11-01T00:00:00.000Z",
+      "last_candle_utc": "2019-11-29T19:05:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2019-12.csv",
+      "rows": 28705,
+      "bytes": 1888993,
+      "sha256": "0ff7a14505ff88b653f9b3cfb935dc02e77df0456c218070e8e1e94449bed0fd",
+      "first_candle_utc": "2019-12-01T23:00:00.000Z",
+      "last_candle_utc": "2019-12-31T21:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-01.csv",
+      "rows": 30104,
+      "bytes": 1978086,
+      "sha256": "9a091e8a7d7ddb5bdb1f99eb127877685722e6015fb19ebf5458bffb8c0f1da2",
+      "first_candle_utc": "2020-01-01T23:00:00.000Z",
+      "last_candle_utc": "2020-01-31T21:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-02.csv",
+      "rows": 27350,
+      "bytes": 1801256,
+      "sha256": "e04f3cbc470d82129082b8a7ab47cd344b6656da96dd55953fd1bbdd3fdd2e36",
+      "first_candle_utc": "2020-02-02T23:00:00.000Z",
+      "last_candle_utc": "2020-02-28T21:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-03.csv",
+      "rows": 30444,
+      "bytes": 1983779,
+      "sha256": "9d937e3832a46d7de84341aa4fc098a9c28816db1f9c4f5ffa3a81a6b4a515d2",
+      "first_candle_utc": "2020-03-01T23:00:00.000Z",
+      "last_candle_utc": "2020-03-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-04.csv",
+      "rows": 28976,
+      "bytes": 1851851,
+      "sha256": "92a9229782e9d30b2d1559a1fbb932510812ed76d4fdd98f7967b5cb58f668fd",
+      "first_candle_utc": "2020-04-01T00:00:00.000Z",
+      "last_candle_utc": "2020-04-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-05.csv",
+      "rows": 28738,
+      "bytes": 1882987,
+      "sha256": "774abc101b12310bef207be25e55ec08f9d7c5d053935d6d345bd7346ec7b228",
+      "first_candle_utc": "2020-05-01T00:00:00.000Z",
+      "last_candle_utc": "2020-05-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-06.csv",
+      "rows": 30357,
+      "bytes": 2011293,
+      "sha256": "c515ffb1606199efa542d485789c75540e488c7d6c713dae9ea07dbc6b0bb474",
+      "first_candle_utc": "2020-06-01T00:00:00.000Z",
+      "last_candle_utc": "2020-06-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-07.csv",
+      "rows": 31372,
+      "bytes": 2077369,
+      "sha256": "8114ccdc08fa7bbaa818e6771a953fc0f29a4f8addaa89c9a8b26532794c8851",
+      "first_candle_utc": "2020-07-01T00:00:00.000Z",
+      "last_candle_utc": "2020-07-31T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-08.csv",
+      "rows": 29100,
+      "bytes": 1933906,
+      "sha256": "2da58ac9cc2f589213c4726390e81ee18767ff37e9f6df709ec1ef37662160a3",
+      "first_candle_utc": "2020-08-02T22:00:00.000Z",
+      "last_candle_utc": "2020-08-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-09.csv",
+      "rows": 30116,
+      "bytes": 2000404,
+      "sha256": "514421e1157982cd67abdee4b35f1b1bf0616886650b9d2fdd10dbe4da54a721",
+      "first_candle_utc": "2020-09-01T00:00:00.000Z",
+      "last_candle_utc": "2020-09-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-10.csv",
+      "rows": 30239,
+      "bytes": 2008177,
+      "sha256": "698e806f481f25bf6e551cce4abcaa7dfdd088ebcb6c092480c288cafc727361",
+      "first_candle_utc": "2020-10-01T00:00:00.000Z",
+      "last_candle_utc": "2020-10-30T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-11.csv",
+      "rows": 28603,
+      "bytes": 1901142,
+      "sha256": "9a79488c1c13a99dff1317f79e3e88f383981d0a8d2f1b30cd30db790288d8cd",
+      "first_candle_utc": "2020-11-01T23:00:00.000Z",
+      "last_candle_utc": "2020-11-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2020-12.csv",
+      "rows": 30099,
+      "bytes": 2004667,
+      "sha256": "bfd6be5b105fc77911935c5ceb5de1e18d44b5e2c158abbec4f1da9dab9663f5",
+      "first_candle_utc": "2020-12-01T00:00:00.000Z",
+      "last_candle_utc": "2020-12-31T21:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-01.csv",
+      "rows": 27419,
+      "bytes": 1816691,
+      "sha256": "6cbc261dcd6e91f0d6c4aa2e87ff6241939d7d2117e15d27c23918dc035abcfd",
+      "first_candle_utc": "2021-01-03T23:00:00.000Z",
+      "last_candle_utc": "2021-01-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-02.csv",
+      "rows": 27359,
+      "bytes": 1792537,
+      "sha256": "f96242007cc2d810d8a530f4fbb4f1fa2fbcb8162a503b941dc7f52a17a9b176",
+      "first_candle_utc": "2021-02-01T00:00:00.000Z",
+      "last_candle_utc": "2021-02-28T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-03.csv",
+      "rows": 31797,
+      "bytes": 2116267,
+      "sha256": "19cecd1639769e164aeb7604809cb29931f6ab38f11b3c9a2efd1ab0ea8b42d0",
+      "first_candle_utc": "2021-03-01T00:00:00.000Z",
+      "last_candle_utc": "2021-03-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-04.csv",
+      "rows": 28856,
+      "bytes": 1918723,
+      "sha256": "3094fe5b370f55e12ed98bbbead551ea7b14b96177b7c1304c89d6e50357a276",
+      "first_candle_utc": "2021-04-01T00:00:00.000Z",
+      "last_candle_utc": "2021-04-30T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-05.csv",
+      "rows": 28857,
+      "bytes": 1912813,
+      "sha256": "90d3911720c5795f9a9a23e7d2c3a1a69095727958918aa164e0856a8e845551",
+      "first_candle_utc": "2021-05-02T22:00:00.000Z",
+      "last_candle_utc": "2021-05-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-06.csv",
+      "rows": 30358,
+      "bytes": 1950779,
+      "sha256": "4e67e1a4cae9898f4a6793274a9b220c0e52b6209eb189a829fbafc7af68e097",
+      "first_candle_utc": "2021-06-01T00:00:00.000Z",
+      "last_candle_utc": "2021-06-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-07.csv",
+      "rows": 30000,
+      "bytes": 1914771,
+      "sha256": "4d85605aa1b88a247d40b535f69d79cd37334ac2f1f021236abee38a1c8524ab",
+      "first_candle_utc": "2021-07-01T00:00:00.000Z",
+      "last_candle_utc": "2021-07-30T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-08.csv",
+      "rows": 30469,
+      "bytes": 1947378,
+      "sha256": "a5c321ed1332e5568b9c7f4e8c8284dd9a66ff1d921e584712257aa243cdfb0b",
+      "first_candle_utc": "2021-08-01T22:00:00.000Z",
+      "last_candle_utc": "2021-08-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-09.csv",
+      "rows": 30119,
+      "bytes": 1952171,
+      "sha256": "866ee39d702c75ba4fecd551fd6d36485975af28cc490bec426a5e85157c1863",
+      "first_candle_utc": "2021-09-01T00:00:00.000Z",
+      "last_candle_utc": "2021-09-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-10.csv",
+      "rows": 28974,
+      "bytes": 1866337,
+      "sha256": "b66cf311866c4e25c611d75bf124cf0be4fd079fdb6d0b23ff4f2abdc8472565",
+      "first_candle_utc": "2021-10-01T00:00:00.000Z",
+      "last_candle_utc": "2021-10-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-11.csv",
+      "rows": 29845,
+      "bytes": 1922482,
+      "sha256": "8ebcdc8c40a25b9daba188ad1852cfd59cbc1a9808cfd1326be53af4272b247d",
+      "first_candle_utc": "2021-11-01T00:00:00.000Z",
+      "last_candle_utc": "2021-11-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2021-12.csv",
+      "rows": 30294,
+      "bytes": 1976797,
+      "sha256": "d9bec498edc97889f46f0e26f31a1656d2bffeab58f85d29ffb4cae7a87a7ddb",
+      "first_candle_utc": "2021-12-01T00:00:00.000Z",
+      "last_candle_utc": "2021-12-31T21:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-01.csv",
+      "rows": 28799,
+      "bytes": 1847326,
+      "sha256": "bbf90b50c9054fa0b838be21251b29d8065f31d30dba73c735ea8f1096cec6c6",
+      "first_candle_utc": "2022-01-02T23:00:00.000Z",
+      "last_candle_utc": "2022-01-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-02.csv",
+      "rows": 27448,
+      "bytes": 1764133,
+      "sha256": "4d83c96711998359dc16f3b43f8c2ca3096eab4fe13b4cbafc226953f9f0d6a5",
+      "first_candle_utc": "2022-02-01T00:00:00.000Z",
+      "last_candle_utc": "2022-02-28T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-03.csv",
+      "rows": 31799,
+      "bytes": 2069491,
+      "sha256": "ba43e3562a2cc669d241456866b3717304681cef8cfda6529c971902b483f548",
+      "first_candle_utc": "2022-03-01T00:00:00.000Z",
+      "last_candle_utc": "2022-03-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-04.csv",
+      "rows": 27477,
+      "bytes": 1782267,
+      "sha256": "d8f3e4482819b85c154df4e51975eb2399042b9633a50421117f258106433cf7",
+      "first_candle_utc": "2022-04-01T00:00:00.000Z",
+      "last_candle_utc": "2022-04-29T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-05.csv",
+      "rows": 30327,
+      "bytes": 1973593,
+      "sha256": "bb6805af49a05b0b56b6d2ee9649a69aa9178c3221d9fd8cc74f8264bf0c37f1",
+      "first_candle_utc": "2022-05-01T22:00:00.000Z",
+      "last_candle_utc": "2022-05-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-06.csv",
+      "rows": 30209,
+      "bytes": 1969745,
+      "sha256": "b5881f2bbd87c326c62500b0cf03ee47a16aa8f29c3d2dd95faf9c77490b5a3a",
+      "first_candle_utc": "2022-06-01T00:00:00.000Z",
+      "last_candle_utc": "2022-06-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-07.csv",
+      "rows": 28827,
+      "bytes": 1858697,
+      "sha256": "2389dbdea6696bc15ecfe38c029ef2d4ed1af3b76729b80c8d02c42005bad71e",
+      "first_candle_utc": "2022-07-01T00:00:00.000Z",
+      "last_candle_utc": "2022-07-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-08.csv",
+      "rows": 31734,
+      "bytes": 2043573,
+      "sha256": "8ce4d468b278677a8e53de111b0d392729111975f1ebdb7efcf2185da3434a46",
+      "first_candle_utc": "2022-08-01T00:00:00.000Z",
+      "last_candle_utc": "2022-08-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-09.csv",
+      "rows": 30089,
+      "bytes": 1969545,
+      "sha256": "0f7da11adf689624555f3884d0d76cd0f333a98aba03c4b8a12bde4e145ef381",
+      "first_candle_utc": "2022-09-01T00:00:00.000Z",
+      "last_candle_utc": "2022-09-30T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-10.csv",
+      "rows": 29089,
+      "bytes": 1885750,
+      "sha256": "0aac7a71b892c1a0853cdeedbe9f6bcd5ae7650a09adce59d2434a6d7214bc70",
+      "first_candle_utc": "2022-10-02T22:00:00.000Z",
+      "last_candle_utc": "2022-10-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-11.csv",
+      "rows": 29935,
+      "bytes": 1900579,
+      "sha256": "fcd042cfbc39869cb455a49b4ff32660f6727618f9cb70e5e6496ddcac4da210",
+      "first_candle_utc": "2022-11-01T00:00:00.000Z",
+      "last_candle_utc": "2022-11-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2022-12.csv",
+      "rows": 28907,
+      "bytes": 1856615,
+      "sha256": "9840ba99349228b7b5f4d871b01964f26682a98f55507e6b38205134e93748b3",
+      "first_candle_utc": "2022-12-01T00:00:00.000Z",
+      "last_candle_utc": "2022-12-30T21:58:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-01.csv",
+      "rows": 28794,
+      "bytes": 1867020,
+      "sha256": "add8dd8f8e3c3694963a9ef98f6b98e800978f415907f8935970824601c6f8a9",
+      "first_candle_utc": "2023-01-02T23:00:00.000Z",
+      "last_candle_utc": "2023-01-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-02.csv",
+      "rows": 27443,
+      "bytes": 1774163,
+      "sha256": "964932c6f8e22fd4bd769bf195a051e30a6e6bf5c19fc796531fb007e315d2a3",
+      "first_candle_utc": "2023-02-01T00:00:00.000Z",
+      "last_candle_utc": "2023-02-28T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-03.csv",
+      "rows": 31673,
+      "bytes": 2050326,
+      "sha256": "f67403acc034cc017f18475dfe9c0710d5f395939e570040d92c3154ee9410ce",
+      "first_candle_utc": "2023-03-01T00:00:00.000Z",
+      "last_candle_utc": "2023-03-31T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-04.csv",
+      "rows": 26328,
+      "bytes": 1705845,
+      "sha256": "a0a6cae88a97748a646242a5eec7c8cb99cc4d92d56ca1142f30fb50dc97fd17",
+      "first_candle_utc": "2023-04-02T22:00:00.000Z",
+      "last_candle_utc": "2023-04-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-05.csv",
+      "rows": 31583,
+      "bytes": 2062560,
+      "sha256": "8b04a57e4bea5579aa0b4251088a1954cdf8b949a718784f336f4ab162f8d72b",
+      "first_candle_utc": "2023-05-01T00:00:00.000Z",
+      "last_candle_utc": "2023-05-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-06.csv",
+      "rows": 30075,
+      "bytes": 1937217,
+      "sha256": "3dcb6651dc963c405ed273e4a772479d95ed6bdd28c475e69e20d8b0c6760c1c",
+      "first_candle_utc": "2023-06-01T00:00:00.000Z",
+      "last_candle_utc": "2023-06-30T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-07.csv",
+      "rows": 28919,
+      "bytes": 1866036,
+      "sha256": "956e9fcc1d1d4bca245aac9308765f016b5498f1589af733f253b08d7a11561c",
+      "first_candle_utc": "2023-07-02T22:00:00.000Z",
+      "last_candle_utc": "2023-07-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-08.csv",
+      "rows": 31674,
+      "bytes": 2005287,
+      "sha256": "f2caa6b959e8b96a7a5ba0db340653105f5580b33065cc858dd209a885f70d7b",
+      "first_candle_utc": "2023-08-01T00:00:00.000Z",
+      "last_candle_utc": "2023-08-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-09.csv",
+      "rows": 28658,
+      "bytes": 1812483,
+      "sha256": "fecdb67d640c9b7dc0526db159587b0e1184f06e292544b3edda116e256058af",
+      "first_candle_utc": "2023-09-01T00:00:00.000Z",
+      "last_candle_utc": "2023-09-29T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-10.csv",
+      "rows": 30464,
+      "bytes": 1934573,
+      "sha256": "3b1d40641e1440c6837fa3c9bde4b6b06a0d4afae5ae76d4afedff89ba990b73",
+      "first_candle_utc": "2023-10-01T22:00:00.000Z",
+      "last_candle_utc": "2023-10-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-11.csv",
+      "rows": 29824,
+      "bytes": 1889055,
+      "sha256": "e9271f51ae52664479b94fa22488ee62c098a5c7cda48ddf336c24ba6d240e41",
+      "first_candle_utc": "2023-11-01T00:00:00.000Z",
+      "last_candle_utc": "2023-11-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2023-12.csv",
+      "rows": 27534,
+      "bytes": 1747887,
+      "sha256": "44825574a6dd8430f04a2ef83c33471bcef86e5e1ee6f9d096a24163b1d64d9c",
+      "first_candle_utc": "2023-12-01T00:00:00.000Z",
+      "last_candle_utc": "2023-12-29T21:58:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-01.csv",
+      "rows": 30268,
+      "bytes": 1924095,
+      "sha256": "6ca995aa959441313738a5a769722cc5f7ee4ce859b772a48a4a75a4f4213720",
+      "first_candle_utc": "2024-01-01T23:00:00.000Z",
+      "last_candle_utc": "2024-01-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-02.csv",
+      "rows": 28808,
+      "bytes": 1830372,
+      "sha256": "3c385e497ffcd1ea8c1aa1f5be0e2d25dcd232a110131d285d7f04985568906b",
+      "first_candle_utc": "2024-02-01T00:00:00.000Z",
+      "last_candle_utc": "2024-02-29T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-03.csv",
+      "rows": 27649,
+      "bytes": 1759787,
+      "sha256": "354995be393c677c4fae1319c5573781f2e2e5a49f57a3c28d9797ca54a948c6",
+      "first_candle_utc": "2024-03-01T00:00:00.000Z",
+      "last_candle_utc": "2024-03-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-04.csv",
+      "rows": 30359,
+      "bytes": 1957826,
+      "sha256": "b10b4540421581e33c7661a60f945ab771187925a81690156b91ba22961ac503",
+      "first_candle_utc": "2024-04-01T00:00:00.000Z",
+      "last_candle_utc": "2024-04-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-05.csv",
+      "rows": 31463,
+      "bytes": 2038512,
+      "sha256": "def6cf2e765ff2bec264f89fb85330d99f992d87f855f4074fc9da7e52382c70",
+      "first_candle_utc": "2024-05-01T00:00:00.000Z",
+      "last_candle_utc": "2024-05-31T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-06.csv",
+      "rows": 27567,
+      "bytes": 1800118,
+      "sha256": "36aab7780b7071418257a540b2e2d600345887148374748bda25dc70329d64bc",
+      "first_candle_utc": "2024-06-02T22:00:00.000Z",
+      "last_candle_utc": "2024-06-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-07.csv",
+      "rows": 31587,
+      "bytes": 2057982,
+      "sha256": "e9f124a544ebe843b284ed3ecf4569be37d007d499ff36af771be8f9392df450",
+      "first_candle_utc": "2024-07-01T00:00:00.000Z",
+      "last_candle_utc": "2024-07-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-08.csv",
+      "rows": 30240,
+      "bytes": 1960349,
+      "sha256": "c51581eb806b5121ab2b4a109641cdd35f168dc8bbbb252f13ffc8cdc51aa587",
+      "first_candle_utc": "2024-08-01T00:00:00.000Z",
+      "last_candle_utc": "2024-08-30T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-09.csv",
+      "rows": 28945,
+      "bytes": 1881676,
+      "sha256": "bd11be9a9eebd3fb61cb22819bbbdfc5813491ef0f854ff89428bbc978a9a4a7",
+      "first_candle_utc": "2024-09-01T22:00:00.000Z",
+      "last_candle_utc": "2024-09-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-10.csv",
+      "rows": 31671,
+      "bytes": 2049468,
+      "sha256": "e61a1199f26606cdf2a3268f92f3b11e436ee80c6896450a7e4f3fdbc35fb086",
+      "first_candle_utc": "2024-10-01T00:00:00.000Z",
+      "last_candle_utc": "2024-10-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-11.csv",
+      "rows": 28572,
+      "bytes": 1837672,
+      "sha256": "f73d0f7fcc837cf0b929745b8ba1f7be1fdd3d11aa78035384028f0f5a996379",
+      "first_candle_utc": "2024-11-01T00:00:00.000Z",
+      "last_candle_utc": "2024-11-29T19:43:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2024-12.csv",
+      "rows": 28764,
+      "bytes": 1875352,
+      "sha256": "f265746e1eb4e8cc840b94eb2af77171830ab298e349ddc10937296b55d1866f",
+      "first_candle_utc": "2024-12-01T23:00:00.000Z",
+      "last_candle_utc": "2024-12-31T21:58:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-01.csv",
+      "rows": 30197,
+      "bytes": 1953709,
+      "sha256": "0578d4174520f3e260ca2a19c2321828a6618d5c91a44d15dfe8dcd573869fa6",
+      "first_candle_utc": "2025-01-01T23:00:00.000Z",
+      "last_candle_utc": "2025-01-31T21:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-02.csv",
+      "rows": 27440,
+      "bytes": 1762748,
+      "sha256": "0ae6ad98a1d04540223b5c849e069ddc773ea59bfd6db49282222b35bb6d7656",
+      "first_candle_utc": "2025-02-02T23:03:00.000Z",
+      "last_candle_utc": "2025-02-28T21:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-03.csv",
+      "rows": 29073,
+      "bytes": 1880760,
+      "sha256": "d9f79ed195f9a2291fb545711a24be84a78ce17e6d0ef479b95120f9bc40ca15",
+      "first_candle_utc": "2025-03-02T23:00:00.000Z",
+      "last_candle_utc": "2025-03-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-04.csv",
+      "rows": 28954,
+      "bytes": 1837260,
+      "sha256": "769b51dee2ef651bc048d8674c2c0fca0a85e207f0df1af69dbe9111fa301ed3",
+      "first_candle_utc": "2025-04-01T00:00:00.000Z",
+      "last_candle_utc": "2025-04-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-05.csv",
+      "rows": 30087,
+      "bytes": 1912721,
+      "sha256": "6b54cc0f47e8a5807e339dbecd6e05123c687802c65e538c4303845342022b8d",
+      "first_candle_utc": "2025-05-01T00:00:00.000Z",
+      "last_candle_utc": "2025-05-30T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-06.csv",
+      "rows": 28949,
+      "bytes": 1900371,
+      "sha256": "4b80f085188f1969e6847df93abc04133d76f28d3bf321cb03e540921e98e3ca",
+      "first_candle_utc": "2025-06-01T22:00:00.000Z",
+      "last_candle_utc": "2025-06-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-07.csv",
+      "rows": 31499,
+      "bytes": 2044330,
+      "sha256": "9edcba644ac3779da196cbba119ee491b7a300654950cb69d397de7d26099644",
+      "first_candle_utc": "2025-07-01T00:00:00.000Z",
+      "last_candle_utc": "2025-07-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-08.csv",
+      "rows": 28971,
+      "bytes": 1870602,
+      "sha256": "b665fe95531536d7b5b229693840097320d1d2c05b9bd20d4404f2303c9e2a03",
+      "first_candle_utc": "2025-08-01T00:00:00.000Z",
+      "last_candle_utc": "2025-08-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-09.csv",
+      "rows": 30209,
+      "bytes": 1939073,
+      "sha256": "b93f2a3b362fb940987ff2a510b08df7bd539ff0742b8db8ada4a344d88138b0",
+      "first_candle_utc": "2025-09-01T00:00:00.000Z",
+      "last_candle_utc": "2025-09-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-10.csv",
+      "rows": 31620,
+      "bytes": 2045777,
+      "sha256": "179bea97e73507da5f5d14a493bd67562a92fcc3dee2fa3230ef723d520cef46",
+      "first_candle_utc": "2025-10-01T00:00:00.000Z",
+      "last_candle_utc": "2025-10-31T20:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-11.csv",
+      "rows": 27358,
+      "bytes": 1730044,
+      "sha256": "b0077f8fe6e68d13e9a9acb21544f81d70b76532441a68c2644d4722d645e4a8",
+      "first_candle_utc": "2025-11-02T23:00:00.000Z",
+      "last_candle_utc": "2025-11-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2025-12.csv",
+      "rows": 30018,
+      "bytes": 1910111,
+      "sha256": "df08625307c4e553f659cdd405b31c14d840ffd081267848e8252f5e5992a511",
+      "first_candle_utc": "2025-12-01T00:00:00.000Z",
+      "last_candle_utc": "2025-12-31T21:58:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2026-01.csv",
+      "rows": 28828,
+      "bytes": 1845847,
+      "sha256": "c02ce18956bcc599f9b18c07255990b3f1a37ee7c22842290d757279035d986c",
+      "first_candle_utc": "2026-01-01T23:00:00.000Z",
+      "last_candle_utc": "2026-01-30T21:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2026-02.csv",
+      "rows": 27430,
+      "bytes": 1751327,
+      "sha256": "7aca65c29ce1f224c66e2c38a0a55d8cb15ff20946c8d05f0d866560193654b8",
+      "first_candle_utc": "2026-02-01T23:06:00.000Z",
+      "last_candle_utc": "2026-02-27T21:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2026-03.csv",
+      "rows": 30476,
+      "bytes": 1930034,
+      "sha256": "e40bf8e4721c35c244228d9af35affe52eb6924771efa642cd787e134edfb29c",
+      "first_candle_utc": "2026-03-01T23:00:00.000Z",
+      "last_candle_utc": "2026-03-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2026-04.csv",
+      "rows": 28977,
+      "bytes": 1825034,
+      "sha256": "467efe76dd4d21c14b887b664d41c706d13e3018ace440bce0b8ffb137dcca32",
+      "first_candle_utc": "2026-04-01T00:00:00.000Z",
+      "last_candle_utc": "2026-04-30T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2026-05.csv",
+      "rows": 28822,
+      "bytes": 1830993,
+      "sha256": "086550fe531b6b0b9252cfdfa19858061617466fbbf961c06d249f5e4993cfad",
+      "first_candle_utc": "2026-05-01T00:00:00.000Z",
+      "last_candle_utc": "2026-05-31T23:59:00.000Z"
+    },
+    {
+      "name": "xauusd-m1-2026-06.csv",
+      "rows": 30119,
+      "bytes": 1909492,
+      "sha256": "3913d76150a7822e808b457b7a12fe59a6dde95fd34a4af81c1b8b90afe29206",
+      "first_candle_utc": "2026-06-01T00:00:00.000Z",
+      "last_candle_utc": "2026-06-30T23:59:00.000Z"
+    }
+  ],
+  "content_sha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d"
+}

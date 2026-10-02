@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using QuantConnect;
@@ -148,6 +149,7 @@ namespace MarketLab.SingleAnchor
         private SingleAnchorEngine _engine = null!;
         private SingleAnchorParameters _parameters = null!;
         private SingleAnchorResearchAccount? _researchAccount;
+        private ReplayRecorder? _replay;
         private SessionMapRunInfo? _sessionMapInfo;
         private readonly QuoteTickFeed _feed = new QuoteTickFeed();
         private QuoteDelivery _delivery = null!;
@@ -244,8 +246,15 @@ namespace MarketLab.SingleAnchor
                 margin.Validate();
             }
             _researchAccount = _researchAccountEnabled ? new SingleAnchorResearchAccount(_parameters, _cash, margin) : null;
-            _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters), availability, _researchAccount, margin != null ? _researchAccount : null);
+            // Phase E: the replay recorder wraps the research account as the engine's observer
+            // (the account remains the engine's risk guard). It only reads the account and the
+            // engine's events; the strategy and the account behave exactly as without it.
+            _replay = _researchAccount != null
+                ? new ReplayRecorder(_researchAccount, margin != null, () => _engine.QuotesProcessed)
+                : null;
+            _engine = new SingleAnchorEngine(_parameters, new ResearchExecutor(_parameters), availability, _replay ?? (IResearchObserver?)_researchAccount, margin != null ? _researchAccount : null);
             WireEvents();
+            WireReplay(margin);
 
             Log(_researchAccount != null
                 ? $"SingleAnchor research account enabled: initial balance {F(_cash)}; derived Balance/FloatingPL/Equity and the run/basket analytics are written in the results (the strategy path is unchanged)."
@@ -444,6 +453,9 @@ namespace MarketLab.SingleAnchor
                     // The end-of-data mark is observed with the same engine state the openBasket
                     // snapshot reports, so the final equity and the run extrema include it.
                     _researchAccount.ObserveEndOfRun(_engine.LastProcessedQuote.Value, _engine.Basket, _engine.RealizedProfit);
+                    // Phase E: the final observation can itself move the Margin Call state; the
+                    // replay recorder reconciles it on the same quote before the package is built.
+                    _replay?.OnEndOfRunObserved(_engine.LastProcessedQuote.Value);
                 }
                 var a = _researchAccount.Summary;
                 var mark = a.FloatingObservable
@@ -518,13 +530,146 @@ namespace MarketLab.SingleAnchor
                 ["openBasket"] = CurrentBasketSnapshot()
             };
             var settings = new JsonSerializerSettings { Formatting = Formatting.Indented, Converters = { new StringEnumConverter() } };
-            if (ObjectStore.SaveJson(ResultsKey, results, settings: settings))
+            var resultsSaved = ObjectStore.SaveJson(ResultsKey, results, settings: settings);
+            if (resultsSaved)
             {
                 Log($"SingleAnchor results written to the object store as {ResultsKey}.");
+                // Phase E: the replay package is additive output of the authoritative run; it is
+                // only attempted after the authoritative results themselves persisted.
+                WriteReplayPackage(failure);
             }
             else
             {
-                Error($"SingleAnchor results could not be written to the object store as {ResultsKey}.");
+                Error($"SingleAnchor results could not be written to the object store as {ResultsKey}; the replay package is not attempted because it is only meaningful next to the authoritative result.");
+            }
+        }
+
+        /// <summary>
+        /// Phase E: subscribes the replay recorder to the engine events it turns into the
+        /// authoritative event stream. Forced liquidation is intentionally not subscribed here:
+        /// the recorder emits it from its observer callback, which the engine calls before the
+        /// event on the same quote.
+        /// </summary>
+        private void WireReplay(MarginParameters? margin)
+        {
+            if (_replay == null)
+            {
+                Log("SingleAnchor replay package: not emitted; the Phase E package requires the research account (single-anchor-research-account=true).");
+                return;
+            }
+            _engine.AnchorCreated += _replay.OnAnchorCreated;
+            _engine.FirstEntrySkipped += _replay.OnFirstEntrySkipped;
+            _engine.EntryOpened += _replay.OnEntryOpened;
+            _engine.EntryRejected += _replay.OnEntryRejected;
+            _engine.HardBreakevenViolated += _replay.OnHardBreakevenViolated;
+            _engine.HardBreakevenActivated += _replay.OnHardBreakevenActivated;
+            _engine.TrailingActivated += _replay.OnTrailingActivated;
+            _engine.BasketClosed += _replay.OnBasketClosed;
+            _engine.BasketCloseFailed += _replay.OnBasketCloseFailed;
+            _engine.StopOutTriggered += _replay.OnStopOutTriggered;
+            _engine.BasketLiquidated += _replay.OnBasketLiquidated;
+            _replay.Start(BuildReplayMetadata(margin));
+            Log($"SingleAnchor replay package enabled: {ReplayPackage.Contract} at {ReplayPackage.Directory}, periodic account telemetry every {ReplayPackage.TelemetryIntervalSeconds} simulated seconds while positions are open.");
+        }
+
+        private ReplayPackageMetadata BuildReplayMetadata(MarginParameters? margin)
+        {
+            var sessionMap = _sessionMapInfo == null
+                ? null
+                : new ReplaySessionMapIdentity(
+                    _sessionMapInfo.Map,
+                    _sessionMapInfo.Sha256,
+                    _sessionMapInfo.Symbol,
+                    _sessionMapInfo.JunctionTimeZone,
+                    _sessionMapInfo.Sessions,
+                    _sessionMapInfo.FirstSessionStartUtc,
+                    _sessionMapInfo.FinalSessionEndObservable,
+                    _sessionMapInfo.SourceFileCount,
+                    _sessionMapInfo.SourceRowCount,
+                    _sessionMapInfo.SourceSha256Aggregate,
+                    _sessionMapInfo.SourceFirstQuoteUtc,
+                    _sessionMapInfo.SourceCoverageEndUtc);
+            return new ReplayPackageMetadata(
+                ModelRevision,
+                StopOutModel,
+                _symbol.Value,
+                _market,
+                _securityType,
+                TimeZone.Id,
+                Securities[_symbol].Exchange.TimeZone.Id,
+                _startDate,
+                _endDate,
+                StartDate.ConvertToUtc(TimeZone),
+                EndDate.ConvertToUtc(TimeZone),
+                _parameters,
+                margin,
+                sessionMap,
+                _researchAccountEnabled,
+                _marginEnabled);
+        }
+
+        /// <summary>
+        /// Phase E: writes the authoritative replay package after the results. The package is
+        /// additive: a failure to build or write it is logged and never changes the run outcome
+        /// or the persisted results.
+        /// </summary>
+        private void WriteReplayPackage(RunFailure? failure)
+        {
+            if (_replay == null)
+            {
+                return;
+            }
+            try
+            {
+                var rejections = new List<EntryRejectionRecord>();
+                foreach (var closed in _engine.ClosedBaskets)
+                {
+                    rejections.AddRange(closed.RejectionTrace);
+                }
+                if (_engine.Basket != null)
+                {
+                    rejections.AddRange(_engine.Basket.Rejections);
+                }
+                var delivery = _delivery.Snapshot();
+                var runEnd = new ReplayRunEnd(
+                    failure == null,
+                    failure?.Kind,
+                    failure?.Condition,
+                    failure?.Message,
+                    failure?.Quote,
+                    _engine.LastProcessedQuote?.Time,
+                    _engine.QuotesProcessed,
+                    _engine.QuoteOnlyQuotes,
+                    _engine.StrategyEligibleQuotes,
+                    _engine.EntriesOpened,
+                    _engine.BasketsClosed,
+                    _engine.BasketsLiquidated,
+                    _engine.ForcedLiquidations,
+                    _engine.EntriesRejected,
+                    _engine.RejectedEntryAttempts,
+                    _engine.SkippedFirstEntryQuotes,
+                    _engine.RealizedProfit,
+                    new ReplayDeliveryIdentity(delivery.QuoteCount, delivery.SemanticDigest, delivery.FirstCanonicalUtc, delivery.LastCanonicalUtc),
+                    rejections);
+                var package = _replay.BuildPackage(runEnd);
+                // Fail closed: the manifest is published only after every payload persisted, so the
+                // object store can never contain a manifest advertising an incomplete package.
+                var published = ReplayPackagePublisher.Publish(
+                    package.Files,
+                    (key, bytes) => ObjectStore.SaveBytes(key, bytes),
+                    out var failedKey);
+                if (published)
+                {
+                    Log($"SingleAnchor replay package: {package.EventCount} event(s), {package.EventSnapshotCount} event snapshot(s), {package.PeriodicSampleCount} periodic sample(s), {package.Files.Count} file(s) written, package sha256 {package.PackageSha256}.");
+                }
+                else
+                {
+                    Error($"SingleAnchor replay package could not be persisted in full (first failed file: {failedKey}); the package manifest was not published, so no incomplete package is advertised. Package sha256 would have been {package.PackageSha256}.");
+                }
+            }
+            catch (Exception error)
+            {
+                Error($"SingleAnchor replay package could not be built or written: {error.Message}");
             }
         }
 

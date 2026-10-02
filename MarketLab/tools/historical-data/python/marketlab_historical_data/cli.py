@@ -6,8 +6,10 @@ import argparse
 import json
 import os
 import sys
+from datetime import date
 from pathlib import Path
 
+from .candles import generate_candles, verify_candle_composition, verify_candles
 from .csv_source import CsvSourceConfig
 from .continuous import (
     build_continuous_record,
@@ -245,6 +247,75 @@ def _verify_continuous_parser(subparsers) -> None:
         "--force", action="store_true", help="replace an existing continuous qualification record"
     )
     parser.add_argument("--json", action="store_true", help="print the record JSON to stdout")
+
+
+def _candles_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "candles",
+        help="derive a deterministic monthly M1 candle cache from the qualified native "
+        "quote history",
+    )
+    parser.add_argument(
+        "--data-folder",
+        required=True,
+        help="qualified native data tree root holding cfd\\dukascopy\\tick\\xauusd",
+    )
+    parser.add_argument(
+        "--out",
+        required=True,
+        help="output directory for the derived xauusd-m1-YYYY-MM.csv files and manifest.json",
+    )
+    parser.add_argument(
+        "--start",
+        help="first native partition date to include (YYYY-MM-DD, inclusive)",
+    )
+    parser.add_argument(
+        "--end",
+        help="last native partition date to include (YYYY-MM-DD, inclusive)",
+    )
+
+
+def _verify_candles_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "verify-candles",
+        help="re-verify the qualified source identity and a derived M1 candle cache",
+    )
+    parser.add_argument(
+        "--data-folder",
+        required=True,
+        help="qualified native data tree root holding cfd\\dukascopy\\tick\\xauusd",
+    )
+    parser.add_argument(
+        "--cache",
+        required=True,
+        help="derived candle cache directory holding manifest.json and the monthly CSVs",
+    )
+    parser.add_argument(
+        "--output",
+        help="output verification record path (default: print the JSON record to stdout)",
+    )
+
+
+def _verify_candle_composition_parser(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "verify-candle-composition",
+        help="verify a merged M1 candle cache is the contiguous union of its part caches",
+    )
+    parser.add_argument(
+        "--cache",
+        required=True,
+        help="merged final candle cache directory holding manifest.json and the monthly CSVs",
+    )
+    parser.add_argument(
+        "--parts",
+        required=True,
+        help="comma-separated part cache directories in chronological order, each holding "
+        "manifest.json and its monthly CSVs",
+    )
+    parser.add_argument(
+        "--output",
+        help="output verification record path (default: print the JSON record to stdout)",
+    )
 
 
 def _read_failed_requests(path: Path) -> list[str]:
@@ -566,6 +637,122 @@ def _run_verify_continuous(args) -> int:
     return 1
 
 
+def _run_candles(args) -> int:
+    try:
+        start = date.fromisoformat(args.start) if args.start else None
+        end = date.fromisoformat(args.end) if args.end else None
+    except ValueError as error:
+        print(f"ERROR: --start/--end must be YYYY-MM-DD dates: {error}", file=sys.stderr)
+        return 2
+    outcome = generate_candles(
+        Path(args.data_folder),
+        Path(args.out),
+        start=start,
+        end=end,
+    )
+    for failure in outcome.failures:
+        print(f"FAIL: {failure}", file=sys.stderr)
+    if outcome.manifest is not None and outcome.manifest_path is not None:
+        totals = outcome.manifest["totals"]
+        print(
+            f"partitions: {totals['partitions']}; source rows: {totals['source_rows']}; "
+            f"candle rows: {totals['candle_rows']}; candle bytes: {totals['candle_bytes']}"
+        )
+        print(
+            f"window: {outcome.manifest['start_date']} .. {outcome.manifest['end_date']}; "
+            f"candle files: {len(outcome.manifest['files'])}"
+        )
+        print(f"content_sha256: {outcome.manifest['content_sha256']}")
+        print(f"manifest: {outcome.manifest_path}")
+    if outcome.exit_code == 2:
+        print("candles: configuration error; nothing was written", file=sys.stderr)
+    elif outcome.exit_code == 0:
+        print("candles: PASS")
+    else:
+        print("candles: FAIL", file=sys.stderr)
+    return outcome.exit_code
+
+
+def _run_verify_candles(args) -> int:
+    outcome = verify_candles(Path(args.data_folder), Path(args.cache))
+    if outcome.record is None:
+        for failure in outcome.failures:
+            print(f"FAIL: {failure}", file=sys.stderr)
+        print("verify-candles: configuration error", file=sys.stderr)
+        return outcome.exit_code
+    text = dump_json(outcome.record)
+    if args.output:
+        output = Path(args.output)
+        try:
+            with OutputTransaction(allow_overwrite=True) as transaction:
+                transaction.stage_text(output, text)
+                transaction.commit()
+        except OutputTransactionError as error:
+            print(f"ERROR: verification record not written: {error}", file=sys.stderr)
+            return 2
+        print(f"verification: {output}")
+    else:
+        print(text, end="")
+    checks = outcome.record["checks"]
+    composition = outcome.record["composition"]
+    print(
+        f"partitions verified: {composition['partitions_verified']}/"
+        f"{composition['partition_count']}; checks passed: "
+        f"{sum(1 for value in checks.values() if value)}/{len(checks)}"
+    )
+    for failure in outcome.failures:
+        print(f"FAIL: {failure}", file=sys.stderr)
+    if outcome.exit_code == 0:
+        print("verify-candles: PASS")
+    else:
+        print("verify-candles: FAIL", file=sys.stderr)
+    return outcome.exit_code
+
+
+def _run_verify_candle_composition(args) -> int:
+    part_values = [value.strip() for value in args.parts.split(",") if value.strip()]
+    if not part_values:
+        print(
+            "ERROR: --parts must list at least one part cache directory",
+            file=sys.stderr,
+        )
+        return 2
+    outcome = verify_candle_composition(
+        Path(args.cache), [Path(value) for value in part_values]
+    )
+    if outcome.record is None:
+        for failure in outcome.failures:
+            print(f"FAIL: {failure}", file=sys.stderr)
+        print("verify-candle-composition: configuration error", file=sys.stderr)
+        return outcome.exit_code
+    text = dump_json(outcome.record)
+    if args.output:
+        output = Path(args.output)
+        try:
+            with OutputTransaction(allow_overwrite=True) as transaction:
+                transaction.stage_text(output, text)
+                transaction.commit()
+        except OutputTransactionError as error:
+            print(f"ERROR: verification record not written: {error}", file=sys.stderr)
+            return 2
+        print(f"verification: {output}")
+    else:
+        print(text, end="")
+    checks = outcome.record["checks"]
+    final = outcome.record["final"]
+    print(
+        f"parts: {len(outcome.record['parts'])}; final files: {final['files']}; checks "
+        f"passed: {sum(1 for value in checks.values() if value)}/{len(checks)}"
+    )
+    for failure in outcome.failures:
+        print(f"FAIL: {failure}", file=sys.stderr)
+    if outcome.exit_code == 0:
+        print("verify-candle-composition: PASS")
+    else:
+        print("verify-candle-composition: FAIL", file=sys.stderr)
+    return outcome.exit_code
+
+
 def _run_qualify(args) -> int:
     config = CsvSourceConfig(
         delimiter=args.delimiter,
@@ -738,6 +925,9 @@ def main(argv=None) -> int:
     _summarize_history_parser(subparsers)
     _compose_history_parser(subparsers)
     _verify_continuous_parser(subparsers)
+    _candles_parser(subparsers)
+    _verify_candles_parser(subparsers)
+    _verify_candle_composition_parser(subparsers)
     args = parser.parse_args(argv)
     if args.command == "prepare-identity":
         return _run_prepare_identity(args)
@@ -751,6 +941,12 @@ def main(argv=None) -> int:
         return _run_compose_history(args)
     if args.command == "verify-continuous":
         return _run_verify_continuous(args)
+    if args.command == "candles":
+        return _run_candles(args)
+    if args.command == "verify-candles":
+        return _run_verify_candles(args)
+    if args.command == "verify-candle-composition":
+        return _run_verify_candle_composition(args)
     parser.error(f"unknown command {args.command!r}")
     return 2
 

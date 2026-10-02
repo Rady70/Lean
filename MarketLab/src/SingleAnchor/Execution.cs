@@ -1380,6 +1380,14 @@ namespace MarketLab.SingleAnchor
     /// <summary>Trailing activated on this quote (specification section 13).</summary>
     public sealed record TrailingActivatedEvent(Basket Basket, decimal Profit, decimal ActivationThreshold, Quote Quote);
 
+    /// <summary>
+    /// The basket entered hard-BE mode at the first tail attempt (specification section 5),
+    /// published before that attempt is sized, priced or placed. Observational: it is raised at
+    /// the existing <c>ActivateHardBreakevenMode</c> transition and changes no decision, but it
+    /// lets the Phase E replay recorder snapshot the exact pre-attempt basket/account state.
+    /// </summary>
+    public sealed record HardBreakevenActivatedEvent(Basket Basket, int TradeNumber, Quote Quote);
+
     /// <summary>The basket was closed; <paramref name="Record"/> carries the decision and realized figures.</summary>
     public sealed record BasketClosedEvent(Basket Basket, BasketCloseRecord Record, Quote Quote);
 

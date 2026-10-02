@@ -433,7 +433,7 @@ the digest: swapping two equal-timestamp rows changes it.
 ## 8. Tests
 
 ```powershell
-# Python offline tool (260 tests)
+# Python offline tool (299 tests)
 cd MarketLab\tools\historical-data\python
 python -m unittest discover -s tests -t . -v
 
@@ -672,6 +672,141 @@ the manifest file itself to the replay qualification record
 `overall_qualification = PASS` and `continuous.composition_sha256` equal to the
 actual manifest hash). The first untouched full-history baseline has **not**
 been run and parameter research has **not** started.
+
+### candles
+
+`python -m marketlab_historical_data candles` derives a deterministic monthly
+M1 candle cache from the qualified native partitions above:
+
+```powershell
+python -m marketlab_historical_data candles `
+    --data-folder E:\MarketLab\data\lean\xauusd-dukascopy `
+    --out E:\MarketLab\data\lean\xauusd-m1 `
+    --start 2019-01-01 --end 2026-06-30
+```
+
+`--data-folder` is the qualified tree root and `--out` is a directory outside
+it (writing into the source tree, or onto a `manifest.json` from a different
+contract, is refused). Generation fails closed on the qualified source
+identity: the tree must carry the continuous composition and its PASS
+qualification record under `marketlab-qualification`, the record's
+`manifest_sha256` (and `continuous.composition_sha256` when present) must equal
+the actual composition SHA-256, the composition must declare the expected
+contracts and `lean.data_time_zone: UTC`, and the on-disk
+`cfd\dukascopy\tick\xauusd\*_quote.zip` set must equal the composition's
+partition set exactly (no extra, missing or renamed partition). A refused
+identity is a configuration error (exit 2). Within the selected window every
+partition's qualified `zip_sha256` is verified before derivation and its
+`member_name`, `member_size_bytes`, `row_count` and member SHA-256 are verified
+while streaming; a content mismatch is a generation failure (exit 1). A quote
+that is not a positive uncrossed bid/ask is refused. The derivation contract
+(`marketlab-xauusd-m1-candle-cache-v1`) is: the price is
+`mid = (bid + ask) / 2` computed exactly with `decimal.Decimal` and rendered
+in canonical fixed-point text; the bucket is the UTC minute and the candle
+time is the minute start as `YYYY-MM-DDTHH:MM:00.000Z`; open/close are the
+first/last mid of the minute in source order (equal timestamps keep source
+order), high/low are the maximum/minimum mid, and `ticks` counts the quote
+rows; only minutes with at least one quote are emitted - absent minutes are
+never filled, interpolated or zero-valued (`empty_minutes: absent`). Each
+UTF-8 (no BOM) `xauusd-m1-YYYY-MM.csv` has the header
+`time,open,high,low,close,ticks` and LF line endings.
+
+`--start`/`--end` are inclusive native partition-date bounds, so a source row
+outside the requested window is never read or counted. Range independence
+only holds for month-aligned bounds: a mid-month bound produces a
+partial-month CSV for that month's file (the file contains only the selected
+partitions), so the same month derived with different mid-month windows is not
+byte-comparable with the full-month file.
+
+`manifest.json` in the output directory is deterministic: no wall clock, no
+output path, monthly files sorted by name. It carries the contract and basis
+fields, the verified composition and qualification-record SHA-256s and the
+session-map SHA-256 read from the source tree, the effective inclusive
+window, totals (partitions, source rows, candle rows, candle bytes) and one
+record per file (`name`, `rows`, `bytes`, `sha256` of the exact bytes, first
+and last candle). `content_sha256` is the SHA-256 over the ordered
+`name\0sha256\0bytes\n` rows (one UTF-8 row per file, ascending by name). The
+command returns 0 on success, 1 for a refusal or unreadable native data, and 2
+for a configuration error, and it never writes into `--data-folder`.
+
+`python -m marketlab_historical_data verify-candles` re-verifies the source
+identity and an existing cache without deriving candles:
+
+```powershell
+python -m marketlab_historical_data verify-candles `
+    --data-folder E:\MarketLab\data\lean\xauusd-dukascopy `
+    --cache E:\MarketLab\data\lean\xauusd-m1 `
+    --output E:\MarketLab\data\lean\candle-verification.json
+```
+
+It runs the full source preflight over every partition (including
+`zip_sha256` for all of them), verifies the cache manifest contract and every
+monthly CSV's bytes/SHA-256 and recomputed `content_sha256`, checks that the
+file months cover exactly the declared `start_date..end_date` range with no
+gaps or duplicates, that each file name is month-aligned with its first/last
+candle months and the window boundaries, that `totals.source_rows` equals the
+composition's `counts.accepted_row_count`, that `totals.partitions` equals the
+composition partition count, and that the cache's recorded composition identity
+matches the qualified source. The cache manifest must also bind the PASS
+qualification record (`inputs.qualification_record.sha256` equal to the
+tree's record and `overall_qualification` PASS); a manifest that only names the
+composition identity is refused (`CacheSourceIdentityMissing`), because it does
+not say which qualification the cache bytes derive under. With `--output` it writes a
+deterministic JSON verification record (otherwise it prints it); it exits 0 on
+PASS, 1 on a verification failure, and 2 for a usage or source-configuration
+error.
+
+The full cache is produced in month-aligned chunks and merged by a documented
+recipe: copy every part's monthly CSV byte-for-byte, concatenate the part
+manifests' `files` records sorted by `name`, sum the four totals, set
+`start_date`/`end_date` to the union bounds, carry the identical part `inputs`
+identity, and recompute `content_sha256` over the ordered
+`name\0sha256\0bytes\n` rows. `python -m marketlab_historical_data
+verify-candle-composition` independently verifies that merge:
+
+```powershell
+python -m marketlab_historical_data verify-candle-composition `
+    --cache E:\MarketLab\data\lean\xauusd-m1-candles `
+    --parts E:\MarketLab\data\lean\_candles-parts\partA,E:\MarketLab\data\lean\_candles-parts\partB,E:\MarketLab\data\lean\_candles-parts\partC,E:\MarketLab\data\lean\_candles-parts\partD `
+    --output E:\MarketLab\data\lean\candle-composition-verification.json
+```
+
+It requires every part manifest to be a valid
+`marketlab-xauusd-m1-candle-cache-v1` manifest with month-aligned start/end
+dates and strictly increasing, exactly adjacent part ranges (the next part
+starts the month after the previous ends); the union of part file names must
+equal the final file set exactly (no gap, overlap, duplicate, extra or missing
+month); every file's part and final records must agree on `name`, `sha256`,
+`bytes`, `rows`, `first_candle_utc` and `last_candle_utc`, and the final CSV
+bytes must hash to that `sha256`; all parts' `inputs` identities (composition
+SHA-256, qualification-record SHA-256 when the schema carries it, and
+`data_folder_name`) must be identical and match the final manifest; the final
+`totals.partitions`, `totals.source_rows`, `totals.candle_rows` and
+`totals.candle_bytes` must equal the part sums; and the final `content_sha256`
+must recompute over the final ordered records. With `--output` it writes a
+deterministic JSON record (contract
+`marketlab-xauusd-m1-candle-composition-v1`, folder names only, no wall clock),
+otherwise it prints it; it exits 0 on PASS, 1 on a verification failure, and 2
+for a usage or configuration error.
+
+The source derivation of a merged cache is certified by re-running the same
+month-aligned part ranges with the current generator and comparing every
+monthly record with the final cache; the cache bytes are never rewritten. For
+the committed Phase E cache the four ranges were `2019-01-01..2020-11-30`,
+`2020-12-01..2022-10-31`, `2022-11-01..2024-09-30` and
+`2024-10-01..2026-06-30`, regenerated with `python -m
+marketlab_historical_data candles --data-folder <tree> --out <part> --start
+<first> --end <last>`; all 90 regenerated records (`sha256`, `bytes`, `rows`,
+`first_candle_utc`, `last_candle_utc`) were equal to the final cache, and the
+final manifest was rebuilt as the documented merge of those four corrected part
+manifests. A final manifest that predates a part schema change (for example one
+that does not carry `inputs.qualification_record`) must be rebuilt this way,
+never hand-edited.
+
+Candles are derived visualization/index data. Executions, events and account
+snapshots remain the authoritative LEAN output, and the qualified native
+partitions (section 10) remain the qualified source: the cache does not
+re-qualify, replace or override either.
 
 ## 11. Provenance of adapted retired code
 

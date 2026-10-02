@@ -308,6 +308,23 @@ namespace MarketLab.SingleAnchor
         /// <summary>Most adverse (most negative) executable floating P/L observed while a leg was open; null when no leg was ever observed.</summary>
         public decimal? MaxExecutableFloatingLoss => _maxExecutableFloatingLoss;
 
+        /// <summary>
+        /// Used margin of the last observation, without materializing <see cref="MarginSummary"/>.
+        /// Zero when the margin layer is not configured. Added for the Phase E replay exporter,
+        /// which needs the current values on the per-quote observation path; the authoritative
+        /// run-level evidence stays <see cref="MarginSummary"/>.
+        /// </summary>
+        public decimal CurrentUsedMargin => _currentUsedMargin;
+
+        /// <summary>Free margin of the last observation, without materializing <see cref="MarginSummary"/>.</summary>
+        public decimal? CurrentFreeMargin => _currentFreeMargin;
+
+        /// <summary>Margin level of the last observation, without materializing <see cref="MarginSummary"/>.</summary>
+        public decimal? CurrentMarginLevelPercent => _currentMarginLevelPercent;
+
+        /// <summary>True while the last observation was at or below the Margin Call level, without materializing <see cref="MarginSummary"/>.</summary>
+        public bool MarginCallActive => _marginCallActive;
+
         /// <summary>One compact research record per closed basket, in closing order.</summary>
         public IReadOnlyList<BasketResearchRecord> BasketRecords => _basketRecords;
 

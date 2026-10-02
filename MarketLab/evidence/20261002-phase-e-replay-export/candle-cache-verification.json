@@ -1,0 +1,40 @@
+{
+  "cache": {
+    "candle_bytes": 172160895,
+    "candle_rows": 2655664,
+    "content_sha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
+    "end_date": "2026-06-30",
+    "files": 90,
+    "manifest": "manifest.json",
+    "manifest_sha256": "75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1",
+    "start_date": "2019-01-01"
+  },
+  "cache_folder_name": "xauusd-m1-candles",
+  "checks": {
+    "cache_content_sha256": true,
+    "cache_file_records": true,
+    "cache_manifest": true,
+    "cache_month_coverage": true,
+    "cache_source_identity": true,
+    "cache_totals": true,
+    "cache_window_alignment": true,
+    "source_partition_set": true,
+    "source_zip_hashes": true
+  },
+  "composition": {
+    "accepted_row_count": 413750130,
+    "partition_count": 2332,
+    "partitions_verified": 2332,
+    "relative_path": "marketlab-qualification/continuous-composition.json",
+    "sha256": "a147f20a5b59bfc6cdb0c3cd785e84636bf40665c8203c119a18da6774ab8757"
+  },
+  "contract": "marketlab-xauusd-m1-candle-verification-v1",
+  "data_folder_name": "xauusd-dukascopy",
+  "failure_reasons": [],
+  "overall_qualification": "PASS",
+  "qualification_record": {
+    "overall_qualification": "PASS",
+    "relative_path": "marketlab-qualification/continuous-qualification-record.json",
+    "sha256": "e9c72d1abf15b1cc6ae9c2d2ff793c49091a26b2439258341c2d32a793632c8d"
+  }
+}
