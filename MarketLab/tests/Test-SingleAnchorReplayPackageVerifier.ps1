@@ -271,6 +271,40 @@ function Remove-EventsByType([string]$directory, [string[]]$types) {
     Write-JsonLinesFile $telemetryPath $keptTelemetry
 }
 
+# Removes every event for which the filter returns true, renumbers the kept ids 1..N and remaps
+# (or removes) the matching telemetry event snapshots.
+function Remove-EventsByFilter([string]$directory, [scriptblock]$shouldRemove) {
+    $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
+    $rows = Read-JsonLinesArray $eventsPath
+    $removedOldIds = @{}
+    $keptRows = New-Object System.Collections.Generic.List[object]
+    $keptOldIds = New-Object System.Collections.Generic.List[long]
+    foreach ($row in $rows) {
+        if (& $shouldRemove $row) {
+            $removedOldIds[[long]$row.id] = $true
+            continue
+        }
+        [void]$keptRows.Add($row)
+        [void]$keptOldIds.Add([long]$row.id)
+    }
+    for ($i = 0; $i -lt $keptRows.Count; $i++) { $keptRows[$i].id = $i + 1 }
+    Write-JsonLinesFile $eventsPath $keptRows
+    $idMap = @{}
+    for ($i = 0; $i -lt $keptOldIds.Count; $i++) { $idMap[$keptOldIds[$i]] = $i + 1 }
+    $telemetryPath = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+    $telemetry = Read-JsonLinesArray $telemetryPath
+    $keptTelemetry = New-Object System.Collections.Generic.List[object]
+    foreach ($row in $telemetry) {
+        if ([string]$row.kind -eq 'event') {
+            $oldId = [long]$row.eventId
+            if ($removedOldIds.ContainsKey($oldId)) { continue }
+            $row.eventId = $idMap[$oldId]
+        }
+        [void]$keptTelemetry.Add($row)
+    }
+    Write-JsonLinesFile $telemetryPath $keptTelemetry
+}
+
 function Add-SecondsToUtc([object]$value, [double]$seconds) {
     if ($value -is [datetime]) {
         $time = [datetime]$value
@@ -345,6 +379,9 @@ function New-SyntheticResultPackage([string]$directory) {
     $replayDirectory = Join-Path $directory 'storage\single-anchor\replay'
     New-Item -ItemType Directory -Path $replayDirectory -Force | Out-Null
 
+    # A contract-consistent synthetic verifier fixture: the ledger, parity and account
+    # identities are internally coherent and follow the producer's contracts, but the quote
+    # path is constructed to exercise the verifier rules and is not a full strategy replay.
     $modelRevision = 'marketlab-single-anchor-synthetic-v1'
     $stopOutModel = 'BrokerLiquidation'
     $symbol = 'XAUUSD'
@@ -404,12 +441,12 @@ function New-SyntheticResultPackage([string]$directory) {
     }
     $skippedOne = [ordered]@{
         Basket = 1; FirstQuoteSequence = 101; FirstTime = Format-UtcZ $skipOneTime
-        FirstBid = [decimal]1000.4; FirstAsk = [decimal]1000.9; Attempts = 3
+        FirstBid = [decimal]997.5; FirstAsk = [decimal]1002.7; Attempts = 3
     }
     $legOne = [ordered]@{
         Basket = 1; TradeNumber = 1; QuoteSequence = 102; Time = Format-UtcZ $entryOneTime
-        DecisionBid = [decimal]1000.0; DecisionAsk = [decimal]1000.2; Side = 'Buy'
-        PlacedLot = [decimal]0.1; FillPrice = [decimal]1000.2; Regime = 'Arithmetic'
+        DecisionBid = [decimal]1002.6; DecisionAsk = [decimal]1003.0; Side = 'Buy'
+        PlacedLot = [decimal]0.1; FillPrice = [decimal]1003.0; Regime = 'Arithmetic'
         RawRequestedLot = [decimal]0.1; ExactRequiredLot = $null; NormalizedRequiredLot = [decimal]0.1
         HardBreakevenTarget = $null; TargetSpread = $null; TargetBid = $null; TargetAsk = $null
         ExistingProfitAtTarget = $null; MarginalProfitPerLot = $null; ProjectedProfitAfter = $null
@@ -450,7 +487,7 @@ function New-SyntheticResultPackage([string]$directory) {
         LowerTarget = [decimal]1000.0; UpperTarget = [decimal]1020.0
     }
     $liquidationLegOne = [ordered]@{
-        Basket = 2; TradeNumber = 1; Side = 'Buy'; PlacedLot = [decimal]0.1; EntryPrice = [decimal]1000.2
+        Basket = 2; TradeNumber = 1; Side = 'Buy'; PlacedLot = [decimal]0.1; EntryPrice = [decimal]1014.6
         EntryTime = Format-UtcZ $entryTwoTime; Regime = 'Arithmetic'; RawRequestedLot = [decimal]0.1
         ExactRequiredLot = $null; NormalizedRequiredLot = [decimal]0.1
         LiquidationTime = Format-UtcZ $stopOutTime; TriggerTime = Format-UtcZ $stopOutTime
@@ -459,7 +496,7 @@ function New-SyntheticResultPackage([string]$directory) {
         Reason = 'MarginLevel'; Ordinal = 1
     }
     $liquidationLegTwo = [ordered]@{
-        Basket = 2; TradeNumber = 2; Side = 'Sell'; PlacedLot = [decimal]0.2; EntryPrice = [decimal]1010.4
+        Basket = 2; TradeNumber = 2; Side = 'Sell'; PlacedLot = [decimal]0.2; EntryPrice = [decimal]1005.8
         EntryTime = Format-UtcZ $entryThreeTime; Regime = 'Arithmetic'; RawRequestedLot = [decimal]0.2
         ExactRequiredLot = $null; NormalizedRequiredLot = [decimal]0.2
         LiquidationTime = Format-UtcZ $stopOutTime; TriggerTime = Format-UtcZ $stopOutTime
@@ -489,32 +526,32 @@ function New-SyntheticResultPackage([string]$directory) {
     }
     $legFourOne = [ordered]@{
         Basket = 3; TradeNumber = 1; QuoteSequence = 301; Time = Format-UtcZ $entryFourOneTime
-        DecisionBid = [decimal]1010.0; DecisionAsk = [decimal]1010.4; Side = 'Buy'
-        PlacedLot = [decimal]0.1; FillPrice = [decimal]1010.4; Regime = 'Arithmetic'
+        DecisionBid = [decimal]1013.0; DecisionAsk = [decimal]1013.4; Side = 'Buy'
+        PlacedLot = [decimal]0.1; FillPrice = [decimal]1013.4; Regime = 'Arithmetic'
         RawRequestedLot = [decimal]0.1; ExactRequiredLot = $null; NormalizedRequiredLot = [decimal]0.1
         HardBreakevenTarget = $null; TargetSpread = $null; TargetBid = $null; TargetAsk = $null
         ExistingProfitAtTarget = $null; MarginalProfitPerLot = $null; ProjectedProfitAfter = $null
     }
     $legFourTwo = [ordered]@{
         Basket = 3; TradeNumber = 2; QuoteSequence = 302; Time = Format-UtcZ $entryFourTwoTime
-        DecisionBid = [decimal]1010.0; DecisionAsk = [decimal]1010.4; Side = 'Buy'
-        PlacedLot = [decimal]0.2; FillPrice = [decimal]1010.4; Regime = 'Arithmetic'
+        DecisionBid = [decimal]1006.6; DecisionAsk = [decimal]1007.0; Side = 'Sell'
+        PlacedLot = [decimal]0.2; FillPrice = [decimal]1006.6; Regime = 'Arithmetic'
         RawRequestedLot = [decimal]0.2; ExactRequiredLot = $null; NormalizedRequiredLot = [decimal]0.2
         HardBreakevenTarget = $null; TargetSpread = $null; TargetBid = $null; TargetAsk = $null
         ExistingProfitAtTarget = $null; MarginalProfitPerLot = $null; ProjectedProfitAfter = $null
     }
     $legFourThree = [ordered]@{
         Basket = 3; TradeNumber = 3; QuoteSequence = 303; Time = Format-UtcZ $entryFourThreeTime
-        DecisionBid = [decimal]1010.0; DecisionAsk = [decimal]1010.4; Side = 'Buy'
-        PlacedLot = [decimal]0.3; FillPrice = [decimal]1010.4; Regime = 'Arithmetic'
+        DecisionBid = [decimal]1013.0; DecisionAsk = [decimal]1013.4; Side = 'Buy'
+        PlacedLot = [decimal]0.3; FillPrice = [decimal]1013.4; Regime = 'Arithmetic'
         RawRequestedLot = [decimal]0.3; ExactRequiredLot = $null; NormalizedRequiredLot = [decimal]0.3
         HardBreakevenTarget = $null; TargetSpread = $null; TargetBid = $null; TargetAsk = $null
         ExistingProfitAtTarget = $null; MarginalProfitPerLot = $null; ProjectedProfitAfter = $null
     }
     $legFourFour = [ordered]@{
         Basket = 3; TradeNumber = 4; QuoteSequence = 304; Time = Format-UtcZ $entryFourFourTime
-        DecisionBid = [decimal]1010.0; DecisionAsk = [decimal]1010.4; Side = 'Buy'
-        PlacedLot = [decimal]0.4; FillPrice = [decimal]1010.4; Regime = 'Arithmetic'
+        DecisionBid = [decimal]1006.6; DecisionAsk = [decimal]1007.0; Side = 'Sell'
+        PlacedLot = [decimal]0.4; FillPrice = [decimal]1006.6; Regime = 'Arithmetic'
         RawRequestedLot = [decimal]0.4; ExactRequiredLot = $null; NormalizedRequiredLot = [decimal]0.4
         HardBreakevenTarget = $null; TargetSpread = $null; TargetBid = $null; TargetAsk = $null
         ExistingProfitAtTarget = $null; MarginalProfitPerLot = $null; ProjectedProfitAfter = $null
@@ -548,8 +585,8 @@ function New-SyntheticResultPackage([string]$directory) {
     $basketFour = [ordered]@{
         Sequence = 3; AnchorEvent = $anchorFour; CreatedTime = Format-UtcZ $anchorFourTime; ClosedTime = Format-UtcZ $exitFourTime
         CloseQuoteSequence = 307; CloseBid = [decimal]1015.0; CloseAsk = [decimal]1015.4; Anchor = [decimal]1010.2
-        Reason = 'Escape'; Legs = 5; BuyLots = [decimal]1.5; SellLots = [decimal]0.0
-        GrossLots = [decimal]1.5; NetLots = [decimal]1.5; HardBreakevenModeActive = $true
+        Reason = 'Escape'; Legs = 5; BuyLots = [decimal]0.9; SellLots = [decimal]0.6
+        GrossLots = [decimal]1.5; NetLots = [decimal]0.3; HardBreakevenModeActive = $true
         RawProfit = [decimal]5.0; ExitProfit = [decimal]5.0; Threshold = [decimal]4.0
         BuyClosePrice = [decimal]1015.0; SellClosePrice = [decimal]1015.4; Commission = [decimal]0.0
         RealizedProfit = [decimal]5.0; LiquidatedRealizedProfit = [decimal]0.0; LiquidatedPositions = 0
@@ -645,12 +682,12 @@ function New-SyntheticResultPackage([string]$directory) {
         })
     Add-SyntheticEvent $events ([ordered]@{
             type = 'first_entry_skipped'; basket = 1; quoteSequence = 101; time = Format-UtcZ $skipOneTime
-            bid = Format-Decimal 1000.4; ask = Format-Decimal 1000.9; spread = Format-Decimal 0.5; attempts = 1
+            bid = Format-Decimal 997.5; ask = Format-Decimal 1002.7; spread = Format-Decimal 5.2; attempts = 1
         })
     Add-SyntheticEvent $events ([ordered]@{
             type = 'entry_executed'; basket = 1; tradeNumber = 1; quoteSequence = 102; time = Format-UtcZ $entryOneTime
-            decisionBid = Format-Decimal 1000.0; decisionAsk = Format-Decimal 1000.2; side = 'Buy'
-            placedLot = Format-Decimal 0.1; fillPrice = Format-Decimal 1000.2; regime = 'Arithmetic'
+            decisionBid = Format-Decimal 1002.6; decisionAsk = Format-Decimal 1003.0; side = 'Buy'
+            placedLot = Format-Decimal 0.1; fillPrice = Format-Decimal 1003.0; regime = 'Arithmetic'
             rawRequestedLot = Format-Decimal 0.1; exactRequiredLot = $null; normalizedRequiredLot = Format-Decimal 0.1
             hardBreakevenTarget = $null; targetSpread = $null; targetBid = $null; targetAsk = $null
             existingProfitAtTarget = $null; marginalProfitPerLot = $null; projectedProfitAfter = $null
@@ -689,8 +726,8 @@ function New-SyntheticResultPackage([string]$directory) {
         })
     Add-SyntheticEvent $events ([ordered]@{
             type = 'entry_executed'; basket = 2; tradeNumber = 1; quoteSequence = 201; time = Format-UtcZ $entryTwoTime
-            decisionBid = Format-Decimal 1000.0; decisionAsk = Format-Decimal 1000.2; side = 'Buy'
-            placedLot = Format-Decimal 0.1; fillPrice = Format-Decimal 1000.2; regime = 'Arithmetic'
+            decisionBid = Format-Decimal 1014.2; decisionAsk = Format-Decimal 1014.6; side = 'Buy'
+            placedLot = Format-Decimal 0.1; fillPrice = Format-Decimal 1014.6; regime = 'Arithmetic'
             rawRequestedLot = Format-Decimal 0.1; exactRequiredLot = $null; normalizedRequiredLot = Format-Decimal 0.1
             hardBreakevenTarget = $null; targetSpread = $null; targetBid = $null; targetAsk = $null
             existingProfitAtTarget = $null; marginalProfitPerLot = $null; projectedProfitAfter = $null
@@ -698,8 +735,8 @@ function New-SyntheticResultPackage([string]$directory) {
         })
     Add-SyntheticEvent $events ([ordered]@{
             type = 'entry_executed'; basket = 2; tradeNumber = 2; quoteSequence = 202; time = Format-UtcZ $entryThreeTime
-            decisionBid = Format-Decimal 1010.2; decisionAsk = Format-Decimal 1010.4; side = 'Sell'
-            placedLot = Format-Decimal 0.2; fillPrice = Format-Decimal 1010.4; regime = 'Arithmetic'
+            decisionBid = Format-Decimal 1005.8; decisionAsk = Format-Decimal 1006.2; side = 'Sell'
+            placedLot = Format-Decimal 0.2; fillPrice = Format-Decimal 1005.8; regime = 'Arithmetic'
             rawRequestedLot = Format-Decimal 0.2; exactRequiredLot = $null; normalizedRequiredLot = Format-Decimal 0.2
             hardBreakevenTarget = $null; targetSpread = $null; targetBid = $null; targetAsk = $null
             existingProfitAtTarget = $null; marginalProfitPerLot = $null; projectedProfitAfter = $null
@@ -722,7 +759,7 @@ function New-SyntheticResultPackage([string]$directory) {
         })
     Add-SyntheticEvent $events ([ordered]@{
             type = 'forced_liquidation'; time = Format-UtcZ $stopOutTime; basket = 2; ordinal = 1; tradeNumber = 1
-            side = 'Buy'; placedLot = Format-Decimal 0.1; entryPrice = Format-Decimal 1000.2
+            side = 'Buy'; placedLot = Format-Decimal 0.1; entryPrice = Format-Decimal 1014.6
             entryTime = Format-UtcZ $entryTwoTime; regime = 'Arithmetic'; rawRequestedLot = Format-Decimal 0.1
             exactRequiredLot = $null; normalizedRequiredLot = Format-Decimal 0.1; liquidationTime = Format-UtcZ $stopOutTime
             triggerTime = Format-UtcZ $stopOutTime; triggerQuoteSequence = 211; triggerBid = Format-Decimal 990.0
@@ -739,7 +776,7 @@ function New-SyntheticResultPackage([string]$directory) {
         })
     Add-SyntheticEvent $events ([ordered]@{
             type = 'forced_liquidation'; time = Format-UtcZ $stopOutTime; basket = 2; ordinal = 2; tradeNumber = 2
-            side = 'Sell'; placedLot = Format-Decimal 0.2; entryPrice = Format-Decimal 1010.4
+            side = 'Sell'; placedLot = Format-Decimal 0.2; entryPrice = Format-Decimal 1005.8
             entryTime = Format-UtcZ $entryThreeTime; regime = 'Arithmetic'; rawRequestedLot = Format-Decimal 0.2
             exactRequiredLot = $null; normalizedRequiredLot = Format-Decimal 0.2; liquidationTime = Format-UtcZ $stopOutTime
             triggerTime = Format-UtcZ $stopOutTime; triggerQuoteSequence = 211; triggerBid = Format-Decimal 990.0
@@ -755,6 +792,13 @@ function New-SyntheticResultPackage([string]$directory) {
             afterOpenPositions = $afterTwo.OpenPositions
         })
     Add-SyntheticEvent $events ([ordered]@{
+            type = 'margin_call_left'; quoteSequence = 211; time = Format-UtcZ $stopOutTime
+            bid = Format-Decimal 990.0; ask = Format-Decimal 990.4
+            balance = Format-Decimal 10003.48; equity = Format-Decimal 10003.48
+            usedMargin = Format-Decimal 0.0; freeMargin = Format-Decimal 10003.48
+            marginLevelPercent = $null; openPositions = 0
+        })
+    Add-SyntheticEvent $events ([ordered]@{
             type = 'basket_liquidated'; basket = 2; reason = 'BrokerLiquidation'; quoteSequence = 211
             time = Format-UtcZ $stopOutTime; bid = Format-Decimal 990.0; ask = Format-Decimal 990.4
             anchor = Format-Decimal 1010.2; legs = 0; buyLots = Format-Decimal 0.0; sellLots = Format-Decimal 0.0
@@ -765,28 +809,21 @@ function New-SyntheticResultPackage([string]$directory) {
             liquidatedPositions = 2; historicalEntries = 2
         })
     Add-SyntheticEvent $events ([ordered]@{
-            type = 'margin_call_left'; quoteSequence = 212; time = Format-UtcZ $marginLeaveTime
-            bid = Format-Decimal 990.0; ask = Format-Decimal 990.4
-            balance = Format-Decimal 10003.48; equity = Format-Decimal 10003.48
-            usedMargin = Format-Decimal 0.0; freeMargin = Format-Decimal 10003.48
-            marginLevelPercent = $null; openPositions = 0
-        })
-    Add-SyntheticEvent $events ([ordered]@{
             type = 'basket_anchored'; basket = 3; quoteSequence = 300; time = Format-UtcZ $anchorFourTime
             bid = Format-Decimal 1010.0; ask = Format-Decimal 1010.4; anchor = Format-Decimal 1010.2
             step = Format-Decimal 2.5; upper = Format-Decimal 1012.6; lower = Format-Decimal 1007.6
             lowerTarget = Format-Decimal 1000.0; upperTarget = Format-Decimal 1020.0
         })
     foreach ($leg in @(
-            [ordered]@{ tradeNumber = 1; quoteSequence = 301; time = $entryFourOneTime; placedLot = '0.1' },
-            [ordered]@{ tradeNumber = 2; quoteSequence = 302; time = $entryFourTwoTime; placedLot = '0.2' },
-            [ordered]@{ tradeNumber = 3; quoteSequence = 303; time = $entryFourThreeTime; placedLot = '0.3' },
-            [ordered]@{ tradeNumber = 4; quoteSequence = 304; time = $entryFourFourTime; placedLot = '0.4' })) {
+            [ordered]@{ tradeNumber = 1; quoteSequence = 301; time = $entryFourOneTime; placedLot = '0.1'; side = 'Buy'; decisionBid = '1013.0'; decisionAsk = '1013.4' },
+            [ordered]@{ tradeNumber = 2; quoteSequence = 302; time = $entryFourTwoTime; placedLot = '0.2'; side = 'Sell'; decisionBid = '1006.6'; decisionAsk = '1007.0' },
+            [ordered]@{ tradeNumber = 3; quoteSequence = 303; time = $entryFourThreeTime; placedLot = '0.3'; side = 'Buy'; decisionBid = '1013.0'; decisionAsk = '1013.4' },
+            [ordered]@{ tradeNumber = 4; quoteSequence = 304; time = $entryFourFourTime; placedLot = '0.4'; side = 'Sell'; decisionBid = '1006.6'; decisionAsk = '1007.0' })) {
         Add-SyntheticEvent $events ([ordered]@{
                 type = 'entry_executed'; basket = 3; tradeNumber = $leg.tradeNumber; quoteSequence = $leg.quoteSequence
                 time = Format-UtcZ $leg.time
-                decisionBid = Format-Decimal 1010.0; decisionAsk = Format-Decimal 1010.4; side = 'Buy'
-                placedLot = $leg.placedLot; fillPrice = Format-Decimal 1010.4; regime = 'Arithmetic'
+                decisionBid = Format-Decimal $leg.decisionBid; decisionAsk = Format-Decimal $leg.decisionAsk; side = $leg.side
+                placedLot = $leg.placedLot; fillPrice = $(if ($leg.side -eq 'Buy') { Format-Decimal $leg.decisionAsk } else { Format-Decimal $leg.decisionBid }); regime = 'Arithmetic'
                 rawRequestedLot = $leg.placedLot; exactRequiredLot = $null; normalizedRequiredLot = $leg.placedLot
                 hardBreakevenTarget = $null; targetSpread = $null; targetBid = $null; targetAsk = $null
                 existingProfitAtTarget = $null; marginalProfitPerLot = $null; projectedProfitAfter = $null
@@ -823,8 +860,8 @@ function New-SyntheticResultPackage([string]$directory) {
     Add-SyntheticEvent $events ([ordered]@{
             type = 'strategy_exit'; basket = 3; reason = 'Escape'; quoteSequence = 307; time = Format-UtcZ $exitFourTime
             bid = Format-Decimal 1015.0; ask = Format-Decimal 1015.4; anchor = Format-Decimal 1010.2; legs = 5
-            buyLots = Format-Decimal 1.5; sellLots = Format-Decimal 0.0; grossLots = Format-Decimal 1.5
-            netLots = Format-Decimal 1.5; hardBreakevenModeActive = $true; rawProfit = Format-Decimal 5.0
+            buyLots = Format-Decimal 0.9; sellLots = Format-Decimal 0.6; grossLots = Format-Decimal 1.5
+            netLots = Format-Decimal 0.3; hardBreakevenModeActive = $true; rawProfit = Format-Decimal 5.0
             exitProfit = Format-Decimal 5.0; threshold = Format-Decimal 4.0; buyClosePrice = Format-Decimal 1015.0
             sellClosePrice = Format-Decimal 1015.4; commission = Format-Decimal 0.0; realizedProfit = Format-Decimal 5.0
             liquidatedRealizedProfit = Format-Decimal 0.0; liquidatedPositions = 0; historicalEntries = 5
@@ -883,15 +920,15 @@ function New-SyntheticResultPackage([string]$directory) {
     Add-SyntheticTelemetry $telemetry 'event' $events[12]['id'] $stopOutTime 211 9999.48 9990.5 -8.98 $true 2.98 100.0 9890.5 9990.5 $false 1 0.2 0.2
     Add-SyntheticTelemetry $telemetry 'event' $events[13]['id'] $stopOutTime 211 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[14]['id'] $stopOutTime 211 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[15]['id'] $marginLeaveTime 212 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
+    Add-SyntheticTelemetry $telemetry 'event' $events[15]['id'] $stopOutTime 211 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[16]['id'] $anchorFourTime 300 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[17]['id'] $entryFourOneTime 301 10003.48 10003.38 -0.1 $true 3.48 100.0 9903.38 10003.38 $false 1 0.1 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[18]['id'] $entryFourTwoTime 302 10003.48 10003.33 -0.15 $true 3.48 150.0 9853.33 10003.33 $false 2 0.3 0.3
-    Add-SyntheticTelemetry $telemetry 'event' $events[19]['id'] $entryFourThreeTime 303 10003.48 10003.28 -0.2 $true 3.48 200.0 9803.28 10003.28 $false 3 0.6 0.6
-    Add-SyntheticTelemetry $telemetry 'event' $events[20]['id'] $entryFourFourTime 304 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 1.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[21]['id'] $activationFourTime 305 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 1.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[22]['id'] $activationFourTime 305 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 1.0
-    Add-SyntheticTelemetry $telemetry 'event' $events[23]['id'] $entryFourFiveTime 306 10003.48 10003.18 -0.3 $true 3.48 300.0 9703.18 10003.18 $false 5 1.5 1.5
+    Add-SyntheticTelemetry $telemetry 'event' $events[18]['id'] $entryFourTwoTime 302 10003.48 10003.33 -0.15 $true 3.48 150.0 9853.33 10003.33 $false 2 0.3 0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[19]['id'] $entryFourThreeTime 303 10003.48 10003.28 -0.2 $true 3.48 200.0 9803.28 10003.28 $false 3 0.6 0.2
+    Add-SyntheticTelemetry $telemetry 'event' $events[20]['id'] $entryFourFourTime 304 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 0.2
+    Add-SyntheticTelemetry $telemetry 'event' $events[21]['id'] $activationFourTime 305 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 0.2
+    Add-SyntheticTelemetry $telemetry 'event' $events[22]['id'] $activationFourTime 305 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 0.2
+    Add-SyntheticTelemetry $telemetry 'event' $events[23]['id'] $entryFourFiveTime 306 10003.48 10003.18 -0.3 $true 3.48 300.0 9703.18 10003.18 $false 5 1.5 0.3
     Add-SyntheticTelemetry $telemetry 'event' $events[24]['id'] $exitFourTime 307 10008.48 10008.48 0.0 $true 8.48 0.0 10008.48 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[27]['id'] $runEndTime $quoteTicksProcessed 10008.48 10008.48 0.0 $true 8.48 0.0 10008.48 $null $false 0 0.0 0.0
     # ---- Write payload files ----
@@ -1032,11 +1069,32 @@ function New-FailedResultFixture([string]$directory, [string]$mode) {
 # Turns a copy of the synthetic base package into a valid NegativeEquity Stop Out run: no Margin
 # Call is defined (used margin 0, null margin level), equity is negative and two positions are
 # liquidated. The verifier must accept it (only the MarginLevel branch requires Margin Call).
+# Turns a copy of the synthetic base package into a valid NegativeEquity Stop Out run: no Margin
+# Call is defined (the defined margin level does not exist for the negative-equity branch), equity
+# is negative, the used margin follows the frozen uncovered-volume model and the balance moves by
+# exactly the recorded forced-liquidation realized results.
 function New-NegativeEquityStopOutFixture([string]$directory) {
     Remove-EventsByType $directory @('margin_call_entered', 'margin_call_left')
-    $neBefore = @{ balance = '100.0'; floatingProfit = '-150.0'; equity = '-50.0'; usedMargin = '0.0'; freeMargin = '-50.0'; marginLevelPercent = $null; openPositions = 2 }
-    $neAfterOne = @{ balance = '-50.0'; floatingProfit = '-80.0'; equity = '-130.0'; usedMargin = '0.0'; freeMargin = '-130.0'; marginLevelPercent = $null; openPositions = 1 }
-    $neAfterTwo = @{ balance = '-150.0'; floatingProfit = '0.0'; equity = '-150.0'; usedMargin = '0.0'; freeMargin = '-150.0'; marginLevelPercent = $null; openPositions = 0 }
+
+    # Frozen used margin: uncovered lots * contract size * weighted average entry price / leverage.
+    $neUsedBefore = [decimal]0.1 * [decimal]100.0 * [decimal]1005.8 / [decimal]500.0
+    $neUsedAfterOne = [decimal]0.2 * [decimal]100.0 * [decimal]1005.8 / [decimal]500.0
+    $neEquityBefore = [decimal]-50.0
+    $neEquityAfterOne = [decimal]-130.0
+    $neBefore = @{
+        balance = '100.0'; floatingProfit = '-150.0'; equity = (Format-Decimal $neEquityBefore)
+        usedMargin = (Format-Decimal $neUsedBefore); freeMargin = (Format-Decimal ($neEquityBefore - $neUsedBefore))
+        marginLevelPercent = (Format-Decimal ($neEquityBefore / $neUsedBefore * 100)); openPositions = 2
+    }
+    $neAfterOne = @{
+        balance = '-50.0'; floatingProfit = '-80.0'; equity = (Format-Decimal $neEquityAfterOne)
+        usedMargin = (Format-Decimal $neUsedAfterOne); freeMargin = (Format-Decimal ($neEquityAfterOne - $neUsedAfterOne))
+        marginLevelPercent = (Format-Decimal ($neEquityAfterOne / $neUsedAfterOne * 100)); openPositions = 1
+    }
+    $neAfterTwo = @{
+        balance = '-150.0'; floatingProfit = '0.0'; equity = '-150.0'
+        usedMargin = '0.0'; freeMargin = '-150.0'; marginLevelPercent = $null; openPositions = 0
+    }
 
     $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
     $events = Read-JsonLinesArray $eventsPath
@@ -1051,11 +1109,13 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
             if ([long]$row.ordinal -eq 1) {
                 foreach ($key in $neBefore.Keys) { $row.('before' + $key.Substring(0, 1).ToUpper() + $key.Substring(1)) = $neBefore[$key] }
                 foreach ($key in $neAfterOne.Keys) { $row.('after' + $key.Substring(0, 1).ToUpper() + $key.Substring(1)) = $neAfterOne[$key] }
+                $row.realizedProfit = '-150.0'
                 $row.reason = 'NegativeEquity'
             }
             else {
                 foreach ($key in $neAfterOne.Keys) { $row.('before' + $key.Substring(0, 1).ToUpper() + $key.Substring(1)) = $neAfterOne[$key] }
                 foreach ($key in $neAfterTwo.Keys) { $row.('after' + $key.Substring(0, 1).ToUpper() + $key.Substring(1)) = $neAfterTwo[$key] }
+                $row.realizedProfit = '-100.0'
                 $row.reason = 'NegativeEquity'
             }
         }
@@ -1063,19 +1123,6 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
     }
     Write-JsonLinesFile $eventsPath $events
 
-    $telemetryPath = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
-    $telemetry = Read-JsonLinesArray $telemetryPath
-    $liquidationIndex = 0
-    foreach ($row in $telemetry) {
-        if ([string]$row.kind -ne 'event') { continue }
-        if ([long]$row.eventId -eq $stopOutId) {
-            $row.balance = $neBefore.balance; $row.floatingProfit = $neBefore.floatingProfit; $row.equity = $neBefore.equity
-            $row.usedMargin = $neBefore.usedMargin; $row.freeMargin = $neBefore.freeMargin; $row.marginLevelPercent = $neBefore.marginLevelPercent
-        }
-    }
-    Write-JsonLinesFile $telemetryPath $telemetry
-
-    # Telemetry liquidation/run-end rows: locate by the current event ids after the removal.
     $events = Read-JsonLinesArray $eventsPath
     $liquidationIds = New-Object System.Collections.Generic.List[long]
     $runEndedId = $null
@@ -1083,23 +1130,24 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
         if ([string]$row.type -eq 'forced_liquidation') { [void]$liquidationIds.Add([long]$row.id) }
         if ([string]$row.type -eq 'run_ended') { $runEndedId = [long]$row.id }
     }
+    $telemetryPath = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
     $telemetry = Read-JsonLinesArray $telemetryPath
     foreach ($row in $telemetry) {
         if ([string]$row.kind -ne 'event') { continue }
-        if ($liquidationIds.Count -ge 1 -and [long]$row.eventId -eq $liquidationIds[0]) {
-            $row.balance = $neAfterOne.balance; $row.floatingProfit = $neAfterOne.floatingProfit; $row.equity = $neAfterOne.equity
-            $row.usedMargin = $neAfterOne.usedMargin; $row.freeMargin = $neAfterOne.freeMargin; $row.marginLevelPercent = $neAfterOne.marginLevelPercent
-            $row.openPositions = 1; $row.grossLots = '0.2'; $row.absoluteNetLots = '0.2'
+        if ([long]$row.eventId -eq $stopOutId) {
+            foreach ($key in $neBefore.Keys) { $row.$key = $neBefore[$key] }
+        }
+        elseif ($liquidationIds.Count -ge 1 -and [long]$row.eventId -eq $liquidationIds[0]) {
+            foreach ($key in $neAfterOne.Keys) { $row.$key = $neAfterOne[$key] }
+            $row.grossLots = '0.2'; $row.absoluteNetLots = '0.2'
         }
         elseif ($liquidationIds.Count -ge 2 -and [long]$row.eventId -eq $liquidationIds[1]) {
-            $row.balance = $neAfterTwo.balance; $row.floatingProfit = $neAfterTwo.floatingProfit; $row.equity = $neAfterTwo.equity
-            $row.usedMargin = $neAfterTwo.usedMargin; $row.freeMargin = $neAfterTwo.freeMargin; $row.marginLevelPercent = $neAfterTwo.marginLevelPercent
-            $row.openPositions = 0; $row.grossLots = '0.0'; $row.absoluteNetLots = '0.0'
+            foreach ($key in $neAfterTwo.Keys) { $row.$key = $neAfterTwo[$key] }
+            $row.grossLots = '0.0'; $row.absoluteNetLots = '0.0'
         }
         elseif ($null -ne $runEndedId -and [long]$row.eventId -eq $runEndedId) {
-            $row.balance = $neAfterTwo.balance; $row.floatingProfit = $neAfterTwo.floatingProfit; $row.equity = $neAfterTwo.equity
+            foreach ($key in $neAfterTwo.Keys) { $row.$key = $neAfterTwo[$key] }
             $row.realizedProfit = '-10150.00'
-            $row.usedMargin = $neAfterTwo.usedMargin; $row.freeMargin = $neAfterTwo.freeMargin; $row.marginLevelPercent = $neAfterTwo.marginLevelPercent
         }
     }
     Write-JsonLinesFile $telemetryPath $telemetry
@@ -1120,16 +1168,18 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
     $episode.Liquidations[0].Before.Balance = [decimal]100.0
     $episode.Liquidations[0].Before.FloatingProfit = [decimal]-150.0
     $episode.Liquidations[0].Before.Equity = [decimal]-50.0
-    $episode.Liquidations[0].Before.UsedMargin = [decimal]0.0
-    $episode.Liquidations[0].Before.FreeMargin = [decimal]-50.0
-    $episode.Liquidations[0].Before.MarginLevelPercent = $null
+    $episode.Liquidations[0].Before.UsedMargin = $neUsedBefore
+    $episode.Liquidations[0].Before.FreeMargin = $neEquityBefore - $neUsedBefore
+    $episode.Liquidations[0].Before.MarginLevelPercent = $neEquityBefore / $neUsedBefore * 100
+    $episode.Liquidations[0].Leg.RealizedProfit = [decimal]-150.0
     $episode.Liquidations[0].After.Balance = [decimal]-50.0
     $episode.Liquidations[0].After.FloatingProfit = [decimal]-80.0
     $episode.Liquidations[0].After.Equity = [decimal]-130.0
-    $episode.Liquidations[0].After.UsedMargin = [decimal]0.0
-    $episode.Liquidations[0].After.FreeMargin = [decimal]-130.0
-    $episode.Liquidations[0].After.MarginLevelPercent = $null
+    $episode.Liquidations[0].After.UsedMargin = $neUsedAfterOne
+    $episode.Liquidations[0].After.FreeMargin = $neEquityAfterOne - $neUsedAfterOne
+    $episode.Liquidations[0].After.MarginLevelPercent = $neEquityAfterOne / $neUsedAfterOne * 100
     $episode.Liquidations[1].Before = $episode.Liquidations[0].After
+    $episode.Liquidations[1].Leg.RealizedProfit = [decimal]-100.0
     $episode.Liquidations[1].After.Balance = [decimal]-150.0
     $episode.Liquidations[1].After.FloatingProfit = [decimal]0.0
     $episode.Liquidations[1].After.Equity = [decimal]-150.0
@@ -1159,49 +1209,92 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
 
 # Turns a copy of the synthetic base package into a valid terminal hard-BE violation run: one
 # hard_breakeven_violated event at the faulting quote and the documented failure identity.
+# Turns a copy of the synthetic base package into a terminal hard-BE violation run that matches the
+# real engine: the tail order filled and entered the basket ledger, then the engine threw before
+# EntriesOpened/EntryOpened and before any strategy continuation. The faulting leg is therefore in
+# the final open basket state without a normal entry_executed event, and no later close occurs.
 function New-HardBreakevenViolationFixture([string]$directory) {
     $failureTime = '2019-01-02T02:12:00.000Z'
-    $resultsPath = Join-Path $directory 'storage\single-anchor\results.json'
-    $results = Read-JsonFile $resultsPath
-    $results.completed = $false
-    $results.failure = [ordered]@{
-        Kind = 'StrategyInvariant'; Condition = 'HardBreakevenViolatedByFill'
-        Message = 'Synthetic hard-BE violation.'
-        Quote = [ordered]@{
-            Time = $failureTime; Bid = [decimal]1013.0; Ask = [decimal]1013.4
-            Mid = [decimal]1013.2; Spread = [decimal]0.4; IsValid = $false
-        }
+    Remove-EventsByFilter $directory {
+        param($row)
+        $type = [string]$row.type
+        if ($type -eq 'strategy_exit' -and [long]$row.basket -eq 3) { return $true }
+        if ($type -eq 'entry_executed' -and [long]$row.basket -eq 3 -and [long]$row.tradeNumber -eq 5) { return $true }
+        return $false
     }
-    $results | Add-Member -NotePropertyName 'hardBreakevenVerification' -NotePropertyValue ([pscustomobject][ordered]@{
-            StrategyDefinitionResolved = $true; HardBEVerifiedUnderConfiguredExecutionModel = $false
-            Scope = 'synthetic'; Assumptions = @(); NotCovered = @()
-        }) -Force
-    Write-JsonFile $resultsPath $results
-
     $eventsPath = Get-ArtifactPath $directory 'events.jsonl'
     $events = Read-JsonLinesArray $eventsPath
-    $exitIndex = -1
-    $entryId = $null
+    $rejectionIndex = -1
+    $activationId = $null
     for ($i = 0; $i -lt $events.Count; $i++) {
-        if ([string]$events[$i].type -eq 'strategy_exit' -and [long]$events[$i].basket -eq 3) { $exitIndex = $i }
-        if ([string]$events[$i].type -eq 'entry_executed' -and [long]$events[$i].basket -eq 3 -and [long]$events[$i].tradeNumber -eq 5) { $entryId = [long]$events[$i].id }
+        if ([string]$events[$i].type -eq 'entry_rejected' -and [long]$events[$i].basket -eq 3) { $rejectionIndex = $i }
+        if ([string]$events[$i].type -eq 'hard_breakeven_activated') { $activationId = [long]$events[$i].id }
     }
-    if ($exitIndex -lt 0 -or $null -eq $entryId) { throw 'the hard-BE entry or close event is missing' }
+    if ($rejectionIndex -lt 0 -or $null -eq $activationId) { throw 'the rejected tail attempt or activation is missing' }
     $telemetry = Read-JsonLinesArray (Get-ArtifactPath $directory 'telemetry-2019.jsonl')
     $snapshotBase = $null
     foreach ($row in $telemetry) {
-        if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $entryId) { $snapshotBase = $row }
+        if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $activationId) { $snapshotBase = $row }
     }
-    if ($null -eq $snapshotBase) { throw 'the hard-BE entry snapshot is missing' }
+    if ($null -eq $snapshotBase) { throw 'the activation snapshot is missing' }
     $payload = [ordered]@{
         type = 'hard_breakeven_violated'; basket = 3; tradeNumber = 5; side = 'Buy'; quoteSequence = 306
         time = $failureTime; bid = '1013.0'; ask = '1013.4'; placedLot = '0.5'; fillPrice = '1013.4'
         hardBreakevenTarget = '1000.0'; projectedProfitAfterFill = '-0.5'; sizingProjectedProfitAfter = '15.0'
         message = 'Synthetic hard-BE violation.'
     }
-    Insert-EventAndSnapshot $directory $exitIndex $payload $snapshotBase @{
-        time = $failureTime; quoteSequence = 306; openPositions = 5; grossLots = '1.5'; absoluteNetLots = '1.5'
+    # The faulting fill leaves five positions (gross 1.5, absolute net 0.3 under alternation).
+    Insert-EventAndSnapshot $directory ($rejectionIndex + 1) $payload $snapshotBase @{
+        time = $failureTime; quoteSequence = 306; openPositions = 5; grossLots = '1.5'; absoluteNetLots = '0.3'
     }
+
+    $resultsPath = Join-Path $directory 'storage\single-anchor\results.json'
+    $results = Read-JsonFile $resultsPath
+    $results.completed = $false
+    $results.failure = [pscustomobject][ordered]@{
+        Kind = 'StrategyInvariant'; Condition = 'HardBreakevenViolatedByFill'
+        Message = 'Synthetic hard-BE violation.'
+        Quote = [ordered]@{
+            Time = $failureTime; Bid = [decimal]1013.0; Ask = [decimal]1013.4
+            Mid = [decimal]1013.2; Spread = [decimal]0.4; IsValid = $true
+        }
+    }
+    $results | Add-Member -NotePropertyName 'hardBreakevenVerification' -NotePropertyValue ([pscustomobject][ordered]@{
+            StrategyDefinitionResolved = $true; HardBEVerifiedUnderConfiguredExecutionModel = $false
+            Scope = 'synthetic'; Assumptions = @(); NotCovered = @()
+        }) -Force
+    $basketThreeRecord = @($results.closedBaskets | Where-Object { [long]$_.Sequence -eq 3 })[0]
+    $results.closedBaskets = @($results.closedBaskets | Where-Object { [long]$_.Sequence -ne 3 })
+    $results | Add-Member -NotePropertyName 'openBasket' -NotePropertyValue ([pscustomobject][ordered]@{
+            Sequence = 3; AnchorEvent = $basketThreeRecord.AnchorEvent; CreatedTime = $basketThreeRecord.CreatedTime
+            Anchor = $basketThreeRecord.Anchor; Step = [decimal]2.5; Upper = [decimal]1012.6; Lower = [decimal]1007.6
+            LowerTarget = [decimal]1000.0; UpperTarget = [decimal]1020.0
+            HardBreakevenModeActive = $true; TrailingActive = $false
+            LegTrace = $basketThreeRecord.LegTrace; LiquidationTrace = @()
+            RejectionTrace = $basketThreeRecord.RejectionTrace
+            OpenPositions = 5; GrossLots = [decimal]1.5; NetLots = [decimal]0.3; AbsoluteNetLots = [decimal]0.3
+            BuyLots = [decimal]0.9; SellLots = [decimal]0.6; HistoricalEntries = 5
+        }) -Force
+    $results.legsOpened = 7
+    $results.basketsClosed = 1
+    $results.quoteTicksProcessed = 306
+    $results.realizedProfit = [decimal]3.48
+    $results.lastProcessedQuote = [pscustomobject][ordered]@{
+        Time = $failureTime; Bid = [decimal]1013.0; Ask = [decimal]1013.4
+        Mid = [decimal]1013.2; Spread = [decimal]0.4; IsValid = $true
+    }
+    $results.researchAccount.Balance = [decimal]10003.48
+    $results.researchAccount.Equity = [decimal]10003.18
+    $results.researchAccount.FloatingProfit = [decimal]-0.3
+    $results.researchAccount.RealizedProfit = [decimal]3.48
+    $results.researchAccount.CurrentOpenPositions = 5
+    $results.researchAccount.CurrentGrossLots = [decimal]1.5
+    $results.researchAccount.CurrentAbsoluteNetLots = [decimal]0.3
+    $results.researchMargin.CurrentUsedMargin = [decimal]300.0
+    $results.researchMargin.CurrentFreeMargin = [decimal]9703.18
+    $results.researchMargin.CurrentMarginLevelPercent = [decimal]10003.18 / [decimal]300.0 * 100
+    $results.researchMargin.MarginCallActive = $false
+    Write-JsonFile $resultsPath $results
 
     $events = Read-JsonLinesArray $eventsPath
     foreach ($row in $events) {
@@ -1213,19 +1306,42 @@ function New-HardBreakevenViolationFixture([string]$directory) {
             $row.failureQuoteTime = $failureTime
             $row.failureBid = '1013.0'
             $row.failureAsk = '1013.4'
+            $row.time = $failureTime
+            $row.quoteTicksProcessed = 306
+            $row.legsOpened = 7
+            $row.basketsClosed = 1
+            $row.engineRealizedProfit = '3.48'
         }
     }
     Write-JsonLinesFile $eventsPath $events
+
+    $telemetryPath = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+    $telemetry = Read-JsonLinesArray $telemetryPath
+    $runEndedId = $null
+    foreach ($row in $events) { if ([string]$row.type -eq 'run_ended') { $runEndedId = [long]$row.id } }
+    foreach ($row in $telemetry) {
+        if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $runEndedId) {
+            $row.time = $failureTime; $row.quoteSequence = 306
+            $row.balance = '10003.48'; $row.equity = '10003.18'; $row.floatingProfit = '-0.3'
+            $row.realizedProfit = '3.48'; $row.usedMargin = '300.0'; $row.freeMargin = '9703.18'
+            $row.marginLevelPercent = (Format-Decimal ([decimal]10003.18 / [decimal]300.0 * 100))
+            $row.marginCallActive = $false; $row.openPositions = 5; $row.grossLots = '1.5'; $row.absoluteNetLots = '0.3'
+        }
+    }
+    Write-JsonLinesFile $telemetryPath $telemetry
 
     $manifestPath = Get-ArtifactPath $directory 'manifest.json'
     $manifest = Read-JsonFile $manifestPath
     $manifest.outcome.completed = $false
     $manifest.outcome.failureKind = 'StrategyInvariant'
     $manifest.outcome.failureCondition = 'HardBreakevenViolatedByFill'
+    $manifest.counters.quoteTicksProcessed = 306
+    $manifest.counters.legsOpened = 7
+    $manifest.counters.basketsClosed = 1
+    $manifest.counters.engineRealizedProfit = '3.48'
     Write-JsonFile $manifestPath $manifest
     Repair-PackageIntegrity $directory @('events.jsonl', 'telemetry-2019.jsonl')
 }
-
 function Add-SyntheticEvent([System.Collections.Generic.List[object]]$list, [System.Collections.IDictionary]$body) {
     $event = [ordered]@{}
     foreach ($key in $body.Keys) { $event[$key] = $body[$key] }

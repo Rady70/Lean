@@ -2102,11 +2102,13 @@ review. Phase F-I have not started.**
   `candles` subcommand with its fail-closed qualification preflight,
   `verify-candles` and `verify-candle-composition`).
   `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 52 verifier mutation
-  cases over a synthetic package that is itself a possible engine run
+  cases over a contract-consistent synthetic verifier fixture
   (sequential baskets, monotone quote sequences, a legal 20% MarginLevel Stop
   Out with an active Margin Call, a valid skipped-first-entry trace, the
   hard-BE reject-then-later-fill basket, a trailing activation and two
-  rejection episodes): changed trade number/fill price, entry snapshot
+  rejection episodes; its ledger, parity and account identities follow the
+  producer's contracts and its quotes are constructed for the exercised rules,
+  so it is not a full strategy replay): changed trade number/fill price, entry snapshot
   quote/inventory and hard-BE sizingOutcome, forced-liquidation
   ordinal/price/commission and snapshot/post-close state, Stop Out time and an
   impossible MarginLevel state, backward event+snapshot quote sequences,

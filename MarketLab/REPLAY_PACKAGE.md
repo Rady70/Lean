@@ -203,11 +203,13 @@ time is checked against the documented
 `max(lastProcessedQuote, failureQuote)` rule.
 
 `tests\Test-SingleAnchorReplayPackageVerifier.ps1` drives 52 mutation cases over
-a synthetic package that is itself a possible SingleAnchor run (strictly
-sequential baskets, monotone quote sequences, a legal 20% MarginLevel Stop Out
-with an active Margin Call, a valid skipped-first-entry trace, the hard-BE
+a contract-consistent synthetic verifier fixture (strictly sequential baskets,
+monotone quote sequences, a legal 20% MarginLevel Stop Out with an active
+Margin Call, a valid skipped-first-entry trace, the hard-BE
 reject-then-later-fill sequence, a trailing activation, two rejection
-episodes): changed trade number, fill price, entry snapshot quote/inventory,
+episodes; its ledger, parity and account identities follow the producer's
+contracts and its quotes are constructed for the exercised rules, so it is not
+a full strategy replay or proof that every producer execution is accepted): changed trade number, fill price, entry snapshot quote/inventory,
 forced-liquidation ordinal/price/commission and snapshot time/trigger
 quote/post-close account, Stop Out time and an impossible MarginLevel state,
 same-quote reorder, backward event+snapshot quote sequences, run-start time,
@@ -224,7 +226,10 @@ forced-liquidation/close payloads and manifest parameters; each must be
 rejected. It also verifies **four positive fixtures**: a forward-time fault
 whose quote is later than the last accepted quote, an out-of-order fault whose
 quote precedes it, a NegativeEquity Stop Out with no active Margin Call, and a
-terminal hard-BE violation with its one diagnostic event; it rejects a tampered
+terminal hard-BE violation with exactly one diagnostic event whose faulting leg
+stays in the final open basket ledger without a normal `entry_executed` event
+and without any later strategy continuation (the verifier exempts only that
+leg); it rejects a tampered
 failure identity, a run-end time that ignores the `max` rule, a numeric
 `failureBid`, a missing violation event behind the failure and a duplicate
 violation event. The verifier writes

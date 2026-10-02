@@ -208,11 +208,16 @@ package build instead of aborting the strategy run.
   level at or below `StopOutLevelPercent`, open positions and an active Margin
   Call; `NegativeEquity` requires `equity < 0` with open positions and no
   defined-level/Margin Call requirement, mirroring `EvaluateSurvival` exactly.
-- **Valid synthetic base package.** The fixture is now a possible SingleAnchor
-  run: strictly sequential baskets, monotonically non-decreasing live and
-  telemetry quote sequences, a legal 20% MarginLevel Stop Out with an active
-  Margin Call, coherent account identities, and a skipped-first-entry trace
-  with `Attempts = 3` beside the single emission (`attempts = 1`) event.
+- **Contract-consistent synthetic fixture.** The base fixture has strictly
+  sequential baskets (one active basket at a time), monotonically non-decreasing
+  live and telemetry quote sequences, a legal 20% MarginLevel Stop Out with an
+  active Margin Call, coherent account identities, alternating entry sides with
+  boundary-triggering quotes, an ambiguous skipped-first-entry quote, the
+  producer's `forced_liquidation -> margin_call_left -> basket_liquidated`
+  ordering, and a skipped-first-entry trace with `Attempts = 3` beside the
+  single emission (`attempts = 1`) event. Its ledger, parity and account
+  identities follow the producer's contracts; its quote path is constructed for
+  the exercised rules, so it is not a full strategy replay.
 - **Lifecycle and sequence contracts.** The verifier now enforces the
   one-active-basket lifecycle (an anchor closes the previous basket; only the
   last basket may remain open), live and telemetry quote-sequence
@@ -233,6 +238,33 @@ package build instead of aborting the strategy run.
   mutations and verifies **4/4** positive fixtures (forward-time fault,
   out-of-order fault, negative-equity Stop Out, terminal hard-BE violation).
   The evidence manifest is now `e4985b48...`.
+
+### 1.5 Fifth-round fixture and documentation cleanup (this revision)
+
+- **Terminal hard-BE violation semantics.** The positive fixture now matches the
+  engine: the tail order fills and enters the basket ledger, then the engine
+  throws before `EntriesOpened`/`EntryOpened` and before any strategy
+  continuation. The fixture has exactly one `hard_breakeven_violated` event
+  bound to the failure quote, the faulting leg in the final open basket state
+  with **no** normal `entry_executed` event, no later close, and a consistent
+  post-fill account state. The verifier exempts exactly that leg from the entry
+  population/ordering checks and still enforces cardinality, failure mapping
+  and quote binding; missing and duplicate violation events are rejected.
+- **Fixture description accuracy.** The synthetic package is no longer described
+  as a possible engine run. It is a contract-consistent synthetic verifier
+  fixture: its ledger, parity and account identities follow the producer's
+  contracts, while its quote path is constructed for the exercised rules (it is
+  not a full strategy replay or proof that every producer execution is
+  accepted). The base fixture also now uses strict side alternation with
+  boundary-triggering quotes, a genuinely ambiguous skipped-first-entry quote,
+  and the producer's `forced_liquidation -> margin_call_left ->
+  basket_liquidated` ordering.
+- **Credible NegativeEquity fixture.** Its states now use the frozen
+  uncovered-volume used-margin model, and its balance transitions correspond
+  exactly to the recorded forced-liquidation realized results.
+- No verifier behavior changed for the real package: the verification record
+  and evidence manifest hashes are unchanged
+  (`273350ca...` and `e4985b48...`).
 
 ## 2. Phase D preservation and binding
 

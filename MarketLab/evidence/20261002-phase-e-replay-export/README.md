@@ -106,9 +106,12 @@ exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
   `securityType`/account/margin flags, `delivered` presence and per-file/row
   year identity, `sizingOutcome` by regime, rejection
   `sizingOutcome`/`maximumVolume`, positive-only `eventCounts` keys and the
-  bidirectional hard-BE violation mapping. The synthetic base package is now a
-  possible engine run, the suite is 52 mutations, and the four positive
-  fixtures include a NegativeEquity Stop Out and a terminal hard-BE violation.
+  bidirectional hard-BE violation mapping. The base fixture is a
+  contract-consistent synthetic verifier fixture (producer-contract ledger/parity/
+  account identities with quotes constructed for the exercised rules), the suite
+  is 52 mutations, and the four positive fixtures include a NegativeEquity Stop
+  Out and a terminal hard-BE violation whose faulting leg stays in the open basket
+  state without a normal entry event.
 
 The Phase A-D evidence, the frozen contracts and the qualified data identity are
 unchanged. The 413,750,130-row historical-data qualification was not rerun, no

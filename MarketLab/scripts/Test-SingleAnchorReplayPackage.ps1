@@ -899,6 +899,17 @@ try {
     # as the manifest startUtc (canonical millisecond precision).
     Test-TimeParity (Get-Property $runStarted 'time') (Get-Property $manifest 'startUtc') "run_started.time"
 
+    # A terminal hard-BE violation is raised after the faulting tail order filled and was added to
+    # the basket ledger but before EntriesOpened/EntryOpened, so the faulting leg exists in the
+    # final authoritative basket state without a normal entry_executed event.
+    $violationLegKey = $null
+    if ($violationCondition -ceq 'HardBreakevenViolatedByFill') {
+        $violationEventsForLeg = @(Get-EventsOfType 'hard_breakeven_violated')
+        if ($violationEventsForLeg.Count -eq 1) {
+            $violationLegKey = "$([long](Get-Property $violationEventsForLeg[0] 'basket'))/$([long](Get-Property $violationEventsForLeg[0] 'tradeNumber'))"
+        }
+    }
+
     # A. Anchors: one basket_anchored event per closed basket plus the open basket, in strictly
     # ascending basket order, with every anchor field equal to the authoritative AnchorEvent.
     $anchoredEvents = @(Get-EventsOfType 'basket_anchored')
@@ -961,14 +972,22 @@ try {
                 [long](Get-Property $_ 'basket') -eq $sequence -and $legTradeNumbers.ContainsKey([long](Get-Property $_ 'tradeNumber'))
             })
         $actualEntryOrder = @($basketEntryEvents | ForEach-Object { [string]([long](Get-Property $_ 'tradeNumber')) })
-        $expectedEntryOrder = @($legRows | ForEach-Object { [string]([long](Get-Property $_ 'TradeNumber')) })
+        $expectedOrderRows = @($legRows | Where-Object { "$sequence/$([long](Get-Property $_ 'TradeNumber'))" -cne $violationLegKey })
+        $expectedEntryOrder = @($expectedOrderRows | ForEach-Object { [string]([long](Get-Property $_ 'TradeNumber')) })
         Test-ParityCheck (($actualEntryOrder -join ',') -eq ($expectedEntryOrder -join ',')) `
             "entry_executed parity: basket $sequence entries appear as $($actualEntryOrder -join ',') but its LegTrace order is $($expectedEntryOrder -join ',')"
 
         foreach ($legRow in $legRows) {
             $tradeNumber = [long](Get-Property $legRow 'TradeNumber')
             $key = "$sequence/$tradeNumber"
-            if (-not $entryEventByKey.ContainsKey($key)) { Add-Failure "entry_executed parity: no event for basket $sequence leg $tradeNumber"; continue }
+            if (-not $entryEventByKey.ContainsKey($key)) {
+                # The terminal hard-BE faulting leg is in the basket ledger but never produced an
+                # EntryOpened event (the engine throws first); it is exempt by construction.
+                if ($key -cne $violationLegKey) {
+                    Add-Failure "entry_executed parity: no event for basket $sequence leg $tradeNumber"
+                }
+                continue
+            }
             $event = $entryEventByKey[$key]
             Test-NumberParity (Get-Property $event 'quoteSequence') (Get-Property $legRow 'QuoteSequence') "entry_executed[$key].quoteSequence"
             Test-TimeParity (Get-Property $event 'time') (Get-Property $legRow 'Time') "entry_executed[$key].time"
@@ -1011,8 +1030,18 @@ try {
             }
         }
     }
-    Test-ParityCheck ($entryEvents.Count -eq $entryTraceRows) `
-        "entry_executed parity: the package has $($entryEvents.Count) entries but the authoritative LegTrace plus LiquidationTrace population is $entryTraceRows (LegTrace rows: $legTraceRows)"
+    $exemptEntryRows = 0
+    if ($null -ne $violationLegKey) {
+        foreach ($basketRecord in $expectedBasketRecords) {
+            foreach ($legRow in @(Get-Property $basketRecord 'LegTrace')) {
+                if ("$([long](Get-Property $basketRecord 'Sequence'))/$([long](Get-Property $legRow 'TradeNumber'))" -ceq $violationLegKey) {
+                    $exemptEntryRows = 1
+                }
+            }
+        }
+    }
+    Test-ParityCheck ($entryEvents.Count -eq ($entryTraceRows - $exemptEntryRows)) `
+        "entry_executed parity: the package has $($entryEvents.Count) entries but the authoritative LegTrace plus LiquidationTrace population is $entryTraceRows minus $exemptEntryRows terminal-fault exemption(s)"
 
     # C. Strategy exits: the closed baskets that were not broker-liquidated, in closing order,
     # each with a strategy_exit event whose close fields, realized figures and lots all agree.
