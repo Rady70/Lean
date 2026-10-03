@@ -463,11 +463,14 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(account.MaxAbsoluteNetLots, Is.EqualTo(0.02m));
             Assert.That(account.CurrentOpenPositions, Is.EqualTo(4));
             Assert.That(account.CurrentGrossLots, Is.EqualTo(0.10m));
+            Assert.That(account.CurrentNetLots, Is.EqualTo(-0.02m), "the signed net exposure carries the short direction");
             Assert.That(account.CurrentAbsoluteNetLots, Is.EqualTo(0.02m));
+            Assert.That(Math.Abs(account.CurrentNetLots), Is.EqualTo(account.CurrentAbsoluteNetLots));
 
             h.Feed(1898.4m, 1898.6m); // escape at exactly 2
             Assert.That(account.CurrentOpenPositions, Is.EqualTo(0));
             Assert.That(account.CurrentGrossLots, Is.EqualTo(0m));
+            Assert.That(account.CurrentNetLots, Is.EqualTo(0m));
             Assert.That(account.CurrentAbsoluteNetLots, Is.EqualTo(0m));
             Assert.That(account.MaxOpenPositions, Is.EqualTo(4), "the maximum is not reset by a close");
         }

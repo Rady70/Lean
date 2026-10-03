@@ -300,6 +300,65 @@ package build instead of aborting the strategy run.
   (`273350ca...`) and the package/Phase D identities are unchanged; the evidence manifest is
   now `825239f7...`.
 
+### 1.7 Phase F-driven signed-net extension (2026-10-03, this revision)
+
+The independent Phase F review kept the signed-net requirement (the strategy's
+simultaneous opposing legs make direction fundamental) and required the value
+to be exported authoritatively in Phase E through the smallest export-only
+change. The original finalized record above is preserved unchanged; this
+section records the later revision.
+
+- **Contract decision.** `netLots` is an additive signed-net telemetry
+  extension of `marketlab-single-anchor-replay-package-v1`, not a silent
+  redefinition of it. The original finalized v1 package (without `netLots`)
+  remains valid: the extension-aware verifier passes it with **136,027 checks
+  including 134,477 payload-parity comparisons**, and that compatibility record
+  is committed as
+  `MarketLab/evidence/20261003-phase-e-signed-net-export/original-v1-verification.json`
+  (the historical v1 record remains in the untouched
+  `MarketLab/evidence/20261002-phase-e-replay-export/`). A package that carries
+  the extension must carry it on every event and periodic row; the verifier
+  then requires the field, checks `absoluteNetLots = |netLots|` on every row,
+  and checks the sign against its independently derived basket inventory for
+  **every event snapshot where inventory is defined** (all event types except
+  the terminal hard-BE diagnostic, which by design carries a leg with no normal
+  entry event) and for every periodic sample. `REPLAY_PACKAGE.md` section 9
+  documents the extension.
+- **Producer.** `ResearchAccount` exposes `CurrentNetLots` from the same
+  observation that computes `_absoluteNetLots`, and `ReplayRecorder` writes it
+  as an exact decimal string. No strategy, margin, liquidation, sizing or trade
+  behavior changed.
+- **Re-run and binding.** The frozen corrected-full-history command was
+  re-executed at clean revision
+  `f1bdc8fbc949bc3470deaaf8d16d013df7a1c473` (launched 2026-10-03T14:31:24Z,
+  LEAN elapsed 5,201 s, LEAN exit 0, helper exit 0, zero engine `ERROR::`
+  lines), classified `EXPECTED` (`invalidCount` 0, 407/407 failed requests
+  reconciled). `results.json` is byte-identical to the Phase D artifact
+  `bc3958b2...`; `events.jsonl` is byte-identical to the previous export
+  (`2eb4d846...`) because only telemetry serialization changed.
+- **New package identity.**
+  `d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4`;
+  the verifier record on the exact run is **PASS, 238,428 checks including
+  236,878 authoritative payload-parity comparisons**,
+  `resultsBoundToPhaseD: true`, `telemetrySignedNet: true`,
+  `telemetryEventSnapshotInventoryParity: true` (record SHA-256
+  `75440db3158cf10a38c956054d624da3ccdf5f07644384261a24facbdc1eaa60`).
+  The periodic derivation accepts the derived state before or after same-quote
+  events, because a periodic sample can be written on either side of a
+  same-quote event snapshot; a sign flip that matches neither state is
+  rejected.
+- **Verifier proof.** `tests\Test-SingleAnchorReplayPackageVerifier.ps1` now
+  rejects **59/59** mutations (adding periodic and Margin Call `netLots` sign
+  flips that the derived event/periodic direction parity catches) with **4/4**
+  positive fixtures; the C# tests are **315/315**.
+- **New evidence.** The signed-net run has its own directory,
+  `MarketLab/evidence/20261003-phase-e-signed-net-export/` (manifest SHA-256
+  `f98263618bde5d2cd24542e028d322d0bab35074c430ce6b0bdb4c7a4b22f685`),
+  with the new receipts, classification, verifier record, package manifest, a
+  regenerated 49-row telemetry sample carrying `netLots`, and byte-identical
+  copies of the unchanged candle evidence. The finalized 20261002 evidence
+  directory and the candle cache were not modified.
+
 ## 2. Phase D preservation and binding
 
 Phase D is not rerun as a characterization and not rewritten. The corrected

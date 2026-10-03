@@ -592,6 +592,7 @@ namespace MarketLab.SingleAnchor.Tests
             Assert.That(violationSnapshot["freeMargin"]!.Type, Is.EqualTo(JTokenType.Null), "margin is disabled in this harness");
             Assert.That((int)violationSnapshot["openPositions"]!, Is.EqualTo(h.Account.CurrentOpenPositions));
             Assert.That(Convert.ToDecimal((string)violationSnapshot["grossLots"]!), Is.EqualTo(h.Account.CurrentGrossLots));
+            Assert.That(Convert.ToDecimal((string)violationSnapshot["netLots"]!), Is.EqualTo(h.Account.CurrentNetLots));
             Assert.That(Convert.ToDecimal((string)violationSnapshot["absoluteNetLots"]!), Is.EqualTo(h.Account.CurrentAbsoluteNetLots));
 
             var runEnded = events[events.Count - 1];

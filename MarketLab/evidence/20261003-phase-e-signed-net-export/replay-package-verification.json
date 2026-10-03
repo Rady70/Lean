@@ -1,0 +1,68 @@
+{
+  "contract": "marketlab-single-anchor-replay-package-verification-v1",
+  "runDirectory": "20261003-143124-SingleAnchorVNextAlgorithm",
+  "pass": true,
+  "checks": 238428,
+  "parityChecks": 236878,
+  "failures": [],
+  "failuresTruncated": false,
+  "resultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
+  "expectedResultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
+  "resultsBoundToPhaseD": true,
+  "packageSha256": "d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4",
+  "eventCount": 1454,
+  "eventTypes": {
+    "basket_anchored": 280,
+    "basket_liquidated": 1,
+    "entry_executed": 555,
+    "entry_rejected": 2,
+    "entry_rejection_summary": 2,
+    "forced_liquidation": 65,
+    "hard_breakeven_activated": 11,
+    "margin_call_entered": 23,
+    "margin_call_left": 23,
+    "run_ended": 1,
+    "run_started": 1,
+    "stop_out_triggered": 5,
+    "strategy_exit": 278,
+    "trailing_activated": 207
+  },
+  "telemetryEventSnapshots": 1452,
+  "telemetryPeriodicSamples": 98866,
+  "telemetrySignedNet": true,
+  "telemetryPeriodicInventoryParity": true,
+  "telemetryEventSnapshotInventoryParity": true,
+  "telemetryShards": [
+    "telemetry-2019.jsonl",
+    "telemetry-2020.jsonl",
+    "telemetry-2021.jsonl",
+    "telemetry-2026.jsonl"
+  ],
+  "packageFiles": [
+    {
+      "name": "events.jsonl",
+      "sha256": "2eb4d8464d2ef4e7c95e6862a3253a9afbd952222f3c5e5ce9818cd96e67cc42",
+      "bytes": 679227.0
+    },
+    {
+      "name": "telemetry-2019.jsonl",
+      "sha256": "f6ba81ddf1c3a6c1c00ad4990699984f5b8ca706fba0688bb48fc64ecaf246c1",
+      "bytes": 31599111.0
+    },
+    {
+      "name": "telemetry-2020.jsonl",
+      "sha256": "44f910b38d67c33872b31ae2627080dffadfa188373def27bbbbe0d38668d31c",
+      "bytes": 15357995.0
+    },
+    {
+      "name": "telemetry-2021.jsonl",
+      "sha256": "4c757035e3a71c4a911efd618736d9358dea1d343f600884b6fb4e1482c69ced",
+      "bytes": 377.0
+    },
+    {
+      "name": "telemetry-2026.jsonl",
+      "sha256": "acdcd8ac9cf3f1fd885c423d3809b608c0b0cbe6f2c1eb75a02b0c92cfded55b",
+      "bytes": 377.0
+    }
+  ]
+}
