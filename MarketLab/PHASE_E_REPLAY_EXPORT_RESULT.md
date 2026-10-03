@@ -353,7 +353,7 @@ section records the later revision.
   positive fixtures; the C# tests are **315/315**.
 - **New evidence.** The signed-net run has its own directory,
   `MarketLab/evidence/20261003-phase-e-signed-net-export/` (manifest SHA-256
-  `f61efd702f527ee95d769421ee8c654535bc0fec56fe94f81081d002c10fca79`),
+  `f98263618bde5d2cd24542e028d322d0bab35074c430ce6b0bdb4c7a4b22f685`),
   with the new receipts, classification, verifier record, package manifest, a
   regenerated 49-row telemetry sample carrying `netLots`, and byte-identical
   copies of the unchanged candle evidence. The finalized 20261002 evidence
