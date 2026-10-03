@@ -1,22 +1,20 @@
 # SingleAnchor Phase E authoritative replay export - result record
 
-Status: **implemented, corrected after two independent reviews, and ready for
-re-review** - the Phase E authoritative replay export was implemented in
-`Rady70/Lean`, corrected for the first review's findings (hard-BE activation
-snapshot, authoritative parity, fail-closed persistence/candles), produced
-again by one execution of the frozen corrected-full-history model, and then
-corrected for the second review's findings (candle source re-derivation,
-comprehensive verifier parity/ordering/failure coverage, exact-string and
-evidence fixes). It is qualified by the repository's corrected-full-history
-classifier (`EXPECTED`) and the strengthened Phase E package verifier. Phase E
-is additive: it does not rewrite the Phase D characterization, the Phase A/B/C
-records or any frozen value.
+Status: **finalized and merged.** The Phase E authoritative replay export was
+implemented in `Rady70/Lean`, corrected through independent review, qualified
+by the repository's corrected-full-history classifier (`EXPECTED`) and the
+strengthened Phase E package verifier, then finalized with the additive
+signed-net telemetry extension. Phase E remains additive: it does not rewrite
+the Phase D characterization, the Phase A/B/C records or any frozen value.
 
 **Finalization (2026-10-03):** the signed-net revision was approved and merged
 from the exact approved head `1813c2efa4c11f0494754df96d9936bac083fe79` through
 [Rady70/Lean#24](https://github.com/Rady70/Lean/pull/24) as merge commit
-`72e1d3b5edc90c6bb93c9fe571f4e23120666338`, which is the resulting `master`.
-The finalized signed-net package is
+`72e1d3b5edc90c6bb93c9fe571f4e23120666338`. The documentation-only
+finalization-record PR #25 subsequently merged as
+`5daf96466402ef7a8bdb2c67c4bb3d672bdf0b1e`, which was the resulting
+`master` before this direct documentation correction. The finalized
+signed-net package is
 `d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4` with
 evidence manifest
 `f98263618bde5d2cd24542e028d322d0bab35074c430ce6b0bdb4c7a4b22f685`; the
