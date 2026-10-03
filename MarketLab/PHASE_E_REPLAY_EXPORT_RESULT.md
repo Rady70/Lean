@@ -1,37 +1,38 @@
 # SingleAnchor Phase E authoritative replay export - result record
 
-Status: **implemented, corrected after two independent reviews, and ready for
-re-review** - the Phase E authoritative replay export was implemented in
-`Rady70/Lean`, corrected for the first review's findings (hard-BE activation
-snapshot, authoritative parity, fail-closed persistence/candles), produced
-again by one execution of the frozen corrected-full-history model, and then
-corrected for the second review's findings (candle source re-derivation,
-comprehensive verifier parity/ordering/failure coverage, exact-string and
-evidence fixes). It is qualified by the repository's corrected-full-history
-classifier (`EXPECTED`) and the strengthened Phase E package verifier. Phase E
-is additive: it does not rewrite the Phase D characterization, the Phase A/B/C
-records or any frozen value.
+Status: **implemented, corrected across four independent reviews, then extended
+with the Phase F-driven export-only signed-net addition and re-run and
+re-verified (2026-10-03), and ready for re-review** - the Phase E authoritative
+replay export was implemented in `Rady70/Lean`, corrected for the review
+findings, produced again by one execution of the frozen corrected-full-history
+model, extended with the signed net exposure in the account telemetry (the Phase
+F review's decision: keep the signed-net requirement and add it authoritatively
+in Phase E), re-run, and re-verified. It is qualified by the repository's
+corrected-full-history classifier (`EXPECTED`) and the strengthened Phase E
+package verifier. Phase E is additive: it does not rewrite the Phase D
+characterization, the Phase A/B/C records or any frozen value.
 
 ```text
-Phase E implementation revision:  a2941581c02462a190f4d4289f371aed409cb1e3 (clean at run time)
-build receipt:                    MarketLab/output/baseline-build.json (SHA-256 f1344cd814892126b2f661522c2c4a1f7e361e94cd7b5639dc05d202fcb4987d)
+Phase E implementation revision:  f1bdc8fbc949bc3470deaaf8d16d013df7a1c473 (clean at run time;
+                                  adds the export-only signed-net telemetry field)
+build receipt:                    MarketLab/output/baseline-build.json (SHA-256 6708110d2cd8c402d5f728dc3ee87ca510737fb647c4b08bb7e2d5cd690b8c8a)
 baseline contract:                MarketLab/config/baseline-contract.json (unchanged; SHA-256 0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a)
 corrected contract:               MarketLab/config/corrected-full-history-contract.json (unchanged; SHA-256 d97b3c9b375ed2e53a2af784618a90e4db5e5ab9c627ffc9f0638a8c245cd44f)
 model revision:                   marketlab-single-anchor-broker-liquidation-v1
 Stop Out model:                   BrokerLiquidation
 run window:                       2019-01-01 .. 2026-06-30 (the frozen window)
-execution:                        2026-10-01T22:18:31Z .. 2026-10-02T00:02:39Z (6,248 s); LEAN exit 0, helper exit 0, engine ERROR:: audit performed with 0 engine errors
+execution:                        launched 2026-10-03T14:31:24Z; LEAN elapsed 5,201 s, LEAN exit 0, helper exit 0, engine ERROR:: audit performed with 0 engine errors
 classification:                   EXPECTED (invalidCount 0)
 Phase D binding:                  the run's storage/single-anchor/results.json is byte-identical to the Phase D artifact (SHA-256 bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad)
 package contract:                 marketlab-single-anchor-replay-package-v1
-package sha256:                   5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a
+package sha256:                   d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4
 events / event snapshots / periodic samples: 1,454 / 1,452 / 98,866
-verifier:                         PASS, 32,805 checks (31,255 authoritative payload-parity comparisons), Phase D binding enforced
-candle cache contract:            marketlab-xauusd-m1-candle-cache-v1
+verifier:                         PASS, 133,754 checks (132,204 authoritative payload-parity comparisons), Phase D binding enforced
+candle cache contract:            marketlab-xauusd-m1-candle-cache-v1 (unchanged)
 candle cache content_sha256:      ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d
 candle cache manifest_sha256:     75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1
-candle source derivation:         the four month-aligned ranges were regenerated with the corrected generator; 90/90 monthly records equal the final cache bytes
-candle cache verification:        verify-candles PASS (2,332/2,332 partitions, qualification-record binding), verify-candle-composition PASS (4 re-derived parts, 10/10 checks)
+candle source derivation:         unchanged from the corrected re-derivation (90/90 monthly records equal the final cache bytes)
+evidence manifest sha256:         ccc4b2523f5e965ba0da4d81d174514ff6dc1cbad23fc46408f89437d0e50869
 ```
 
 ## 1. Implementation and provenance
@@ -299,6 +300,50 @@ package build instead of aborting the strategy run.
   is **54/54** mutations with **4/4** positive fixtures. The real package, verifier record
   (`273350ca...`) and the package/Phase D identities are unchanged; the evidence manifest is
   now `825239f7...`.
+
+### 1.7 Phase F-driven signed-net export addition (this revision)
+
+The independent Phase F review kept the signed-net requirement (the strategy's
+simultaneous opposing legs make direction fundamental) and required the value to
+be exported authoritatively in Phase E through the smallest export-only change,
+then consumed unchanged by Phase F. This revision does exactly that:
+
+- `ResearchAccount` exposes `CurrentNetLots` from the same observation that
+  computes `_absoluteNetLots` (the signed + absolute pair of the active basket;
+  flat is `0`). No strategy, margin, liquidation, sizing or trade behavior is
+  touched.
+- `ReplayRecorder` writes `netLots` as an exact decimal string in every event
+  and periodic telemetry snapshot, next to `grossLots`/`absoluteNetLots`.
+- `REPLAY_PACKAGE.md` documents the field (positive net long, negative net
+  short; `absoluteNetLots = |netLots|`).
+- `Test-SingleAnchorReplayPackage.ps1` requires the field on every telemetry
+  row, checks `absoluteNetLots = |netLots|`, and checks the sign against its
+  derived basket inventory on entry, forced-liquidation and hard-BE activation
+  snapshots. `tests\Test-SingleAnchorReplayPackageVerifier.ps1` now rejects
+  **57/57** mutations (including a flipped sign, an absolute mismatch and a
+  removed field) with **4/4** positive fixtures; the consumed decimal field list
+  and the fixture helpers carry the new field. C# tests assert the signed value
+  and its absolute complement (`315/315`).
+- The frozen corrected-full-history command was re-run (launched
+  `2026-10-03T14:31:24Z`, LEAN elapsed 5,201 s) at the clean reviewed revision
+  `f1bdc8fbc...`; classification is `EXPECTED` with `invalidCount` 0 and the
+  same 407/407 failed-request reconciliation, and `results.json` is
+  byte-identical to the Phase D artifact.
+- The re-run produced the new package identity
+  `d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4`;
+  `events.jsonl` is byte-identical to the previous export
+  (`2eb4d846...`), because only telemetry serialization changed. The verifier
+  record on the exact run is **PASS, 133,754 checks including 132,204
+  authoritative payload-parity comparisons**, `resultsBoundToPhaseD: true`
+  (record SHA-256
+  `0ecf27944a08846406a263c438ef95ed65858e1c486d78c93510e6f942923e79`).
+- The candle cache is unchanged (`ab1b0c7f...`); the earlier re-derivation
+  record and its 90/90 monthly equality still bind it.
+- Evidence was refreshed in place: the new build receipt, invocation/outcome,
+  classification, verifier record, package manifest and a regenerated bounded
+  telemetry sample (same 49 rows/keys, now carrying `netLots`); the evidence
+  manifest is now
+  `ccc4b2523f5e965ba0da4d81d174514ff6dc1cbad23fc46408f89437d0e50869`.
 
 ## 2. Phase D preservation and binding
 

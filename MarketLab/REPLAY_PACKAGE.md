@@ -101,7 +101,11 @@ while flat. Both expose the exact research-account values:
 
 `balance`, `equity`, `floatingProfit`, `floatingObservable`, `realizedProfit`,
 `usedMargin`, `freeMargin`, `marginLevelPercent`, `marginCallActive`,
-`openPositions`, `grossLots`, `absoluteNetLots`, plus the quote time/sequence.
+`openPositions`, `grossLots`, `netLots`, `absoluteNetLots`, plus the quote
+time/sequence. `netLots` is the signed net exposure of the active basket
+(positive net long, negative net short); `absoluteNetLots` is its absolute
+value. Both are captured in the same observation by the account that owns the
+position ledger, so no post-run derivation or sign reconstruction is performed.
 
 The authoritative `results.json` remains the run-level account record; the
 package is the event-ordered, bounded presentation of the same account.

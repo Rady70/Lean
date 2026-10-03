@@ -369,7 +369,7 @@ function Assert-ExactString([object]$object, [string]$name, [string]$where, [boo
     }
 }
 
-$requiredDecimalFields = @('balance', 'equity', 'floatingProfit', 'realizedProfit', 'usedMargin', 'grossLots', 'absoluteNetLots')
+$requiredDecimalFields = @('balance', 'equity', 'floatingProfit', 'realizedProfit', 'usedMargin', 'grossLots', 'netLots', 'absoluteNetLots')
 $nullableDecimalFields = @('freeMargin', 'marginLevelPercent')
 
 try {
@@ -1536,6 +1536,11 @@ try {
             foreach ($field in $nullableDecimalFields) { Assert-ExactString $row $field "telemetry[$telemetryName] kind=$kind" $false }
             try {
                 $time = Convert-UtcTime (Get-Property $row 'time') "telemetry.time"
+                $rowNet = Convert-JsonDecimal (Get-Property $row 'netLots') "telemetry[$telemetryName].netLots"
+                $rowAbsoluteNet = Convert-JsonDecimal (Get-Property $row 'absoluteNetLots') "telemetry[$telemetryName].absoluteNetLots"
+                if ($null -ne $rowNet -and $null -ne $rowAbsoluteNet) {
+                    Test-NumberParity $rowAbsoluteNet ([math]::Abs($rowNet)) "telemetry[$telemetryName].absoluteNetLots identity"
+                }
                 if ($null -ne $previousTelemetryTime -and $time -lt $previousTelemetryTime) {
                     Add-Failure "telemetry goes backwards in time at $($time.ToString('o'))"
                 }
@@ -1784,6 +1789,7 @@ try {
             $qualifier = if ($type -eq 'entry_executed') { 'post-entry' } else { 'post-close' }
             Test-NumberParity (Get-Property $snapshot 'openPositions') $count "telemetry[$eventId].openPositions (derived $qualifier)"
             Test-NumberParity (Get-Property $snapshot 'grossLots') $gross "telemetry[$eventId].grossLots (derived $qualifier)"
+            Test-NumberParity (Get-Property $snapshot 'netLots') $net "telemetry[$eventId].netLots (derived $qualifier)"
             Test-NumberParity (Get-Property $snapshot 'absoluteNetLots') ([math]::Abs($net)) "telemetry[$eventId].absoluteNetLots (derived $qualifier)"
         }
         if ($type -eq 'hard_breakeven_activated' -or $type -eq 'trailing_activated') {
@@ -1804,6 +1810,7 @@ try {
                 # snapshot must show the surviving pre-attempt inventory.
                 Test-NumberParity (Get-Property $snapshot 'openPositions') $count "telemetry[$eventId].openPositions (derived pre-attempt)"
                 Test-NumberParity (Get-Property $snapshot 'grossLots') $gross "telemetry[$eventId].grossLots (derived pre-attempt)"
+                Test-NumberParity (Get-Property $snapshot 'netLots') $net "telemetry[$eventId].netLots (derived pre-attempt)"
                 Test-NumberParity (Get-Property $snapshot 'absoluteNetLots') ([math]::Abs($net)) "telemetry[$eventId].absoluteNetLots (derived pre-attempt)"
             }
             else {

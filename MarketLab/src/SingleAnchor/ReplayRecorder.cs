@@ -895,6 +895,7 @@ namespace MarketLab.SingleAnchor
             line.Bool("marginCallActive", snapshot.MarginCallActive);
             line.Number("openPositions", snapshot.OpenPositions);
             line.Text("grossLots", ReplayPackage.FormatDecimal(snapshot.GrossLots));
+            line.Text("netLots", ReplayPackage.FormatDecimal(snapshot.NetLots));
             line.Text("absoluteNetLots", ReplayPackage.FormatDecimal(snapshot.AbsoluteNetLots));
             shard.Append(line.ToLine()).Append('\n');
             if (kind == "periodic")
@@ -921,6 +922,7 @@ namespace MarketLab.SingleAnchor
                 _marginEnabled && _account.MarginCallActive,
                 _account.CurrentOpenPositions,
                 _account.CurrentGrossLots,
+                _account.CurrentNetLots,
                 _account.CurrentAbsoluteNetLots);
         }
 
@@ -936,6 +938,7 @@ namespace MarketLab.SingleAnchor
             bool MarginCallActive,
             int OpenPositions,
             decimal GrossLots,
+            decimal NetLots,
             decimal AbsoluteNetLots);
 
         // ---- Event plumbing and manifest ----

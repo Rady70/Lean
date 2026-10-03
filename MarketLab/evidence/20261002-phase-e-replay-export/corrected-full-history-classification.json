@@ -1,7 +1,7 @@
 {
   "contract": "marketlab-single-anchor-corrected-full-history-classification-v1",
   "mode": "corrected-full-history",
-  "generatedUtc": "2026-10-02T00:06:07Z",
+  "generatedUtc": "2026-10-03T16:10:08Z",
   "authoritative": true,
   "correctedContract": "E:\\MarketLab\\Lean\\MarketLab\\config\\corrected-full-history-contract.json",
   "correctedContractSha256": "d97b3c9b375ed2e53a2af784618a90e4db5e5ab9c627ffc9f0638a8c245cd44f",
@@ -10,8 +10,8 @@
   "baselineRegisterPin": "0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a",
   "modelRevision": "marketlab-single-anchor-broker-liquidation-v1",
   "stopOutModel": "BrokerLiquidation",
-  "runDirectory": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm",
-  "resultsFile": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\storage\\single-anchor\\results.json",
+  "runDirectory": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261003-143124-SingleAnchorVNextAlgorithm",
+  "resultsFile": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261003-143124-SingleAnchorVNextAlgorithm\\storage\\single-anchor\\results.json",
   "resultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
   "resultsBytes": 1602034,
   "deliveryVerification": {
@@ -21,12 +21,12 @@
     "terminalDayPrefixRead": false,
     "globalSemanticDigestVerified": true
   },
-  "invocationEvidenceFile": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\marketlab-run-invocation.json",
+  "invocationEvidenceFile": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261003-143124-SingleAnchorVNextAlgorithm\\marketlab-run-invocation.json",
   "invocationEvidenceVerified": true,
   "preRunCorrectedContractSha256": "d97b3c9b375ed2e53a2af784618a90e4db5e5ab9c627ffc9f0638a8c245cd44f",
-  "repositoryHead": "a2941581c02462a190f4d4289f371aed409cb1e3",
+  "repositoryHead": "f1bdc8fbc949bc3470deaaf8d16d013df7a1c473",
   "repositoryDirty": false,
-  "runReviewedCommit": "a2941581c02462a190f4d4289f371aed409cb1e3",
+  "runReviewedCommit": "f1bdc8fbc949bc3470deaaf8d16d013df7a1c473",
   "runtimeBinaryNames": [
     "QuantConnect.Lean.Launcher.dll",
     "QuantConnect.Lean.Engine.dll",
@@ -37,7 +37,7 @@
     "QuantConnect.Logging.dll"
   ],
   "runtimeBinariesVerified": true,
-  "runOutcomeFile": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\marketlab-run-outcome.json",
+  "runOutcomeFile": "E:\\MarketLab\\Lean\\MarketLab\\output\\20261003-143124-SingleAnchorVNextAlgorithm\\marketlab-run-outcome.json",
   "runOutcomeVerified": true,
   "leanExitCode": 0,
   "helperExitCode": 0,
