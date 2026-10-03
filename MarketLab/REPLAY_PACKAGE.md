@@ -5,7 +5,10 @@ package was produced by the corrected Phase E export run and qualified by the
 strengthened package verifier (PASS, 32,805 checks including 31,255
 authoritative payload-parity comparisons, bound to the byte-identical Phase D
 result).
-Phase E is ready for re-review; later replay/visualization phases (F–I) have not
+Phase E, including its additive signed-net telemetry extension, is finalized
+and merged to `master` (PR #24); the Phase F replay surface was finalized
+separately in the `Rady70/trade-journal` fork. Later replay/visualization
+phases (G–I) have not
 started.**
 
 Corrected Phase E export run: `Rady70/Lean` revision
