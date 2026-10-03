@@ -1,8 +1,8 @@
 {
   "contract": "marketlab-phase-e-replay-export-evidence-v1",
-  "role": "Corrected Phase E authoritative replay export: the frozen corrected-full-history model executed with the corrected replay recorder, classified EXPECTED, bound byte-for-byte to the Phase D result, with comprehensive authoritative-parity package verification and a re-derived, source-certified M1 candle cache",
-  "runDateUtc": "2026-10-01/2026-10-02",
-  "implementationCommit": "a2941581c02462a190f4d4289f371aed409cb1e3",
+  "role": "Signed-net Phase E authoritative replay export: the frozen corrected-full-history model executed with the export-only netLots telemetry addition, classified EXPECTED, bound byte-for-byte to the Phase D result, with comprehensive authoritative-parity package verification (including the signed net exposure) and the unchanged, source-certified M1 candle cache",
+  "runDateUtc": "2026-10-03",
+  "implementationCommit": "f1bdc8fbc949bc3470deaaf8d16d013df7a1c473",
   "baselineContract": "MarketLab/config/baseline-contract.json",
   "baselineContractSha256": "0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a",
   "correctedFullHistoryContract": "MarketLab/config/corrected-full-history-contract.json",
@@ -13,10 +13,10 @@
   "phaseEResultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
   "resultsByteIdenticalToPhaseD": true,
   "replayPackageContract": "marketlab-single-anchor-replay-package-v1",
-  "replayPackageSha256": "5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a",
-  "replayVerificationChecks": 32805,
-  "replayVerificationParityChecks": 31255,
-  "verifierMutationCases": 54,
+  "replayPackageSha256": "d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4",
+  "replayVerificationChecks": 133754,
+  "replayVerificationParityChecks": 132204,
+  "verifierMutationCases": 57,
   "positiveFailedRunFixtures": 4,
   "candleCacheContract": "marketlab-xauusd-m1-candle-cache-v1",
   "candleCacheContentSha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
@@ -54,69 +54,69 @@
     "monthlyRecordsCompared": 90,
     "finalCsvBytesUnchanged": true
   },
-  "sourceRunDirectory": "MarketLab/output/20261001-221831-SingleAnchorVNextAlgorithm",
+  "sourceRunDirectory": "MarketLab/output/20261003-143124-SingleAnchorVNextAlgorithm",
   "artifacts": [
     {
       "path": "baseline-build.json",
-      "sha256": "f1344cd814892126b2f661522c2c4a1f7e361e94cd7b5639dc05d202fcb4987d",
+      "sha256": "6708110d2cd8c402d5f728dc3ee87ca510737fb647c4b08bb7e2d5cd690b8c8a",
       "bytes": 52169,
-      "origin": "MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\baseline-build.json",
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
       "role": "source-bound Release build receipt for the corrected Phase E revision a2941581c"
     },
     {
       "path": "corrected-history-preflight.json",
-      "sha256": "432bcb19f1ab1dc3d950fbc023a68f0780097395aeaca05641b325b3f97c6dbd",
+      "sha256": "f0a5c07eccfe839802782095651a916791a2b20ac6bbf7d53d95667749721867",
       "bytes": 2312,
-      "origin": "MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\corrected-history-preflight.json",
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
       "role": "corrected-full-history preflight receipt (2,332/2,332 partitions) copied into the run"
     },
     {
       "path": "marketlab-run-invocation.json",
-      "sha256": "a083f41d83572fb740e99b816bedf1d6f72cc7ddb17da31284f463f145e8024b",
+      "sha256": "5b899a566e654c1151be05c55015d4b1a23ab9b8d984c1040ef5e9738777b695",
       "bytes": 7260,
-      "origin": "MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\marketlab-run-invocation.json",
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
       "role": "pre-run invocation evidence: resolved inputs, exact launcher argv, contract/build hashes, clean repository head"
     },
     {
       "path": "marketlab-run-outcome.json",
-      "sha256": "1e28d56841f1ad8ecd7d9c70d9bfb1d02ca72b78a941e3455ff7cd2e6823510f",
+      "sha256": "b17c99fd5814364ac15bff1d331fb40a7dfc611ab4a12211cd0cc17022217da7",
       "bytes": 52834,
-      "origin": "MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\marketlab-run-outcome.json",
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
       "role": "post-run outcome evidence: exit codes, engine-error audit, data-monitor result, unchanged runtime, results SHA-256"
     },
     {
       "path": "corrected-full-history-classification.json",
-      "sha256": "0cf934b966828a4f248614f248ed8885785dd5fed2d3ae77674ddb4198d49632",
+      "sha256": "bf896fc62aa58b8dd9a4aaddff2b0696533116f530d41effb4b7dc8ff4d1ce28",
       "bytes": 28820,
-      "origin": "MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\corrected-full-history-classification.json",
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
       "role": "authoritative corrected-full-history classification: EXPECTED, invalidCount 0, 407/407 failed requests reconciled"
     },
     {
       "path": "replay-package-verification.json",
-      "sha256": "273350ca61342f8b8541bf5c29e9d79431a881daad399d4d05fdfccd663063f6",
-      "bytes": 2072,
-      "origin": "derived by MarketLab\\scripts\\Test-SingleAnchorReplayPackage.ps1 on the exact run with the Phase D binding",
+      "sha256": "0ecf27944a08846406a263c438ef95ed65858e1c486d78c93510e6f942923e79",
+      "bytes": 2074,
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
       "role": "Phase E package verifier PASS record (32,805 checks, 31,255 authoritative payload-parity comparisons) with the Phase D results binding; byte-reproducible"
     },
     {
       "path": "replay-manifest.json",
-      "sha256": "68da857cd13d62e8b75e592f18dc21f942bddcd7a3679f248c3f96b02c415e16",
+      "sha256": "825d98232e79e6d6f5d381118985ee3efea30ad86a29d485972193af47231a18",
       "bytes": 4258,
-      "origin": "MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\storage\\single-anchor\\replay\\manifest.json",
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
       "role": "the authoritative replay package manifest (identity, counts, per-file hashes, package fingerprint 5dcd8bfa...)"
     },
     {
       "path": "replay-events.jsonl",
       "sha256": "2eb4d8464d2ef4e7c95e6862a3253a9afbd952222f3c5e5ce9818cd96e67cc42",
       "bytes": 679227,
-      "origin": "MarketLab\\output\\20261001-221831-SingleAnchorVNextAlgorithm\\storage\\single-anchor\\replay\\events.jsonl",
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
       "role": "the complete authoritative replay event stream (1,454 events); byte-identical to the first corrected stream because only the hard-BE telemetry snapshots changed"
     },
     {
       "path": "replay-telemetry-sample.jsonl",
-      "sha256": "76f623f387dc30d297ce5127753b81f8f79907adb7be9bbb96fe825de7536be7",
-      "bytes": 20430,
-      "origin": "derived bounded sample of the package telemetry shards (heads plus the 11 hard-BE activation/attempt snapshot pairs)",
+      "sha256": "e30a1a4c6d7a9a458f39914a8875ca3601aa6aba71f517dcac9a56fb9592afa8",
+      "bytes": 21263,
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
       "role": "bounded exact-string account-telemetry sample: 2019/2020 heads, the 2021 and 2026 event snapshots, and the 11 hard-BE activation + following attempt snapshot pairs (pre-attempt 4 positions, post-entry 5)"
     },
     {
@@ -178,57 +178,57 @@
     },
     {
       "path": "replay/telemetry-2019.jsonl",
-      "sha256": "b4260d475416bb640f484c092465a353287639a887eb60af7fd6a23318ec6212",
-      "bytes": 30417274,
+      "sha256": "f6ba81ddf1c3a6c1c00ad4990699984f5b8ca706fba0688bb48fc64ecaf246c1",
+      "bytes": 31599111,
       "reason": "full telemetry shard (67,559 rows); the manifest and a bounded sample are committed"
     },
     {
       "path": "replay/telemetry-2020.jsonl",
-      "sha256": "213f2bb7542bf3fdb6533c745d9ff55b001e776ff352c26000c6cd5bb2163b76",
-      "bytes": 14784016,
+      "sha256": "44f910b38d67c33872b31ae2627080dffadfa188373def27bbbbe0d38668d31c",
+      "bytes": 15357995,
       "reason": "full telemetry shard (32,757 rows); the manifest and a bounded sample are committed"
     },
     {
       "path": "replay/telemetry-2021.jsonl",
-      "sha256": "9372cbf681392fc3e0e4046281a5acb13c5c30fb6c516228dfec86df87490494",
-      "bytes": 363,
+      "sha256": "4c757035e3a71c4a911efd618736d9358dea1d343f600884b6fb4e1482c69ced",
+      "bytes": 377,
       "reason": "single event snapshot (second rejection episode); copied into the committed sample"
     },
     {
       "path": "replay/telemetry-2026.jsonl",
-      "sha256": "2cdee0240eaeba8ac8e8616b163a10e2a0ba76d1230c8914f9ef1ed9d521d7d1",
-      "bytes": 363,
+      "sha256": "acdcd8ac9cf3f1fd885c423d3809b608c0b0cbe6f2c1eb75a02b0c92cfded55b",
+      "bytes": 377,
       "reason": "single run-end event snapshot; copied into the committed sample"
     },
     {
       "path": "log.txt",
-      "sha256": "99454fc5874cb31bb85e31d611a955911262de147f23c793849f536709a084e7",
-      "bytes": 483707,
+      "sha256": "b0e786b0d4884e475254697d17a1e4738e911448ed3c74d0ca5965a17a98c2ff",
+      "bytes": 481176,
       "reason": "engine log; its strategy facts are in results.json and the classification record"
     },
     {
       "path": "SingleAnchorVNextAlgorithm-log.txt",
-      "sha256": "ec460133b2b958b2ea837bbdd7fd397bbe98708b55ee89ad2dee7e85cf374340",
+      "sha256": "14872a0915ee1c76721c3366236db2bbb4d78831706eece10785337ae5b75ec7",
       "bytes": 323511,
       "reason": "engine algorithm log"
     },
     {
       "path": "SingleAnchorVNextAlgorithm.json",
-      "sha256": "02bbffca3cccf633c8be3be9aff3b105300cc61cd0b0e57c041a43c6779a38b5",
+      "sha256": "3d713f2e4833cd45e71745f9361dfc42a46824fa306228fbaa93e158ce0ae33f",
       "bytes": 1463595,
       "reason": "LEAN result packet; LEAN placed no orders"
     },
     {
       "path": "SingleAnchorVNextAlgorithm-summary.json",
-      "sha256": "47fbda6ba7eb3279da4ece9dc4a2fc4613567a081af86c3fe01ced45dfe80ab4",
+      "sha256": "a82598c4d1da15cde6f6c6be26fcbf9b1bd3059272a60b578b9d6063f0119f6e",
       "bytes": 23567,
       "reason": "LEAN summary packet (empty trade statistics by design)"
     },
     {
-      "path": "phase-e2-run-console.log",
-      "sha256": "bf501627fdac345f6ef8a1a8ce23f565180bc75215b3c08308596bd02ea56dd2",
-      "bytes": 475453,
-      "reason": "helper console capture; the machine-generated invocation/outcome evidence is authoritative"
+      "path": "phase-e3-run-console.log",
+      "sha256": "f2149856bbb6968e942e17bc3ce3f29c1e7dac7d04bd510b6983c699047d43fc",
+      "bytes": 473041,
+      "reason": "helper console capture for the signed-net export run; the machine-generated invocation/outcome evidence is authoritative"
     },
     {
       "path": "candle cache (E:\\MarketLab\\data\\lean\\xauusd-m1-candles)",
@@ -244,6 +244,10 @@
     }
   ],
   "notes": [
+    "Signed-net export addition (2026-10-03, revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473): the export-only Phase E change adds the authoritative signed net exposure to the replay telemetry. ResearchAccount now exposes CurrentNetLots from the same observation that computes the absolute value; ReplayRecorder writes it as the netLots exact decimal string in every event and periodic telemetry snapshot; the package verifier requires the field, checks absoluteNetLots = |netLots| on every row, and checks the sign against its derived basket inventory on entry, forced-liquidation and hard-BE activation snapshots. No strategy, margin, liquidation, sizing or trade behavior changed.",
+    "Run: launched 2026-10-03T14:31:24Z, LEAN elapsed 5,201 s, LEAN exit 0, helper exit 0, engine-error audit performed with zero engine errors, classification EXPECTED (invalidCount 0, 407/407 failed data requests reconciled exactly as in Phase D). The run's storage/single-anchor/results.json is byte-identical to the Phase D artifact bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad; events.jsonl is byte-identical to the previous export (2eb4d846...) because only telemetry serialization changed.",
+    "Package verification: Test-SingleAnchorReplayPackage.ps1 PASS on the exact run with -ExpectedResultsSha256 bc3958b2... (133,754 checks, 132,204 authoritative payload-parity comparisons; package d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4). The new checks are the required netLots decimal on every telemetry row, absoluteNetLots = |netLots|, and derived-inventory sign parity on the inventory snapshots; tests\\Test-SingleAnchorReplayPackageVerifier.ps1 proves 57/57 mutations (including a flipped sign, an absolute mismatch and a removed field) are rejected and 4/4 positive fixtures verify.",
+    "The candle cache is unchanged (content identity ab1b0c7f...); the earlier re-derivation record still binds it. The long run used the same temporary AC power-plan change (standby and display disabled), with the original values captured before the change and restored exactly afterwards (STANDBYIDLE 0x00001c20, VIDEOIDLE 0x00000258). No Phase D rerun as a characterization, no historical-data qualification rerun, no parameter optimization and no hosted CI dispatch occurred.",
     "Corrected Phase E run: 2026-10-01T22:18:31Z .. 2026-10-02T00:02:39Z (6,248 s), LEAN exit 0, helper exit 0, engine-error audit performed with zero engine errors, 407/407 failed data requests reconciled exactly as in Phase D.",
     "Phase D binding: the run's storage/single-anchor/results.json is byte-identical to the Phase D artifact bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad.",
     "Hard-BE activation correction: the engine publishes an observational HardBreakevenActivated event before the first tail attempt is sized or placed; all 11 activation snapshots in this package show the pre-attempt state (the committed sample contains all 11 activation/attempt snapshot pairs).",

@@ -1,16 +1,16 @@
-# Corrected Phase E authoritative replay export evidence (2026-10-01/02)
+# Corrected Phase E authoritative replay export evidence (2026-10-01/02; signed-net re-run 2026-10-03)
 
 This directory preserves the compact, source-bound evidence of the corrected
 Phase E authoritative replay export for the finalized SingleAnchor research
-path, after the independent-review corrections.
+path, after the independent-review corrections and the later export-only
+signed-net telemetry addition (Phase F's review decision).
 
 - `manifest.json` - reviewed revision, contract identities, the Phase D/Phase E
   result binding, every committed artifact's path/SHA-256/byte size/origin/role,
   the retained-but-not-committed artifacts with their hashes, and the notes.
 - `baseline-build.json` - the source-bound Release build receipt for the
-  corrected Phase E revision
-  `a2941581c02462a190f4d4289f371aed409cb1e3` (clean checkout, frozen baseline
-  contract hash, complete runtime dependency set).
+  signed-net revision `f1bdc8fbc949bc3470deaaf8d16d013df7a1c473` (clean
+  checkout, frozen baseline contract hash, complete runtime dependency set).
 - `corrected-history-preflight.json` - the mandatory corrected-full-history
   preflight receipt copied into the run (2,332/2,332 partitions hash-verified).
 - `marketlab-run-invocation.json` / `marketlab-run-outcome.json` - the helper's
@@ -21,22 +21,23 @@ path, after the independent-review corrections.
   classification (`EXPECTED`, `invalidCount` 0): full qualified stream delivery
   and the 407/407 failed-request reconciliation.
 - `replay-package-verification.json` - the strengthened Phase E package
-  verifier PASS record (32,805 checks, 31,255 authoritative payload-parity
-  comparisons, `resultsBoundToPhaseD: true`; byte-reproducible).
+  verifier PASS record (133,754 checks, 132,204 authoritative payload-parity
+  comparisons, `resultsBoundToPhaseD: true`; byte-reproducible), including the
+  required signed `netLots`, the `absoluteNetLots = |netLots|` identity and the
+  derived-inventory sign parity.
 - `replay-manifest.json` - the authoritative replay package manifest: run
   identity, event/telemetry counts, per-file hashes and the package fingerprint
-  `5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`.
+  `d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4`.
 - `replay-events.jsonl` - the complete authoritative replay event stream
   (1,454 events; SHA-256
   `2eb4d8464d2ef4e7c95e6862a3253a9afbd952222f3c5e5ce9818cd96e67cc42`; unchanged
-  from the first export because only the hard-BE telemetry snapshots changed).
+  because the signed-net addition changes only telemetry serialization).
 - `replay-telemetry-sample.jsonl` - a bounded exact-string account-telemetry
-  sample: the first 20 rows of 2019, the first 5 rows of 2020, the single
-  event-snapshot rows of 2021 and 2026, plus each of the 11
-  `hard_breakeven_activated` snapshots and the snapshot of the immediately
-  following entry event. The activation/entry pairs directly show the
-  pre-attempt state (4 open positions) and the post-entry state (5) in the
-  committed bytes (the full 45 MB of shards remain local).
+  sample with the same 49 rows as the earlier revision (the first 20 rows of
+  2019, the first 5 rows of 2020, the single event-snapshot rows of 2021 and
+  2026, plus each of the 11 `hard_breakeven_activated` snapshots and the
+  snapshot of the immediately following entry event), now carrying the exported
+  signed `netLots` alongside `grossLots`/`absoluteNetLots`.
 - `candle-cache-manifest.json`, `candle-cache-verification.json`,
   `candle-composition-verification.json` and `candle-parts/part?-manifest.json` -
   the derived full M1 candle-cache manifest (90 monthly CSVs, 2,655,664 rows,
@@ -55,7 +56,10 @@ path, after the independent-review corrections.
 One execution of the frozen corrected-full-history command (the Phase D contract
 unchanged) with the corrected Phase E implementation revision `a2941581c...`,
 launched through `MarketLab\scripts\run-backtest.ps1 -RunEvidence` and classified
-by `Test-SingleAnchorCorrectedFullHistory.ps1` as `EXPECTED`. The run's
+by `Test-SingleAnchorCorrectedFullHistory.ps1` as `EXPECTED`; the export-only
+signed-net addition was then implemented and the same command was re-executed
+at revision `f1bdc8fbc...` (launched 2026-10-03T14:31:24Z, LEAN elapsed 5,201 s,
+`EXPECTED`, zero engine errors). Each run's
 `storage/single-anchor/results.json` is **byte-identical** to the Phase D
 artifact `bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad`, so
 the replay package is derived from the exact finalized Phase D state. The
@@ -63,9 +67,18 @@ package was then verified against that binding by the strengthened
 `MarketLab\scripts\Test-SingleAnchorReplayPackage.ps1`, whose authoritative
 parity comparisons, derivations, ordering checks and mutation behavior are
 exercised by `MarketLab\tests\Test-SingleAnchorReplayPackageVerifier.ps1`
-(54/54 mutations rejected, 4/4 positive failed-run fixtures verified).
+(57/57 mutations rejected, 4/4 positive failed-run fixtures verified).
 
 ## Review corrections in this revision
+
+- Signed-net export addition (Phase F review decision): the research account now
+  exposes `CurrentNetLots` from the same observation that computes the absolute
+  value, the recorder writes `netLots` in every event and periodic telemetry
+  snapshot, and the verifier requires the field, checks `absoluteNetLots =
+  |netLots|` on every row and checks the sign against its derived basket
+  inventory. Export-only: no strategy, margin, liquidation, sizing or trade
+  behavior changed, `results.json` remains byte-identical to Phase D, and only
+  telemetry serialization changed (`events.jsonl` byte-identical).
 
 - The engine publishes an observational `HardBreakevenActivated` event at the
   real hard-BE transition, before the first tail attempt is sized or placed; all
