@@ -14,10 +14,10 @@
   "resultsByteIdenticalToPhaseD": true,
   "replayPackageContract": "marketlab-single-anchor-replay-package-v1",
   "replayPackageSha256": "d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4",
-  "replayTelemetryExtension": "signed-net: netLots is an additive telemetry extension of the v1 package contract; the original finalized v1 package without netLots remains valid (it passes the extension-aware verifier with 131,671 checks), and a package that carries the extension must carry it on every event and periodic row with absoluteNetLots = |netLots| and derived-inventory direction parity",
-  "replayVerificationChecks": 232620,
-  "replayVerificationParityChecks": 231070,
-  "verifierMutationCases": 58,
+  "replayTelemetryExtension": "signed-net: netLots is an additive telemetry extension of the v1 package contract; the original finalized v1 package without netLots remains valid (original-v1-verification.json), and a package that carries the extension must carry it on every event and periodic row with absoluteNetLots = |netLots| and derived-inventory parity for every event snapshot where inventory is defined plus every periodic sample",
+  "replayVerificationChecks": 238428,
+  "replayVerificationParityChecks": 236878,
+  "verifierMutationCases": 59,
   "positiveFailedRunFixtures": 4,
   "candleCacheContract": "marketlab-xauusd-m1-candle-cache-v1",
   "candleCacheContentSha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
@@ -95,17 +95,24 @@
     },
     {
       "path": "replay-package-verification.json",
-      "sha256": "79227a9b9f9c5fadc80c61a4bc5b168c66be596451cb62b208e321e6e5aeed37",
-      "bytes": 2150,
-      "origin": "verifier run on 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
-      "role": "the Phase E package verifier PASS record for the signed-net revision (232,620 checks, 231,070 authoritative payload-parity comparisons, resultsBoundToPhaseD true; includes the required netLots, the absolute identity and the periodic inventory/direction parity; byte-reproducible)"
+      "sha256": "75440db3158cf10a38c956054d624da3ccdf5f07644384261a24facbdc1eaa60",
+      "bytes": 2200,
+      "origin": "verifier run on 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8f...)",
+      "role": "the Phase E package verifier PASS record for the signed-net revision (238,428 checks, 236,878 authoritative payload-parity comparisons, resultsBoundToPhaseD true; includes the required netLots, the absolute identity, and derived-inventory parity for every event snapshot where inventory is defined and every periodic sample; byte-reproducible)"
+    },
+    {
+      "path": "original-v1-verification.json",
+      "sha256": "4829244bc352ea018e2e4accf40df86181552081620b62de03e2fa52266062ad",
+      "bytes": 2201,
+      "origin": "verifier run on MarketLab/output/20261001-221831-SingleAnchorVNextAlgorithm (revision a2941581...)",
+      "role": "the current extension-aware verifier PASS record for the original finalized v1 package (5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a; 136,027 checks, 134,477 parity comparisons, telemetrySignedNet false), retained as the committed compatibility evidence because the full old telemetry shards are not committed"
     },
     {
       "path": "replay-manifest.json",
       "sha256": "825d98232e79e6d6f5d381118985ee3efea30ad86a29d485972193af47231a18",
       "bytes": 4258,
       "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
-      "role": "the authoritative replay package manifest (identity, counts, per-file hashes, package fingerprint 5dcd8bfa...)"
+      "role": "the authoritative replay package manifest: run identity, event/telemetry counts, per-file hashes and the package fingerprint d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4"
     },
     {
       "path": "replay-events.jsonl",
@@ -243,8 +250,11 @@
     "Export-only signed-net addition (2026-10-03, revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473): the Phase F review kept the signed-net requirement and required the authoritative value in Phase E. ResearchAccount exposes CurrentNetLots from the same observation that computes the absolute value; ReplayRecorder writes netLots as an exact decimal string in every event and periodic telemetry snapshot. No strategy, margin, liquidation, sizing or trade behavior changed.",
     "Replay contract decision: netLots is defined as an additive signed-net telemetry extension of the v1 package contract; the original finalized v1 package remains valid (the extension-aware verifier passes it with 131,671 checks and 130,121 payload-parity comparisons, including periodic inventory parity), while a package carrying the extension must carry it on every row and is fully verified (absolute identity plus derived-inventory direction on both event and periodic samples).",
     "Run: launched 2026-10-03T14:31:24Z, LEAN elapsed 5,201 s, LEAN exit 0, helper exit 0, engine-error audit performed with zero engine errors, classification EXPECTED (invalidCount 0, 407/407 failed data requests reconciled exactly as in Phase D). The run's storage/single-anchor/results.json is byte-identical to the Phase D artifact bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad; events.jsonl is byte-identical to the previous export (2eb4d846...) because only telemetry serialization changed.",
-    "Package verification: Test-SingleAnchorReplayPackage.ps1 PASS on the exact run with -ExpectedResultsSha256 bc3958b2... (232,620 checks, 231,070 authoritative payload-parity comparisons; package d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4, telemetrySignedNet true). The verifier suite is 58/58 mutations (including the periodic sign flip and the entry-snapshot sign flip) with 4/4 positive fixtures; the C# tests are 315/315.",
+    "Package verification: Test-SingleAnchorReplayPackage.ps1 PASS on the exact signed-net run with -ExpectedResultsSha256 bc3958b2... (238,428 checks, 236,878 authoritative payload-parity comparisons; package d145a49b..., telemetrySignedNet true). The verifier binds openPositions/grossLots/absoluteNetLots/netLots against the independently derived inventory for every event telemetry snapshot where inventory is defined (all event types except the terminal hard-BE diagnostic, which by design carries a leg with no normal entry event) and for every periodic sample, accepting the derived state before or after same-quote events because a periodic sample can be written on either side of a same-quote event snapshot. The verifier suite is 59/59 mutations (including entry, periodic and Margin Call sign flips) with 4/4 positive fixtures; the C# tests are 315/315. The original finalized v1 package under the current verifier is retained in original-v1-verification.json (PASS, 136,027 checks, 134,477 parity).",
     "Evidence preservation: this is a new directory; the finalized MarketLab/evidence/20261002-phase-e-replay-export directory is unchanged. The derived M1 candle cache was not touched and its evidence files here are byte-identical copies.",
     "The long run used the same temporary AC power-plan change (standby and display disabled), with the original values captured before the change and restored exactly afterwards (STANDBYIDLE 0x00001c20, VIDEOIDLE 0x00000258). No Phase D rerun as a characterization, no historical-data qualification rerun, no parameter optimization and no hosted CI dispatch occurred."
-  ]
+  ],
+  "originalV1VerificationChecks": 136027,
+  "originalV1VerificationParityChecks": 134477,
+  "originalV1VerificationNote": "the original finalized v1 package (5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a) under the current extension-aware verifier: PASS, 136,027 checks including 134,477 payload-parity comparisons, resultsBoundToPhaseD true, telemetrySignedNet false; recorded in original-v1-verification.json"
 }

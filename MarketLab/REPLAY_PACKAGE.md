@@ -291,18 +291,22 @@ negative net short) alongside `grossLots` and `absoluteNetLots`.
 
 - This does not redefine the v1 schema. A package without `netLots` remains a
   valid `marketlab-single-anchor-replay-package-v1`, and the extension-aware
-  verifier accepts the original finalized package unchanged.
+  verifier accepts the original finalized package unchanged (compatibility
+  record `original-v1-verification.json` in the signed-net evidence directory).
 - A package that carries the extension carries it on every `kind=event` and
   `kind=periodic` row, with `absoluteNetLots = |netLots|`.
 - The verifier independently derives the basket inventory from the
-  authoritative event stream and checks the sign on event snapshots and on
-  periodic samples. Periodic parity accepts the derived state before or after
-  same-quote events, because a periodic sample and an event snapshot can share
-  a quote in either order.
+  authoritative event stream and checks the sign on **every event snapshot
+  where inventory is defined** (all event types except the terminal hard-BE
+  diagnostic, which by design carries a leg with no normal entry event) and on
+  every periodic sample. Periodic parity accepts the derived state before or
+  after same-quote events, because a periodic sample and an event snapshot can
+  share a quote in either order.
 - The producer writes the field from the research account that owns the
   position ledger; the signed-net package is
   `d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4`
   (see section 1.7 of
   [PHASE_E_REPLAY_EXPORT_RESULT.md](PHASE_E_REPLAY_EXPORT_RESULT.md)).
-- The verifier fixture suite is **58** mutation cases (including a periodic
-  `netLots` sign flip) with four positive failed-run fixtures.
+- The verifier fixture suite is **59** mutation cases (including periodic
+  and Margin Call `netLots` sign flips) with four positive failed-run
+  fixtures.

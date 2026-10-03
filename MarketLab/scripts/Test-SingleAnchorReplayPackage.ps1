@@ -1764,6 +1764,10 @@ try {
     $trailingUnitsValue = [decimal](Get-Property $resultParameters 'TrailingActivationUnits')
     $pointValueValue = [decimal](Get-Property $resultParameters 'PointValuePerLot')
     $openLegs = @{}
+    $violationExists = $false
+    foreach ($scanViolation in $events) {
+        if ([string](Get-Property $scanViolation 'type') -eq 'hard_breakeven_violated') { $violationExists = $true; break }
+    }
     foreach ($event in $events) {
         $type = [string](Get-Property $event 'type')
         $eventId = [long](Get-Property $event 'id')
@@ -1820,6 +1824,32 @@ try {
                     @('marginLevelPercent', 'afterMarginLevelPercent'), @('openPositions', 'afterOpenPositions'))) {
                 Test-NumberParity (Get-Property $snapshot $pair[0]) (Get-Property $event $pair[1]) "telemetry[$eventId].$($pair[1])"
             }
+        }
+        # Absolute and signed inventory parity for every event snapshot whose
+        # inventory is defined by the authoritative stream: all event types
+        # except the terminal hard-BE diagnostic, which by design carries a leg
+        # with no normal entry event, and a failed run's run-end snapshot for
+        # the same reason. This binds direction and exposure on every event
+        # snapshot a replay can display, not only entry/forced/HBE snapshots.
+        $inventoryDefined = ($type -ne 'hard_breakeven_violated') -and
+            -not ($type -eq 'run_ended' -and $violationExists)
+        if ($inventoryDefined) {
+            $derivedCount = 0
+            $derivedGross = [decimal]0
+            $derivedNet = [decimal]0
+            foreach ($basketLegs in $openLegs.Values) {
+                foreach ($leg in $basketLegs.Values) {
+                    $derivedCount++
+                    $derivedGross += $leg.lot
+                    if ($leg.side -ceq 'Buy') { $derivedNet += $leg.lot } else { $derivedNet -= $leg.lot }
+                }
+            }
+            Test-NumberParity (Get-Property $snapshot 'openPositions') $derivedCount "telemetry[$eventId].openPositions (derived event inventory)"
+            Test-NumberParity (Get-Property $snapshot 'grossLots') $derivedGross "telemetry[$eventId].grossLots (derived event inventory)"
+            if ($signedNetMode) {
+                Test-NumberParity (Get-Property $snapshot 'netLots') $derivedNet "telemetry[$eventId].netLots (derived event inventory)"
+            }
+            Test-NumberParity (Get-Property $snapshot 'absoluteNetLots') ([math]::Abs($derivedNet)) "telemetry[$eventId].absoluteNetLots (derived event inventory)"
         }
         # Margin Call state conditions and the account arithmetic identities, checked against the
         # already-authoritative margin contract (MarginModel.MarginLevelPercent and
@@ -2146,6 +2176,7 @@ try {
         telemetryPeriodicSamples = $periodic
         telemetrySignedNet = [bool]$signedNetMode
         telemetryPeriodicInventoryParity = $true
+        telemetryEventSnapshotInventoryParity = $true
         telemetryShards = @($telemetryFileNames)
         packageFiles = @($fileRows | ForEach-Object { [ordered]@{ name = (Get-Property $_ 'name'); sha256 = (Get-Property $_ 'sha256'); bytes = (Get-Property $_ 'bytes') } })
     }

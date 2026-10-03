@@ -311,14 +311,18 @@ section records the later revision.
 - **Contract decision.** `netLots` is an additive signed-net telemetry
   extension of `marketlab-single-anchor-replay-package-v1`, not a silent
   redefinition of it. The original finalized v1 package (without `netLots`)
-  remains valid: the extension-aware verifier passes it with **131,671 checks
-  including 130,121 payload-parity comparisons** (the v1 record itself remains
-  in the untouched
+  remains valid: the extension-aware verifier passes it with **136,027 checks
+  including 134,477 payload-parity comparisons**, and that compatibility record
+  is committed as
+  `MarketLab/evidence/20261003-phase-e-signed-net-export/original-v1-verification.json`
+  (the historical v1 record remains in the untouched
   `MarketLab/evidence/20261002-phase-e-replay-export/`). A package that carries
   the extension must carry it on every event and periodic row; the verifier
   then requires the field, checks `absoluteNetLots = |netLots|` on every row,
   and checks the sign against its independently derived basket inventory for
-  event snapshots and periodic samples alike. `REPLAY_PACKAGE.md` section 9
+  **every event snapshot where inventory is defined** (all event types except
+  the terminal hard-BE diagnostic, which by design carries a leg with no normal
+  entry event) and for every periodic sample. `REPLAY_PACKAGE.md` section 9
   documents the extension.
 - **Producer.** `ResearchAccount` exposes `CurrentNetLots` from the same
   observation that computes `_absoluteNetLots`, and `ReplayRecorder` writes it
@@ -334,21 +338,22 @@ section records the later revision.
   (`2eb4d846...`) because only telemetry serialization changed.
 - **New package identity.**
   `d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4`;
-  the verifier record on the exact run is **PASS, 232,620 checks including
-  231,070 authoritative payload-parity comparisons**,
-  `resultsBoundToPhaseD: true`, `telemetrySignedNet: true` (record SHA-256
-  `79227a9b9f9c5fadc80c61a4bc5b168c66be596451cb62b208e321e6e5aeed37`).
+  the verifier record on the exact run is **PASS, 238,428 checks including
+  236,878 authoritative payload-parity comparisons**,
+  `resultsBoundToPhaseD: true`, `telemetrySignedNet: true`,
+  `telemetryEventSnapshotInventoryParity: true` (record SHA-256
+  `75440db3158cf10a38c956054d624da3ccdf5f07644384261a24facbdc1eaa60`).
   The periodic derivation accepts the derived state before or after same-quote
   events, because a periodic sample can be written on either side of a
   same-quote event snapshot; a sign flip that matches neither state is
   rejected.
 - **Verifier proof.** `tests\Test-SingleAnchorReplayPackageVerifier.ps1` now
-  rejects **58/58** mutations (adding a periodic `netLots` sign flip that the
-  derived periodic direction parity catches) with **4/4** positive fixtures;
-  the C# tests are **315/315**.
+  rejects **59/59** mutations (adding periodic and Margin Call `netLots` sign
+  flips that the derived event/periodic direction parity catches) with **4/4**
+  positive fixtures; the C# tests are **315/315**.
 - **New evidence.** The signed-net run has its own directory,
   `MarketLab/evidence/20261003-phase-e-signed-net-export/` (manifest SHA-256
-  `e76c6216e836ebef1e8e493eee85a3fab2790a020514366da8d1df15e150946d`),
+  `f61efd702f527ee95d769421ee8c654535bc0fec56fe94f81081d002c10fca79`),
   with the new receipts, classification, verifier record, package manifest, a
   regenerated 49-row telemetry sample carrying `netLots`, and byte-identical
   copies of the unchanged candle evidence. The finalized 20261002 evidence

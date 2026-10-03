@@ -22,8 +22,15 @@ here are byte-identical).
 - `corrected-full-history-classification.json` - the authoritative
   classification (`EXPECTED`, `invalidCount` 0) for the re-run.
 - `replay-package-verification.json` - the strengthened package verifier PASS
-  record (232,620 checks, 231,070 authoritative payload-parity comparisons,
-  `resultsBoundToPhaseD: true`, `telemetrySignedNet: true`).
+  record (238,428 checks, 236,878 authoritative payload-parity comparisons,
+  `resultsBoundToPhaseD: true`, `telemetrySignedNet: true`,
+  `telemetryEventSnapshotInventoryParity: true`).
+- `original-v1-verification.json` - the current extension-aware verifier PASS
+  record for the original finalized v1 package
+  (`5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a`; 136,027
+  checks, 134,477 payload-parity comparisons, `telemetrySignedNet: false`),
+  retained as the committed compatibility evidence because the full old
+  telemetry shards are not committed.
 - `replay-manifest.json` - the authoritative replay package manifest (package
   fingerprint `d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4`).
 - `replay-events.jsonl` - the complete authoritative replay event stream
@@ -55,20 +62,23 @@ telemetry serialization changed.
 `netLots` is an **additive signed-net telemetry extension** of the
 `marketlab-single-anchor-replay-package-v1` contract, not a silent
 redefinition. The original finalized v1 package (without `netLots`) remains
-valid and passes the extension-aware verifier (131,671 checks, 130,121
-payload-parity comparisons). A package that carries the extension must carry it
-on every event and periodic row; the verifier then requires the field, checks
-`absoluteNetLots = |netLots|` on every row, and checks the sign against its
-independently derived basket inventory for event and periodic snapshots alike
-(the periodic derivation accepts the state before or after same-quote events,
-because a periodic sample may be written on either side of a same-quote event
-snapshot).
+valid and passes the extension-aware verifier (136,027 checks, 134,477
+payload-parity comparisons; record `original-v1-verification.json`). A package
+that carries the extension must carry it on every event and periodic row; the
+verifier then requires the field, checks `absoluteNetLots = |netLots|` on every
+row, and checks the sign against its independently derived basket inventory for
+**every event snapshot where inventory is defined** (all event types except the
+terminal hard-BE diagnostic, which by design carries a leg with no normal entry
+event) and for every periodic sample (the periodic derivation accepts the state
+before or after same-quote events, because a periodic sample may be written on
+either side of a same-quote event snapshot).
 
 ## Local validation
 
-- Verifier fixture suite (updated): **58/58** mutation cases rejected with
+- Verifier fixture suite (updated): **59/59** mutation cases rejected with
   **4/4** positive failed-run fixtures verified; the added periodic sign-flip
-  mutation is rejected through the derived periodic direction parity.
+  and Margin Call sign-flip mutations are rejected through the derived
+  event/periodic direction parity.
 - C# tests: **315/315** (the signed value and its absolute complement are
   asserted by the recorder and account tests).
 - The full record is

@@ -1594,6 +1594,21 @@ $cases = @(
             }
             Write-JsonLinesFile $path $rows
         }),
+    (New-Case 'telemetry margin_call_entered netLots sign flipped' @('telemetry-2019.jsonl') {
+            param($directory)
+            $events = Read-JsonLinesArray (Get-ArtifactPath $directory 'events.jsonl')
+            $marginId = $null
+            foreach ($row in $events) {
+                if ([string]$row.type -eq 'margin_call_entered') { $marginId = [long]$row.id; break }
+            }
+            if ($null -eq $marginId) { throw 'the margin-call snapshot target is missing' }
+            $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $marginId) { $row.netLots = '0.10' }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
     (New-Case 'telemetry netLots/absoluteNetLots mismatch on a periodic row' @('telemetry-2019.jsonl') {
             param($directory)
             $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
