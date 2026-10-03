@@ -1,0 +1,250 @@
+{
+  "contract": "marketlab-phase-e-replay-export-evidence-v1",
+  "role": "Signed-net Phase E replay export: the frozen corrected-full-history model executed with the export-only signed net exposure added to the replay telemetry, classified EXPECTED, bound byte-for-byte to the Phase D result, and verified with the strengthened package verifier including periodic-sample direction and exposure parity; the derived M1 candle cache is unchanged from the finalized 20261002 evidence. This is a new evidence directory; the finalized 20261002 evidence remains byte-identical.",
+  "runDateUtc": "2026-10-03",
+  "implementationCommit": "f1bdc8fbc949bc3470deaaf8d16d013df7a1c473",
+  "baselineContract": "MarketLab/config/baseline-contract.json",
+  "baselineContractSha256": "0882b7aba759de88fa8480878ef8f6fc5b90448de0fc5dd7e083b8c5f84d361a",
+  "correctedFullHistoryContract": "MarketLab/config/corrected-full-history-contract.json",
+  "correctedFullHistoryContractSha256": "d97b3c9b375ed2e53a2af784618a90e4db5e5ab9c627ffc9f0638a8c245cd44f",
+  "modelRevision": "marketlab-single-anchor-broker-liquidation-v1",
+  "stopOutModel": "BrokerLiquidation",
+  "phaseDResultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
+  "phaseEResultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
+  "resultsByteIdenticalToPhaseD": true,
+  "replayPackageContract": "marketlab-single-anchor-replay-package-v1",
+  "replayPackageSha256": "d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4",
+  "replayTelemetryExtension": "signed-net: netLots is an additive telemetry extension of the v1 package contract; the original finalized v1 package without netLots remains valid (it passes the extension-aware verifier with 131,671 checks), and a package that carries the extension must carry it on every event and periodic row with absoluteNetLots = |netLots| and derived-inventory direction parity",
+  "replayVerificationChecks": 232620,
+  "replayVerificationParityChecks": 231070,
+  "verifierMutationCases": 58,
+  "positiveFailedRunFixtures": 4,
+  "candleCacheContract": "marketlab-xauusd-m1-candle-cache-v1",
+  "candleCacheContentSha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
+  "candleCacheManifestSha256": "75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1",
+  "candleQualificationRecordSha256": "e9c72d1abf15b1cc6ae9c2d2ff793c49091a26b2439258341c2d32a793632c8d",
+  "candleReDerivation": {
+    "note": "the candle cache was not touched by this revision; the earlier re-derivation record still binds it and the evidence copies here are byte-identical to the finalized 20261002 evidence",
+    "generatorRevision": "a2941581c02462a190f4d4289f371aed409cb1e3",
+    "ranges": [
+      {
+        "folder": "partA",
+        "start": "2019-01-01",
+        "end": "2020-11-30",
+        "manifestSha256": "d04895049bbc3ac11128fb221c59de8498618291cf1b814ddb42890edc73505f"
+      },
+      {
+        "folder": "partB",
+        "start": "2020-12-01",
+        "end": "2022-10-31",
+        "manifestSha256": "8f38b981e7db20d56fb67fb790045ca76b84e0c7d3ed6751a6b11b58ccad3f6c"
+      },
+      {
+        "folder": "partC",
+        "start": "2022-11-01",
+        "end": "2024-09-30",
+        "manifestSha256": "f329daa1a92566ba15af8def5ab734e66302a91d6d460c762ef48c878ef1bc23"
+      },
+      {
+        "folder": "partD",
+        "start": "2024-10-01",
+        "end": "2026-06-30",
+        "manifestSha256": "20fdabecb22dcac643e383619640352b3a73573724cdd8ac73b5ab6984a93a5f"
+      }
+    ],
+    "monthlyRecordsEqual": 90,
+    "monthlyRecordsCompared": 90,
+    "finalCsvBytesUnchanged": true
+  },
+  "sourceRunDirectory": "MarketLab/output/20261003-143124-SingleAnchorVNextAlgorithm",
+  "artifacts": [
+    {
+      "path": "baseline-build.json",
+      "sha256": "6708110d2cd8c402d5f728dc3ee87ca510737fb647c4b08bb7e2d5cd690b8c8a",
+      "bytes": 52169,
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
+      "role": "source-bound Release build receipt for the signed-net revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473"
+    },
+    {
+      "path": "corrected-history-preflight.json",
+      "sha256": "f0a5c07eccfe839802782095651a916791a2b20ac6bbf7d53d95667749721867",
+      "bytes": 2312,
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
+      "role": "corrected-full-history preflight receipt (2,332/2,332 partitions) copied into the run"
+    },
+    {
+      "path": "marketlab-run-invocation.json",
+      "sha256": "5b899a566e654c1151be05c55015d4b1a23ab9b8d984c1040ef5e9738777b695",
+      "bytes": 7260,
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
+      "role": "pre-run invocation evidence: resolved inputs, exact launcher argv, contract/build hashes, clean repository head"
+    },
+    {
+      "path": "marketlab-run-outcome.json",
+      "sha256": "b17c99fd5814364ac15bff1d331fb40a7dfc611ab4a12211cd0cc17022217da7",
+      "bytes": 52834,
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
+      "role": "post-run outcome evidence: exit codes, engine-error audit, data-monitor result, unchanged runtime, results SHA-256"
+    },
+    {
+      "path": "corrected-full-history-classification.json",
+      "sha256": "bf896fc62aa58b8dd9a4aaddff2b0696533116f530d41effb4b7dc8ff4d1ce28",
+      "bytes": 28820,
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
+      "role": "authoritative corrected-full-history classification: EXPECTED, invalidCount 0, 407/407 failed requests reconciled"
+    },
+    {
+      "path": "replay-package-verification.json",
+      "sha256": "79227a9b9f9c5fadc80c61a4bc5b168c66be596451cb62b208e321e6e5aeed37",
+      "bytes": 2150,
+      "origin": "verifier run on 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
+      "role": "the Phase E package verifier PASS record for the signed-net revision (232,620 checks, 231,070 authoritative payload-parity comparisons, resultsBoundToPhaseD true; includes the required netLots, the absolute identity and the periodic inventory/direction parity; byte-reproducible)"
+    },
+    {
+      "path": "replay-manifest.json",
+      "sha256": "825d98232e79e6d6f5d381118985ee3efea30ad86a29d485972193af47231a18",
+      "bytes": 4258,
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
+      "role": "the authoritative replay package manifest (identity, counts, per-file hashes, package fingerprint 5dcd8bfa...)"
+    },
+    {
+      "path": "replay-events.jsonl",
+      "sha256": "2eb4d8464d2ef4e7c95e6862a3253a9afbd952222f3c5e5ce9818cd96e67cc42",
+      "bytes": 679227,
+      "origin": "run 20261003-143124-SingleAnchorVNextAlgorithm (revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473)",
+      "role": "the complete authoritative replay event stream (1,454 events; SHA-256 2eb4d8464d2ef4e7c95e6862a3253a9afbd952222f3c5e5ce9818cd96e67cc42; byte-identical to the original export because the signed-net addition changes only telemetry serialization)"
+    },
+    {
+      "path": "replay-telemetry-sample.jsonl",
+      "sha256": "e30a1a4c6d7a9a458f39914a8875ca3601aa6aba71f517dcac9a56fb9592afa8",
+      "bytes": 21263,
+      "origin": "regenerated from 20261003-143124-SingleAnchorVNextAlgorithm telemetry shards",
+      "role": "a bounded exact-string account-telemetry sample with the same 49 row keys as the original finalized sample (first 20 rows of 2019, first 5 of 2020, the single 2021/2026 snapshots and all 11 hard-BE activation/attempt pairs), now carrying the exported signed netLots"
+    },
+    {
+      "path": "candle-cache-manifest.json",
+      "sha256": "75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1",
+      "bytes": 27425,
+      "origin": "copied byte-identically from MarketLab/evidence/20261002-phase-e-replay-export",
+      "role": "the derived full M1 candle-cache manifest (90 monthly files, per-file hashes, content fingerprint ab1b0c7f..., qualification-record binding e9c72d1a...) (unchanged; copied byte-identically from the finalized 20261002 evidence)"
+    },
+    {
+      "path": "candle-cache-verification.json",
+      "sha256": "05bd41032037ea34cb5e142af211faeedd2b42d2916f7045547fae70bd8f776d",
+      "bytes": 1402,
+      "origin": "copied byte-identically from MarketLab/evidence/20261002-phase-e-replay-export",
+      "role": "verify-candles PASS: 2,332/2,332 qualified partitions hashed, cache files, month coverage and the qualification-record binding verified (9/9 checks) (unchanged)"
+    },
+    {
+      "path": "candle-composition-verification.json",
+      "sha256": "c2abf1b068f157156db96b2dbe7a8dbf0da7ccdab47bd6d86781c34a94cf3d06",
+      "bytes": 2993,
+      "origin": "copied byte-identically from MarketLab/evidence/20261002-phase-e-replay-export",
+      "role": "verify-candle-composition PASS (10/10 checks): the final cache is the contiguous month-aligned union of the four re-derived part caches (unchanged)"
+    },
+    {
+      "path": "candle-parts/partA-manifest.json",
+      "sha256": "d04895049bbc3ac11128fb221c59de8498618291cf1b814ddb42890edc73505f",
+      "bytes": 8192,
+      "origin": "copied byte-identically from MarketLab/evidence/20261002-phase-e-replay-export",
+      "role": "a re-derived month-aligned part manifest binding the PASS qualification record; every one of its monthly records equals the final cache byte-for-byte (unchanged; copied byte-identically from the finalized 20261002 evidence)"
+    },
+    {
+      "path": "candle-parts/partB-manifest.json",
+      "sha256": "8f38b981e7db20d56fb67fb790045ca76b84e0c7d3ed6751a6b11b58ccad3f6c",
+      "bytes": 8193,
+      "origin": "copied byte-identically from MarketLab/evidence/20261002-phase-e-replay-export",
+      "role": "a re-derived month-aligned part manifest binding the PASS qualification record; every one of its monthly records equals the final cache byte-for-byte (unchanged; copied byte-identically from the finalized 20261002 evidence)"
+    },
+    {
+      "path": "candle-parts/partC-manifest.json",
+      "sha256": "f329daa1a92566ba15af8def5ab734e66302a91d6d460c762ef48c878ef1bc23",
+      "bytes": 8192,
+      "origin": "copied byte-identically from MarketLab/evidence/20261002-phase-e-replay-export",
+      "role": "a re-derived month-aligned part manifest binding the PASS qualification record; every one of its monthly records equals the final cache byte-for-byte (unchanged; copied byte-identically from the finalized 20261002 evidence)"
+    },
+    {
+      "path": "candle-parts/partD-manifest.json",
+      "sha256": "20fdabecb22dcac643e383619640352b3a73573724cdd8ac73b5ab6984a93a5f",
+      "bytes": 7619,
+      "origin": "copied byte-identically from MarketLab/evidence/20261002-phase-e-replay-export",
+      "role": "a re-derived month-aligned part manifest binding the PASS qualification record; every one of its monthly records equals the final cache byte-for-byte (unchanged; copied byte-identically from the finalized 20261002 evidence)"
+    }
+  ],
+  "notCommitted": [
+    {
+      "path": "storage/single-anchor/results.json",
+      "sha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
+      "bytes": 1602034,
+      "reason": "the authoritative strategy result; byte-identical to the Phase D artifact (SHA-256 bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad) committed in the Phase D evidence directory, so it is not duplicated"
+    },
+    {
+      "path": "replay/telemetry-2019.jsonl",
+      "sha256": "f6ba81ddf1c3a6c1c00ad4990699984f5b8ca706fba0688bb48fc64ecaf246c1",
+      "bytes": 31599111,
+      "reason": "full telemetry shard; the manifest and a bounded sample are committed"
+    },
+    {
+      "path": "replay/telemetry-2020.jsonl",
+      "sha256": "44f910b38d67c33872b31ae2627080dffadfa188373def27bbbbe0d38668d31c",
+      "bytes": 15357995,
+      "reason": "full telemetry shard; the manifest and a bounded sample are committed"
+    },
+    {
+      "path": "replay/telemetry-2021.jsonl",
+      "sha256": "4c757035e3a71c4a911efd618736d9358dea1d343f600884b6fb4e1482c69ced",
+      "bytes": 377,
+      "reason": "single event snapshot (second rejection episode); copied into the committed sample"
+    },
+    {
+      "path": "replay/telemetry-2026.jsonl",
+      "sha256": "acdcd8ac9cf3f1fd885c423d3809b608c0b0cbe6f2c1eb75a02b0c92cfded55b",
+      "bytes": 377,
+      "reason": "single run-end event snapshot; copied into the committed sample"
+    },
+    {
+      "path": "log.txt",
+      "sha256": "b0e786b0d4884e475254697d17a1e4738e911448ed3c74d0ca5965a17a98c2ff",
+      "bytes": 481176,
+      "reason": "engine log; its strategy facts are in results.json and the classification record"
+    },
+    {
+      "path": "SingleAnchorVNextAlgorithm-log.txt",
+      "sha256": "14872a0915ee1c76721c3366236db2bbb4d78831706eece10785337ae5b75ec7",
+      "bytes": 323511,
+      "reason": "engine algorithm log"
+    },
+    {
+      "path": "SingleAnchorVNextAlgorithm.json",
+      "sha256": "3d713f2e4833cd45e71745f9361dfc42a46824fa306228fbaa93e158ce0ae33f",
+      "bytes": 1463595,
+      "reason": "LEAN result packet; LEAN placed no orders"
+    },
+    {
+      "path": "SingleAnchorVNextAlgorithm-summary.json",
+      "sha256": "a82598c4d1da15cde6f6c6be26fcbf9b1bd3059272a60b578b9d6063f0119f6e",
+      "bytes": 23567,
+      "reason": "LEAN summary packet (empty trade statistics by design)"
+    },
+    {
+      "path": "phase-e3-run-console.log",
+      "sha256": "f2149856bbb6968e942e17bc3ce3f29c1e7dac7d04bd510b6983c699047d43fc",
+      "bytes": 473041,
+      "reason": "helper console capture for the signed-net run; the machine-generated invocation/outcome evidence is authoritative"
+    },
+    {
+      "path": "candle cache (E:\\MarketLab\\data\\lean\\xauusd-m1-candles)",
+      "sha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
+      "bytes": 172160895,
+      "reason": "the full derived M1 cache is unchanged (content identity ab1b0c7f...); the committed candle evidence here is byte-identical to the finalized 20261002 evidence"
+    }
+  ],
+  "notes": [
+    "Export-only signed-net addition (2026-10-03, revision f1bdc8fbc949bc3470deaaf8d16d013df7a1c473): the Phase F review kept the signed-net requirement and required the authoritative value in Phase E. ResearchAccount exposes CurrentNetLots from the same observation that computes the absolute value; ReplayRecorder writes netLots as an exact decimal string in every event and periodic telemetry snapshot. No strategy, margin, liquidation, sizing or trade behavior changed.",
+    "Replay contract decision: netLots is defined as an additive signed-net telemetry extension of the v1 package contract; the original finalized v1 package remains valid (the extension-aware verifier passes it with 131,671 checks and 130,121 payload-parity comparisons, including periodic inventory parity), while a package carrying the extension must carry it on every row and is fully verified (absolute identity plus derived-inventory direction on both event and periodic samples).",
+    "Run: launched 2026-10-03T14:31:24Z, LEAN elapsed 5,201 s, LEAN exit 0, helper exit 0, engine-error audit performed with zero engine errors, classification EXPECTED (invalidCount 0, 407/407 failed data requests reconciled exactly as in Phase D). The run's storage/single-anchor/results.json is byte-identical to the Phase D artifact bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad; events.jsonl is byte-identical to the previous export (2eb4d846...) because only telemetry serialization changed.",
+    "Package verification: Test-SingleAnchorReplayPackage.ps1 PASS on the exact run with -ExpectedResultsSha256 bc3958b2... (232,620 checks, 231,070 authoritative payload-parity comparisons; package d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4, telemetrySignedNet true). The verifier suite is 58/58 mutations (including the periodic sign flip and the entry-snapshot sign flip) with 4/4 positive fixtures; the C# tests are 315/315.",
+    "Evidence preservation: this is a new directory; the finalized MarketLab/evidence/20261002-phase-e-replay-export directory is unchanged. The derived M1 candle cache was not touched and its evidence files here are byte-identical copies.",
+    "The long run used the same temporary AC power-plan change (standby and display disabled), with the original values captured before the change and restored exactly afterwards (STANDBYIDLE 0x00001c20, VIDEOIDLE 0x00000258). No Phase D rerun as a characterization, no historical-data qualification rerun, no parameter optimization and no hosted CI dispatch occurred."
+  ]
+}

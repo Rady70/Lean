@@ -306,6 +306,30 @@ function Test-NumberParity([object]$actual, [object]$expected, [string]$where) {
     }
 }
 
+# Inventory summary of one basket's derived leg set.
+function Get-DerivedInventory([hashtable]$legs) {
+    $count = 0
+    $gross = [decimal]0
+    $net = [decimal]0
+    foreach ($leg in $legs.Values) {
+        $count++
+        $gross += $leg.lot
+        if ($leg.side -ceq 'Buy') { $net += $leg.lot } else { $net -= $leg.lot }
+    }
+    return [pscustomobject]@{ Count = $count; Gross = $gross; Net = $net }
+}
+
+# Non-failing matcher: does a telemetry row equal one derived inventory summary?
+# The signed net is compared only for the signed-net extension packages.
+function Test-DerivedInventoryMatches([object]$row, $summary, [bool]$signedNet) {
+    if ($null -eq $summary) { return $false }
+    if ([int](Get-Property $row 'openPositions') -ne $summary.Count) { return $false }
+    if ([decimal](Get-Property $row 'grossLots') -ne $summary.Gross) { return $false }
+    if ([decimal](Get-Property $row 'absoluteNetLots') -ne [math]::Abs($summary.Net)) { return $false }
+    if ($signedNet -and [decimal](Get-Property $row 'netLots') -ne $summary.Net) { return $false }
+    return $true
+}
+
 # Account-arithmetic identities (free margin, margin level) are exact decimal combinations in
 # ResearchAccount; the comparison allows only a numeric-scale tolerance (the frozen run contains
 # last-digit decimal scale artifacts of order 1e-25, far below any meaningful corruption).
@@ -369,7 +393,11 @@ function Assert-ExactString([object]$object, [string]$name, [string]$where, [boo
     }
 }
 
-$requiredDecimalFields = @('balance', 'equity', 'floatingProfit', 'realizedProfit', 'usedMargin', 'grossLots', 'netLots', 'absoluteNetLots')
+$requiredDecimalFields = @('balance', 'equity', 'floatingProfit', 'realizedProfit', 'usedMargin', 'grossLots', 'absoluteNetLots')
+# The signed net exposure (netLots) is a documented additive telemetry extension
+# of the v1 package contract: the original finalized v1 package without it stays
+# valid, and a package that carries it must carry it on every row (checked in the
+# telemetry scan below, including the periodic-sample direction).
 $nullableDecimalFields = @('freeMargin', 'marginLevelPercent')
 
 try {
@@ -1521,6 +1549,15 @@ try {
     $previousTelemetrySequence = $null
     $quoteTicksProcessedValue = [long](Get-Property $results 'quoteTicksProcessed')
     $lastPeriodicTime = $null
+    # Signed-net extension mode and the independent derived inventory used to
+    # verify the periodic-sample direction and exposure in telemetry order. The
+    # inventory is advanced by authoritative event time, not by snapshot file
+    # position, because a periodic sample and an event snapshot can share a
+    # quote with the sample written first.
+    $signedNetMode = $null
+    $scanLegs = @{}
+    $scanActiveBasket = $null
+    $scanEventIndex = 0
     foreach ($telemetryName in $telemetryFileNames) {
         $telemetryPath = Join-Path $replayDirectory $telemetryName
         if (-not (Test-Path -LiteralPath $telemetryPath -PathType Leaf)) {
@@ -1532,14 +1569,22 @@ try {
             if ($kind -ne 'event' -and $kind -ne 'periodic') { Add-Failure "unknown telemetry kind '$kind'"; continue }
             $openPositions = [int](Get-Property $row 'openPositions')
             if ($openPositions -eq 0) { $lastPeriodicTime = $null }
+            $hasSignedNet = $null -ne $row.PSObject.Properties['netLots']
+            if ($null -eq $signedNetMode) { $signedNetMode = $hasSignedNet }
+            elseif ($signedNetMode -ne $hasSignedNet) {
+                Add-Failure "telemetry[$telemetryName] does not carry the signed-net extension on every row"
+            }
             foreach ($field in $requiredDecimalFields) { Assert-ExactString $row $field "telemetry[$telemetryName] kind=$kind" $true }
             foreach ($field in $nullableDecimalFields) { Assert-ExactString $row $field "telemetry[$telemetryName] kind=$kind" $false }
             try {
                 $time = Convert-UtcTime (Get-Property $row 'time') "telemetry.time"
-                $rowNet = Convert-JsonDecimal (Get-Property $row 'netLots') "telemetry[$telemetryName].netLots"
-                $rowAbsoluteNet = Convert-JsonDecimal (Get-Property $row 'absoluteNetLots') "telemetry[$telemetryName].absoluteNetLots"
-                if ($null -ne $rowNet -and $null -ne $rowAbsoluteNet) {
-                    Test-NumberParity $rowAbsoluteNet ([math]::Abs($rowNet)) "telemetry[$telemetryName].absoluteNetLots identity"
+                if ($signedNetMode) {
+                    Assert-ExactString $row 'netLots' "telemetry[$telemetryName] kind=$kind" $true
+                    $rowNet = Convert-JsonDecimal (Get-Property $row 'netLots') "telemetry[$telemetryName].netLots"
+                    $rowAbsoluteNet = Convert-JsonDecimal (Get-Property $row 'absoluteNetLots') "telemetry[$telemetryName].absoluteNetLots"
+                    if ($null -ne $rowNet -and $null -ne $rowAbsoluteNet) {
+                        Test-NumberParity $rowAbsoluteNet ([math]::Abs($rowNet)) "telemetry[$telemetryName].absoluteNetLots identity"
+                    }
                 }
                 if ($null -ne $previousTelemetryTime -and $time -lt $previousTelemetryTime) {
                     Add-Failure "telemetry goes backwards in time at $($time.ToString('o'))"
@@ -1571,6 +1616,108 @@ try {
                         }
                     }
                     $lastPeriodicTime = $time
+                    # The periodic inventory is derived from the authoritative
+                    # events at or before the row time. A periodic sample can be
+                    # written either side of a same-quote event snapshot (quote
+                    # milliseconds can repeat), so the row must match the derived
+                    # state before or after the same-time events; anything else is
+                    # a defect. The signed net is checked when the package carries
+                    # the signed-net telemetry extension.
+                    while ($scanEventIndex -lt $events.Count) {
+                        $scanEvent = $events[$scanEventIndex]
+                        $scanType = [string](Get-Property $scanEvent 'type')
+                        if ($scanType -eq 'entry_rejection_summary') { $scanEventIndex++; continue }
+                        $scanEventTime = Convert-UtcTime (Get-Property $scanEvent 'time') "scan event time"
+                        if ($scanEventTime -ge $time) { break }
+                        $scanBasket = Get-Property $scanEvent 'basket'
+                        if ($null -ne $scanBasket) {
+                            $scanBasket = [long]$scanBasket
+                            switch ($scanType) {
+                                'basket_anchored' {
+                                    $scanLegs[$scanBasket] = @{}
+                                    $scanActiveBasket = $scanBasket
+                                }
+                                'entry_executed' {
+                                    if (-not $scanLegs.ContainsKey($scanBasket)) { $scanLegs[$scanBasket] = @{} }
+                                    $scanLegs[$scanBasket][[long](Get-Property $scanEvent 'tradeNumber')] = @{
+                                        side = [string](Get-Property $scanEvent 'side'); lot = [decimal](Get-Property $scanEvent 'placedLot')
+                                    }
+                                }
+                                'forced_liquidation' {
+                                    if ($scanLegs.ContainsKey($scanBasket)) { [void]$scanLegs[$scanBasket].Remove([long](Get-Property $scanEvent 'tradeNumber')) }
+                                }
+                                'strategy_exit' {
+                                    if ($scanLegs.ContainsKey($scanBasket)) { $scanLegs[$scanBasket] = @{} }
+                                    $scanActiveBasket = $null
+                                }
+                                'basket_liquidated' {
+                                    if ($scanLegs.ContainsKey($scanBasket)) { $scanLegs[$scanBasket] = @{} }
+                                    $scanActiveBasket = $null
+                                }
+                                default { }
+                            }
+                        }
+                        $scanEventIndex++
+                    }
+                    $beforeSummary = $null
+                    if ($null -ne $scanActiveBasket -and $scanLegs.ContainsKey($scanActiveBasket)) {
+                        $beforeSummary = Get-DerivedInventory $scanLegs[$scanActiveBasket]
+                    }
+                    while ($scanEventIndex -lt $events.Count) {
+                        $scanEvent = $events[$scanEventIndex]
+                        $scanType = [string](Get-Property $scanEvent 'type')
+                        if ($scanType -eq 'entry_rejection_summary') { $scanEventIndex++; continue }
+                        $scanEventTime = Convert-UtcTime (Get-Property $scanEvent 'time') "scan event time"
+                        if ($scanEventTime -gt $time) { break }
+                        $scanBasket = Get-Property $scanEvent 'basket'
+                        if ($null -ne $scanBasket) {
+                            $scanBasket = [long]$scanBasket
+                            switch ($scanType) {
+                                'basket_anchored' {
+                                    $scanLegs[$scanBasket] = @{}
+                                    $scanActiveBasket = $scanBasket
+                                }
+                                'entry_executed' {
+                                    if (-not $scanLegs.ContainsKey($scanBasket)) { $scanLegs[$scanBasket] = @{} }
+                                    $scanLegs[$scanBasket][[long](Get-Property $scanEvent 'tradeNumber')] = @{
+                                        side = [string](Get-Property $scanEvent 'side'); lot = [decimal](Get-Property $scanEvent 'placedLot')
+                                    }
+                                }
+                                'forced_liquidation' {
+                                    if ($scanLegs.ContainsKey($scanBasket)) { [void]$scanLegs[$scanBasket].Remove([long](Get-Property $scanEvent 'tradeNumber')) }
+                                }
+                                'strategy_exit' {
+                                    if ($scanLegs.ContainsKey($scanBasket)) { $scanLegs[$scanBasket] = @{} }
+                                    $scanActiveBasket = $null
+                                }
+                                'basket_liquidated' {
+                                    if ($scanLegs.ContainsKey($scanBasket)) { $scanLegs[$scanBasket] = @{} }
+                                    $scanActiveBasket = $null
+                                }
+                                default { }
+                            }
+                        }
+                        $scanEventIndex++
+                    }
+                    $afterSummary = $null
+                    if ($null -ne $scanActiveBasket -and $scanLegs.ContainsKey($scanActiveBasket)) {
+                        $afterSummary = Get-DerivedInventory $scanLegs[$scanActiveBasket]
+                    }
+                    $script:checks++
+                    $script:parityChecks++
+                    if (-not (Test-DerivedInventoryMatches $row $beforeSummary $signedNetMode) -and
+                        -not (Test-DerivedInventoryMatches $row $afterSummary $signedNetMode)) {
+                        $packageShape = "$([int](Get-Property $row 'openPositions'))/$([string](Get-Property $row 'grossLots'))/$([string](Get-Property $row 'absoluteNetLots'))"
+                        if ($null -ne $afterSummary) {
+                            Add-Failure "periodic telemetry at $($time.ToString('o')) does not match the derived inventory before or after the same-quote events (package $packageShape vs derived $($afterSummary.Count)/$($afterSummary.Gross)/$([math]::Abs($afterSummary.Net)))"
+                        }
+                        elseif ($null -ne $beforeSummary) {
+                            Add-Failure "periodic telemetry at $($time.ToString('o')) does not match the derived inventory before or after the same-quote events (package $packageShape vs derived $($beforeSummary.Count)/$($beforeSummary.Gross)/$([math]::Abs($beforeSummary.Net)))"
+                        }
+                        else {
+                            Add-Failure "periodic telemetry at $($time.ToString('o')) has no derived inventory before or after the same-quote events"
+                        }
+                    }
                 }
                 else {
                     $eventSnapshots++
@@ -1789,7 +1936,9 @@ try {
             $qualifier = if ($type -eq 'entry_executed') { 'post-entry' } else { 'post-close' }
             Test-NumberParity (Get-Property $snapshot 'openPositions') $count "telemetry[$eventId].openPositions (derived $qualifier)"
             Test-NumberParity (Get-Property $snapshot 'grossLots') $gross "telemetry[$eventId].grossLots (derived $qualifier)"
-            Test-NumberParity (Get-Property $snapshot 'netLots') $net "telemetry[$eventId].netLots (derived $qualifier)"
+            if ($signedNetMode) {
+                Test-NumberParity (Get-Property $snapshot 'netLots') $net "telemetry[$eventId].netLots (derived $qualifier)"
+            }
             Test-NumberParity (Get-Property $snapshot 'absoluteNetLots') ([math]::Abs($net)) "telemetry[$eventId].absoluteNetLots (derived $qualifier)"
         }
         if ($type -eq 'hard_breakeven_activated' -or $type -eq 'trailing_activated') {
@@ -1810,7 +1959,9 @@ try {
                 # snapshot must show the surviving pre-attempt inventory.
                 Test-NumberParity (Get-Property $snapshot 'openPositions') $count "telemetry[$eventId].openPositions (derived pre-attempt)"
                 Test-NumberParity (Get-Property $snapshot 'grossLots') $gross "telemetry[$eventId].grossLots (derived pre-attempt)"
-                Test-NumberParity (Get-Property $snapshot 'netLots') $net "telemetry[$eventId].netLots (derived pre-attempt)"
+                if ($signedNetMode) {
+                    Test-NumberParity (Get-Property $snapshot 'netLots') $net "telemetry[$eventId].netLots (derived pre-attempt)"
+                }
                 Test-NumberParity (Get-Property $snapshot 'absoluteNetLots') ([math]::Abs($net)) "telemetry[$eventId].absoluteNetLots (derived pre-attempt)"
             }
             else {
@@ -1993,6 +2144,8 @@ try {
         eventTypes = $eventTypesOrdered
         telemetryEventSnapshots = $eventSnapshots
         telemetryPeriodicSamples = $periodic
+        telemetrySignedNet = [bool]$signedNetMode
+        telemetryPeriodicInventoryParity = $true
         telemetryShards = @($telemetryFileNames)
         packageFiles = @($fileRows | ForEach-Object { [ordered]@{ name = (Get-Property $_ 'name'); sha256 = (Get-Property $_ 'sha256'); bytes = (Get-Property $_ 'bytes') } })
     }

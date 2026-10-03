@@ -1,15 +1,15 @@
 {
   "contract": "marketlab-single-anchor-replay-package-verification-v1",
-  "runDirectory": "20261001-221831-SingleAnchorVNextAlgorithm",
+  "runDirectory": "20261003-143124-SingleAnchorVNextAlgorithm",
   "pass": true,
-  "checks": 32805,
-  "parityChecks": 31255,
+  "checks": 232620,
+  "parityChecks": 231070,
   "failures": [],
   "failuresTruncated": false,
   "resultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
   "expectedResultsSha256": "bc3958b2629e8930ef8de3890cac9c80006f26d7c8dffdf5ecf54d6a6aa9bdad",
   "resultsBoundToPhaseD": true,
-  "packageSha256": "5dcd8bfaffe76c9d2c8eec002073f62fe18b5d0d40b0602dbad0e59f6846097a",
+  "packageSha256": "d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4",
   "eventCount": 1454,
   "eventTypes": {
     "basket_anchored": 280,
@@ -29,6 +29,8 @@
   },
   "telemetryEventSnapshots": 1452,
   "telemetryPeriodicSamples": 98866,
+  "telemetrySignedNet": true,
+  "telemetryPeriodicInventoryParity": true,
   "telemetryShards": [
     "telemetry-2019.jsonl",
     "telemetry-2020.jsonl",
@@ -43,23 +45,23 @@
     },
     {
       "name": "telemetry-2019.jsonl",
-      "sha256": "b4260d475416bb640f484c092465a353287639a887eb60af7fd6a23318ec6212",
-      "bytes": 30417274.0
+      "sha256": "f6ba81ddf1c3a6c1c00ad4990699984f5b8ca706fba0688bb48fc64ecaf246c1",
+      "bytes": 31599111.0
     },
     {
       "name": "telemetry-2020.jsonl",
-      "sha256": "213f2bb7542bf3fdb6533c745d9ff55b001e776ff352c26000c6cd5bb2163b76",
-      "bytes": 14784016.0
+      "sha256": "44f910b38d67c33872b31ae2627080dffadfa188373def27bbbbe0d38668d31c",
+      "bytes": 15357995.0
     },
     {
       "name": "telemetry-2021.jsonl",
-      "sha256": "9372cbf681392fc3e0e4046281a5acb13c5c30fb6c516228dfec86df87490494",
-      "bytes": 363.0
+      "sha256": "4c757035e3a71c4a911efd618736d9358dea1d343f600884b6fb4e1482c69ced",
+      "bytes": 377.0
     },
     {
       "name": "telemetry-2026.jsonl",
-      "sha256": "2cdee0240eaeba8ac8e8616b163a10e2a0ba76d1230c8914f9ef1ed9d521d7d1",
-      "bytes": 363.0
+      "sha256": "acdcd8ac9cf3f1fd885c423d3809b608c0b0cbe6f2c1eb75a02b0c92cfded55b",
+      "bytes": 377.0
     }
   ]
 }

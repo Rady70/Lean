@@ -1148,8 +1148,7 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
     $telemetryPath = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
     $telemetry = Read-JsonLinesArray $telemetryPath
     foreach ($row in $telemetry) {
-        if ([string]$row.kind -ne 'event') { continue }
-        if ([long]$row.eventId -eq $stopOutId) {
+        if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $stopOutId) {
             foreach ($key in $neBefore.Keys) { $row.$key = $neBefore[$key] }
             $row.grossLots = '0.2'; $row.netLots = '0.0'; $row.absoluteNetLots = '0.0'
         }
@@ -1583,6 +1582,15 @@ $cases = @(
             $rows = Read-JsonLinesArray $path
             foreach ($row in $rows) {
                 if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $entryId) { $row.netLots = '0.1' }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'telemetry periodic netLots sign flipped' @('telemetry-2019.jsonl') {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.kind -eq 'periodic') { $row.netLots = '-0.10'; break }
             }
             Write-JsonLinesFile $path $rows
         }),

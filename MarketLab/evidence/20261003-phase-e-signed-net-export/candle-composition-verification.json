@@ -1,0 +1,103 @@
+{
+  "cache_folder_name": "xauusd-m1-candles",
+  "checks": {
+    "file_name_union": true,
+    "file_record_agreement": true,
+    "final_content_sha256": true,
+    "final_file_hashes": true,
+    "final_manifest": true,
+    "final_window": true,
+    "part_input_identity": true,
+    "part_manifests": true,
+    "part_month_ranges": true,
+    "total_sums": true
+  },
+  "contract": "marketlab-xauusd-m1-candle-composition-v1",
+  "expected_totals": {
+    "candle_bytes": 172160895,
+    "candle_rows": 2655664,
+    "partitions": 2332,
+    "source_rows": 413750130
+  },
+  "failure_reasons": [],
+  "final": {
+    "content_sha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
+    "end_date": "2026-06-30",
+    "end_month": "2026-06",
+    "files": 90,
+    "folder_name": "xauusd-m1-candles",
+    "manifest_sha256": "75f1d2415e6d7012022c70c527370258d42dcbd9ac2c992af7540126650b23a1",
+    "recomputed_content_sha256": "ab1b0c7f4321afc7ba31e149e31631a6c61deba40a88091ba951d5d886165d9d",
+    "start_date": "2019-01-01",
+    "start_month": "2019-01",
+    "totals": {
+      "candle_bytes": 172160895,
+      "candle_rows": 2655664,
+      "partitions": 2332,
+      "source_rows": 413750130
+    }
+  },
+  "overall_qualification": "PASS",
+  "parts": [
+    {
+      "end_date": "2020-11-30",
+      "end_month": "2020-11",
+      "files": 23,
+      "folder_name": "partA",
+      "manifest_sha256": "d04895049bbc3ac11128fb221c59de8498618291cf1b814ddb42890edc73505f",
+      "start_date": "2019-01-01",
+      "start_month": "2019-01",
+      "totals": {
+        "candle_bytes": 44641274,
+        "candle_rows": 678689,
+        "partitions": 598,
+        "source_rows": 88970591
+      }
+    },
+    {
+      "end_date": "2022-10-31",
+      "end_month": "2022-10",
+      "files": 23,
+      "folder_name": "partB",
+      "manifest_sha256": "8f38b981e7db20d56fb67fb790045ca76b84e0c7d3ed6751a6b11b58ccad3f6c",
+      "start_date": "2020-12-01",
+      "start_month": "2020-12",
+      "totals": {
+        "candle_bytes": 44256533,
+        "candle_rows": 680244,
+        "partitions": 595,
+        "source_rows": 103586831
+      }
+    },
+    {
+      "end_date": "2024-09-30",
+      "end_month": "2024-09",
+      "files": 23,
+      "folder_name": "partC",
+      "manifest_sha256": "f329daa1a92566ba15af8def5ab734e66302a91d6d460c762ef48c878ef1bc23",
+      "start_date": "2022-11-01",
+      "start_month": "2022-11",
+      "totals": {
+        "candle_bytes": 43620363,
+        "candle_rows": 678697,
+        "partitions": 594,
+        "source_rows": 83089463
+      }
+    },
+    {
+      "end_date": "2026-06-30",
+      "end_month": "2026-06",
+      "files": 21,
+      "folder_name": "partD",
+      "manifest_sha256": "20fdabecb22dcac643e383619640352b3a73573724cdd8ac73b5ab6984a93a5f",
+      "start_date": "2024-10-01",
+      "start_month": "2024-10",
+      "totals": {
+        "candle_bytes": 39642725,
+        "candle_rows": 618034,
+        "partitions": 545,
+        "source_rows": 138103245
+      }
+    }
+  ]
+}
