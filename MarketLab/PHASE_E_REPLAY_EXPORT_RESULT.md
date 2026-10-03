@@ -12,6 +12,17 @@ classifier (`EXPECTED`) and the strengthened Phase E package verifier. Phase E
 is additive: it does not rewrite the Phase D characterization, the Phase A/B/C
 records or any frozen value.
 
+**Finalization (2026-10-03):** the signed-net revision was approved and merged
+from the exact approved head `1813c2efa4c11f0494754df96d9936bac083fe79` through
+[Rady70/Lean#24](https://github.com/Rady70/Lean/pull/24) as merge commit
+`72e1d3b5edc90c6bb93c9fe571f4e23120666338`, which is the resulting `master`.
+The finalized signed-net package is
+`d145a49b548fe9356f1355d33df3329f87ce667cd15b367369219b8f27a9ccb4` with
+evidence manifest
+`f98263618bde5d2cd24542e028d322d0bab35074c430ce6b0bdb4c7a4b22f685`; the
+20261002 evidence directory remains unchanged. Phase E is finalized; the later
+replay/visualization phases (G–I) have not started.
+
 ```text
 Phase E implementation revision:  a2941581c02462a190f4d4289f371aed409cb1e3 (clean at run time)
 build receipt:                    MarketLab/output/baseline-build.json (SHA-256 f1344cd814892126b2f661522c2c4a1f7e361e94cd7b5639dc05d202fcb4987d)
