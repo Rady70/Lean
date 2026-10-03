@@ -180,6 +180,7 @@ namespace MarketLab.SingleAnchor
         private int _maxOpenPositions;
         private decimal _grossLots;
         private decimal _maxGrossLots;
+        private decimal _netLots;
         private decimal _absoluteNetLots;
         private decimal _maxAbsoluteNetLots;
         private decimal? _maxExecutableFloatingProfit;
@@ -295,6 +296,14 @@ namespace MarketLab.SingleAnchor
 
         /// <summary>Highest gross lots observed over the run.</summary>
         public decimal MaxGrossLots => _maxGrossLots;
+
+        /// <summary>
+        /// Signed net lots of the last observation (positive net long, negative net short).
+        /// It is the exact signed complement of <see cref="CurrentAbsoluteNetLots"/>, added for
+        /// the Phase E replay exporter so the exported account telemetry can carry the
+        /// authoritative direction without any post-run derivation.
+        /// </summary>
+        public decimal CurrentNetLots => _netLots;
 
         /// <summary>Absolute net lots of the last observation.</summary>
         public decimal CurrentAbsoluteNetLots => _absoluteNetLots;
@@ -784,6 +793,7 @@ namespace MarketLab.SingleAnchor
             {
                 _openPositions = 0;
                 _grossLots = 0m;
+                _netLots = 0m;
                 _absoluteNetLots = 0m;
             }
             else
@@ -792,7 +802,8 @@ namespace MarketLab.SingleAnchor
                 if (active == null || active.Sequence != basket.Sequence || openPositions != _openPositions)
                 {
                     var grossLots = basket.GrossLots;
-                    var absoluteNetLots = Math.Abs(basket.NetLots);
+                    var netLots = basket.NetLots;
+                    var absoluteNetLots = Math.Abs(netLots);
                     if (active == null || active.Sequence != basket.Sequence)
                     {
                         active = new ActiveBasket(basket.Sequence);
@@ -800,6 +811,7 @@ namespace MarketLab.SingleAnchor
                     }
                     _openPositions = openPositions;
                     _grossLots = grossLots;
+                    _netLots = netLots;
                     _absoluteNetLots = absoluteNetLots;
                     if (openPositions > _maxOpenPositions) _maxOpenPositions = openPositions;
                     if (grossLots > _maxGrossLots) _maxGrossLots = grossLots;

@@ -913,21 +913,21 @@ function New-SyntheticResultPackage([string]$directory) {
     Add-SyntheticTelemetry $telemetry 'event' $events[6]['id'] $exitOneTime 112 10000.5 10000.5 0.0 $true 0.5 0.0 10000.5 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[7]['id'] $anchorTwoTime 200 10000.5 10000.5 0.0 $true 0.5 0.0 10000.5 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[8]['id'] $entryTwoTime 201 10000.5 10000.48 -0.02 $true 0.5 100.0 9900.48 10000.48 $false 1 0.1 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[9]['id'] $entryThreeTime 202 10000.5 10000.46 -0.04 $true 0.5 200.0 9800.46 5000.23 $false 2 0.3 0.1
-    Add-SyntheticTelemetry $telemetry 'periodic' $null $periodicTwoTime 205 10000.5 10000.46 -0.04 $true 0.5 200.0 9800.46 5000.23 $false 2 0.3 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[10]['id'] $marginEnterTime 210 10000.5 80.0 -9920.5 $true 0.5 200.0 -120.0 40.0 $true 2 0.3 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[11]['id'] $stopOutTime 211 10000.5 40.0 -9960.5 $true 0.5 200.0 -160.0 20.0 $true 2 0.3 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[12]['id'] $stopOutTime 211 9999.48 9990.5 -8.98 $true 2.98 100.0 9890.5 9990.5 $false 1 0.2 0.2
+    Add-SyntheticTelemetry $telemetry 'event' $events[9]['id'] $entryThreeTime 202 10000.5 10000.46 -0.04 $true 0.5 200.0 9800.46 5000.23 $false 2 0.3 0.1 -0.1
+    Add-SyntheticTelemetry $telemetry 'periodic' $null $periodicTwoTime 205 10000.5 10000.46 -0.04 $true 0.5 200.0 9800.46 5000.23 $false 2 0.3 0.1 -0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[10]['id'] $marginEnterTime 210 10000.5 80.0 -9920.5 $true 0.5 200.0 -120.0 40.0 $true 2 0.3 0.1 -0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[11]['id'] $stopOutTime 211 10000.5 40.0 -9960.5 $true 0.5 200.0 -160.0 20.0 $true 2 0.3 0.1 -0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[12]['id'] $stopOutTime 211 9999.48 9990.5 -8.98 $true 2.98 100.0 9890.5 9990.5 $false 1 0.2 0.2 -0.2
     Add-SyntheticTelemetry $telemetry 'event' $events[13]['id'] $stopOutTime 211 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[14]['id'] $stopOutTime 211 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[15]['id'] $stopOutTime 211 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[16]['id'] $anchorFourTime 300 10003.48 10003.48 0.0 $true 3.48 0.0 10003.48 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[17]['id'] $entryFourOneTime 301 10003.48 10003.38 -0.1 $true 3.48 100.0 9903.38 10003.38 $false 1 0.1 0.1
-    Add-SyntheticTelemetry $telemetry 'event' $events[18]['id'] $entryFourTwoTime 302 10003.48 10003.33 -0.15 $true 3.48 150.0 9853.33 10003.33 $false 2 0.3 0.1
+    Add-SyntheticTelemetry $telemetry 'event' $events[18]['id'] $entryFourTwoTime 302 10003.48 10003.33 -0.15 $true 3.48 150.0 9853.33 10003.33 $false 2 0.3 0.1 -0.1
     Add-SyntheticTelemetry $telemetry 'event' $events[19]['id'] $entryFourThreeTime 303 10003.48 10003.28 -0.2 $true 3.48 200.0 9803.28 10003.28 $false 3 0.6 0.2
-    Add-SyntheticTelemetry $telemetry 'event' $events[20]['id'] $entryFourFourTime 304 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 0.2
-    Add-SyntheticTelemetry $telemetry 'event' $events[21]['id'] $activationFourTime 305 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 0.2
-    Add-SyntheticTelemetry $telemetry 'event' $events[22]['id'] $activationFourTime 305 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 0.2
+    Add-SyntheticTelemetry $telemetry 'event' $events[20]['id'] $entryFourFourTime 304 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 0.2 -0.2
+    Add-SyntheticTelemetry $telemetry 'event' $events[21]['id'] $activationFourTime 305 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 0.2 -0.2
+    Add-SyntheticTelemetry $telemetry 'event' $events[22]['id'] $activationFourTime 305 10003.48 10003.23 -0.25 $true 3.48 250.0 9753.23 10003.23 $false 4 1.0 0.2 -0.2
     Add-SyntheticTelemetry $telemetry 'event' $events[23]['id'] $entryFourFiveTime 306 10003.48 10003.18 -0.3 $true 3.48 300.0 9703.18 10003.18 $false 5 1.5 0.3
     Add-SyntheticTelemetry $telemetry 'event' $events[24]['id'] $exitFourTime 307 10008.48 10008.48 0.0 $true 8.48 0.0 10008.48 $null $false 0 0.0 0.0
     Add-SyntheticTelemetry $telemetry 'event' $events[27]['id'] $runEndTime $quoteTicksProcessed 10008.48 10008.48 0.0 $true 8.48 0.0 10008.48 $null $false 0 0.0 0.0
@@ -1151,17 +1151,21 @@ function New-NegativeEquityStopOutFixture([string]$directory) {
         if ([string]$row.kind -ne 'event') { continue }
         if ([long]$row.eventId -eq $stopOutId) {
             foreach ($key in $neBefore.Keys) { $row.$key = $neBefore[$key] }
+            $row.grossLots = '0.2'; $row.netLots = '0.0'; $row.absoluteNetLots = '0.0'
         }
         elseif ($null -ne $entryTwoId -and [long]$row.eventId -eq $entryTwoId) {
-            $row.grossLots = '0.2'; $row.absoluteNetLots = '0.0'
+            $row.grossLots = '0.2'; $row.netLots = '0.0'; $row.absoluteNetLots = '0.0'
+        }
+        elseif ([string]$row.kind -eq 'periodic' -and [int]$row.openPositions -eq 2) {
+            $row.grossLots = '0.2'; $row.netLots = '0.0'; $row.absoluteNetLots = '0.0'
         }
         elseif ($liquidationIds.Count -ge 1 -and [long]$row.eventId -eq $liquidationIds[0]) {
             foreach ($key in $neAfterOne.Keys) { $row.$key = $neAfterOne[$key] }
-            $row.grossLots = '0.1'; $row.absoluteNetLots = '0.1'
+            $row.grossLots = '0.1'; $row.netLots = '-0.1'; $row.absoluteNetLots = '0.1'
         }
         elseif ($liquidationIds.Count -ge 2 -and [long]$row.eventId -eq $liquidationIds[1]) {
             foreach ($key in $neAfterTwo.Keys) { $row.$key = $neAfterTwo[$key] }
-            $row.grossLots = '0.0'; $row.absoluteNetLots = '0.0'
+            $row.grossLots = '0.0'; $row.netLots = '0.0'; $row.absoluteNetLots = '0.0'
         }
         elseif ($null -ne $runEndedId -and [long]$row.eventId -eq $runEndedId) {
             foreach ($key in $neAfterTwo.Keys) { $row.$key = $neAfterTwo[$key] }
@@ -1366,7 +1370,7 @@ function New-HardBreakevenViolationFixture([string]$directory) {
             $row.balance = '10003.48'; $row.equity = '10003.18'; $row.floatingProfit = '-0.3'
             $row.realizedProfit = '3.48'; $row.usedMargin = '300.0'; $row.freeMargin = '9703.18'
             $row.marginLevelPercent = (Format-Decimal ([decimal]10003.18 / [decimal]300.0 * 100))
-            $row.marginCallActive = $false; $row.openPositions = 5; $row.grossLots = '1.5'; $row.absoluteNetLots = '0.3'
+            $row.marginCallActive = $false; $row.openPositions = 5; $row.grossLots = '1.5'; $row.netLots = '0.3'; $row.absoluteNetLots = '0.3'
         }
     }
     Write-JsonLinesFile $telemetryPath $telemetry
@@ -1394,7 +1398,8 @@ function Add-SyntheticTelemetry(
     [System.Collections.Generic.List[object]]$list, [string]$kind, $eventId, [datetime]$time, [long]$quoteSequence,
     [decimal]$balance, [decimal]$equity, [decimal]$floatingProfit, [bool]$floatingObservable, [decimal]$realizedProfit,
     [decimal]$usedMargin, [decimal]$freeMargin, $marginLevelPercent, [bool]$marginCallActive, [int]$openPositions,
-    [decimal]$grossLots, [decimal]$absoluteNetLots) {
+    [decimal]$grossLots, [decimal]$absoluteNetLots, $netLots = $null) {
+    if ($null -eq $netLots) { $netLots = $absoluteNetLots }
     $freeMarginText = Format-Decimal $freeMargin
     $marginLevelText = Format-Decimal $marginLevelPercent
     $row = [ordered]@{
@@ -1403,6 +1408,7 @@ function Add-SyntheticTelemetry(
         floatingObservable = $floatingObservable; realizedProfit = Format-Decimal $realizedProfit
         usedMargin = Format-Decimal $usedMargin; freeMargin = $freeMarginText; marginLevelPercent = $marginLevelText
         marginCallActive = $marginCallActive; openPositions = $openPositions; grossLots = Format-Decimal $grossLots
+        netLots = Format-Decimal $netLots
         absoluteNetLots = Format-Decimal $absoluteNetLots
     }
     [void]$list.Add($row)
@@ -1565,6 +1571,39 @@ $cases = @(
             }
             Write-JsonLinesFile $path $rows
         }),
+    (New-Case 'telemetry netLots sign flipped on an entry snapshot' @('telemetry-2019.jsonl') {
+            param($directory)
+            $events = Read-JsonLinesArray (Get-ArtifactPath $directory 'events.jsonl')
+            $entryId = $null
+            foreach ($row in $events) {
+                if ([string]$row.type -eq 'entry_executed' -and [long]$row.basket -eq 2 -and [long]$row.tradeNumber -eq 2) { $entryId = [long]$row.id }
+            }
+            if ($null -eq $entryId) { throw 'the entry snapshot target is missing' }
+            $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $entryId) { $row.netLots = '0.1' }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'telemetry netLots/absoluteNetLots mismatch on a periodic row' @('telemetry-2019.jsonl') {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.kind -eq 'periodic') { $row.netLots = '0.2'; break }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
+    (New-Case 'telemetry netLots removed from an event snapshot' @('telemetry-2019.jsonl') {
+            param($directory)
+            $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
+            $rows = Read-JsonLinesArray $path
+            foreach ($row in $rows) {
+                if ([string]$row.kind -eq 'event') { $row.PSObject.Properties.Remove('netLots'); break }
+            }
+            Write-JsonLinesFile $path $rows
+        }),
     (New-Case 'extra periodic row inside the interval' @('telemetry-2019.jsonl') {
             param($directory)
             $path = Get-ArtifactPath $directory 'telemetry-2019.jsonl'
@@ -1596,7 +1635,7 @@ $cases = @(
                 if ([long]$row.eventId -eq $entryId) { $source = $row }
                 if ([long]$row.eventId -eq $activationId) { $target = $row }
             }
-            foreach ($field in @('balance', 'equity', 'floatingProfit', 'realizedProfit', 'usedMargin', 'freeMargin', 'marginLevelPercent', 'marginCallActive', 'openPositions', 'grossLots', 'absoluteNetLots')) {
+            foreach ($field in @('balance', 'equity', 'floatingProfit', 'realizedProfit', 'usedMargin', 'freeMargin', 'marginLevelPercent', 'marginCallActive', 'openPositions', 'grossLots', 'netLots', 'absoluteNetLots')) {
                 $target.$field = $source.$field
             }
             Write-JsonLinesFile $path $rows
@@ -1738,6 +1777,7 @@ $cases = @(
                 if ([string]$row.kind -eq 'event' -and [long]$row.eventId -eq $entryId) {
                     $row.openPositions = 9
                     $row.grossLots = '9.0'
+                    $row.netLots = '9.0'
                     $row.absoluteNetLots = '9.0'
                 }
             }
@@ -1811,7 +1851,7 @@ $cases = @(
             }
             Insert-EventAndSnapshot $directory 6 $payload $snapshotBase @{
                 time = '2019-01-02T02:11:00.000Z'; quoteSequence = 299
-                openPositions = 0; grossLots = '0.0'; absoluteNetLots = '0.0'
+                openPositions = 0; grossLots = '0.0'; netLots = '0.0'; absoluteNetLots = '0.0'
             }
         }),
     (New-Case 'unknown event type' @('events.jsonl') {
@@ -2228,7 +2268,7 @@ $violationCases = @(
             if ($null -eq $snapshotBase) { throw 'the violation snapshot is missing' }
             Insert-EventAndSnapshot $directory $violationIndex $payload $snapshotBase @{
                 time = [string]$violation.time; quoteSequence = [long]$violation.quoteSequence
-                openPositions = 5; grossLots = '1.5'; absoluteNetLots = '0.3'
+                openPositions = 5; grossLots = '1.5'; netLots = '0.3'; absoluteNetLots = '0.3'
             }
         }),
     (New-Case 'strategy continuation after the terminal violation' @('events.jsonl', 'telemetry-2019.jsonl') {
@@ -2254,7 +2294,7 @@ $violationCases = @(
             if ($null -eq $snapshotBase) { throw 'the violation snapshot is missing' }
             Insert-EventAndSnapshot $directory ($violationIndex + 1) $payload $snapshotBase @{
                 time = [string]$violation.time; quoteSequence = [long]$violation.quoteSequence
-                openPositions = 5; grossLots = '1.5'; absoluteNetLots = '0.3'
+                openPositions = 5; grossLots = '1.5'; netLots = '0.3'; absoluteNetLots = '0.3'
             }
         })
 )
