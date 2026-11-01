@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    MarketLab-owned read-back tool for the T1 cross-check's proof sample (Rady70/Market_Lab
+    docs/LEAN_T1_CROSSCHECK_PLAN.md §3): reads exported LEAN minute files with LEAN's own LeanDataReader (ToolBox,
+    unchanged) and prints every bar, so the export can be compared with its source without running a backtest.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MarketLab.LeanMinuteReadback</RootNamespace>
+    <AssemblyName>MarketLab.LeanMinuteReadback</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\ToolBox\QuantConnect.ToolBox.csproj" />
+  </ItemGroup>
+</Project>
