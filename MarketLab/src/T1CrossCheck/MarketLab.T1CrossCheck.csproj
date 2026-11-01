@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    MarketLab-owned cross-check algorithm: T1 (L02 5-minute opening-range breakout) on QQQ, run with LEAN's own
+    order handling, fills and accounting, to check MarketLab's Python backtest engine
+    (Rady70/Market_Lab docs/LEAN_T1_CROSSCHECK_PLAN.md). Built outside QuantConnect.Lean.sln so no upstream project
+    or solution file changes; it references the unchanged upstream Algorithm and Common projects.
+    Run with MarketLab\scripts\run-backtest.ps1 -AlgorithmLocation <this bin>\MarketLab.T1CrossCheck.dll
+    -AlgorithmTypeName T1CrossCheckAlgorithm.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>MarketLab.T1CrossCheck</RootNamespace>
+    <AssemblyName>MarketLab.T1CrossCheck</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <Description>MarketLab T1 cross-check algorithm (LEAN fills for MarketLab's engine check)</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Algorithm\QuantConnect.Algorithm.csproj" />
+    <ProjectReference Include="..\..\..\Common\QuantConnect.csproj" />
+  </ItemGroup>
+</Project>

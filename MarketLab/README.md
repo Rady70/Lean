@@ -54,6 +54,8 @@ default `Launcher\config.json` are exactly as at the qualified revision
 | `tests\Test-SingleAnchorCorrectedFullHistory.ps1` | synthetic-fixture tests for the corrected full-history preflight and classifier |
 | `tools\historical-data\` | offline source qualification, exact-decimal native LEAN tick conversion and the actual LEAN replay probe (PR 1); see its [README](tools/historical-data/README.md) and [provenance](tools/historical-data/PROVENANCE.md) |
 | `tools\research-account-probe\` | paired per-quote throughput and allocation probe for the PR 2 research account |
+| `src\T1CrossCheck\` | `MarketLab.T1CrossCheck.csproj`: the T1 opening-range breakout on QQQ, run with LEAN's own orders, fills and accounting to cross-check MarketLab's Python backtest engine (`Rady70/Market_Lab` `docs/LEAN_T1_CROSSCHECK_PLAN.md`); linear per-share fee, half-spread slippage and a 0.0001 price variation, all through LEAN's public model interfaces |
+| `tools\lean-minute-readback\` | prints the QQQ minute bars of given days read with LEAN's own `LeanDataReader`, for the cross-check's proof sample (no backtest) |
 | `.gitignore` | ignores `output\` (generated runs) |
 
 All scripts run on Windows PowerShell 5.1 and PowerShell 7 and use `exit`
