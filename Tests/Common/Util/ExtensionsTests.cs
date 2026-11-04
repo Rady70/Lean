@@ -62,6 +62,21 @@ namespace QuantConnect.Tests.Common.Util
             Assert.AreEqual(expected, enums);
         }
 
+        [TestCase(Market.CME, DataMappingMode.OpenInterest, DataMappingMode.OpenInterest)]
+        [TestCase(Market.CME, DataMappingMode.OpenInterestAnnual, DataMappingMode.OpenInterestAnnual)]
+        [TestCase(Market.EUREX, DataMappingMode.OpenInterest, DataMappingMode.LastTradingDay)]
+        [TestCase(Market.HKFE, DataMappingMode.OpenInterest, DataMappingMode.LastTradingDay)]
+        [TestCase(Market.ICE, DataMappingMode.OpenInterest, DataMappingMode.LastTradingDay)]
+        [TestCase(Market.KRX, DataMappingMode.OpenInterest, DataMappingMode.LastTradingDay)]
+        [TestCase(Market.KRX, DataMappingMode.OpenInterestAnnual, DataMappingMode.LastTradingDay)]
+        [TestCase(Market.KRX, DataMappingMode.FirstDayMonth, DataMappingMode.FirstDayMonth)]
+        public void GetUniverseMappingModeOrDefault(string market, DataMappingMode settingsMode, DataMappingMode expected)
+        {
+            var settings = new UniverseSettings(Resolution.Daily, 1, true, false, TimeSpan.Zero) { DataMappingMode = settingsMode };
+
+            Assert.AreEqual(expected, settings.GetUniverseMappingModeOrDefault(SecurityType.Future, market));
+        }
+
         [TestCase("tt", "", "tt")]
         [TestCase("tt", "t", "t")]
         [TestCase("tt", "tt", "")]
@@ -98,6 +113,43 @@ namespace QuantConnect.Tests.Common.Util
             if (count == 2)
             {
                 Assert.AreEqual(20, result[1].Property);
+            }
+        }
+
+        [Test]
+        public void EditorBrowsableNeverExtensionMethodsAreNotBoundToPythonInstances()
+        {
+            var order = new MarketOrder(Symbols.SPY, 100, DateTime.UtcNow);
+            var config = new SubscriptionDataConfig(typeof(TradeBar), Symbols.SPY, Resolution.Minute, TimeZones.NewYork,
+                TimeZones.NewYork, true, true, false);
+
+            using (Py.GIL())
+            {
+                var module = PyModule.FromString("testModule",
+                    @"
+from AlgorithmImports import *
+
+def check(symbol: Symbol, order: Order, config: SubscriptionDataConfig):
+    hidden = (hasattr(symbol, 'requires_mapping'), hasattr(order, 'try_get_contingent_orders'), hasattr(config, 'ticker_should_be_mapped'))
+    visible = (hasattr(order, 'is_contingent'), order.is_contingent(), OrderStatus.FILLED.is_open())
+    static_forms = (Extensions.requires_mapping(symbol), SubscriptionDataConfigExtensions.ticker_should_be_mapped(config))
+    return hidden, visible, static_forms
+");
+
+                dynamic check = module.GetAttr("check");
+                var result = check(Symbols.SPY, order, config);
+
+                // hidden extensions are not bound to the instance
+                Assert.IsFalse((bool)result[0][0]);
+                Assert.IsFalse((bool)result[0][1]);
+                Assert.IsFalse((bool)result[0][2]);
+                // the other extensions are
+                Assert.IsTrue((bool)result[1][0]);
+                Assert.IsFalse((bool)result[1][1]);
+                Assert.IsFalse((bool)result[1][2]);
+                // the static forms still work
+                Assert.AreEqual(Symbols.SPY.RequiresMapping(), (bool)result[2][0]);
+                Assert.AreEqual(config.TickerShouldBeMapped(), (bool)result[2][1]);
             }
         }
 

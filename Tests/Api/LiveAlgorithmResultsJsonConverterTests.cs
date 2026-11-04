@@ -13,6 +13,7 @@
  * limitations under the License.
 */
 
+using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using NUnit.Framework;
@@ -53,6 +54,68 @@ namespace QuantConnect.Tests.API
             var result = Deserialize(@"""serverStatistics"": { ""CPU Usage"": ""1%"" },");
 
             CollectionAssert.AreEquivalent(new Dictionary<string, string> { { "CPU Usage", "1%" } }, result.ServerStatistics);
+        }
+
+        [Test]
+        public void EveryFieldIsOptional()
+        {
+            // an errored or not yet started deployment only reports a subset of the fields
+            var result = JsonConvert.DeserializeObject<LiveAlgorithmResults>("{}", new LiveAlgorithmResultsJsonConverter());
+
+            Assert.IsFalse(result.Success);
+            Assert.IsNull(result.Status);
+            Assert.IsNull(result.DeployId);
+            CollectionAssert.IsEmpty(result.Errors, "Like every other response, a missing errors array reads as no errors");
+            Assert.IsNull(result.Stopped);
+            Assert.AreEqual(default(DateTime), result.Launched);
+            Assert.IsNull(result.Charts);
+            Assert.IsNull(result.Files);
+        }
+
+        [Test]
+        public void ErrorsAreReadFromTheErrorsArray()
+        {
+            var result = Deserialize(@"""errors"": [ ""First error"", ""Second error"" ],");
+
+            CollectionAssert.AreEqual(new[] { "First error", "Second error" }, result.Errors);
+            Assert.AreEqual("Running", result.Status, "The fields after the errors are still deserialized");
+            CollectionAssert.AreEquivalent(new Dictionary<string, string> { { "Unrealized", "0" } }, result.RuntimeStatistics);
+        }
+
+        [Test]
+        public void AFailedResponseStopsAtTheErrors()
+        {
+            var json = @"{ ""success"": false, ""errors"": [ ""Not started"" ], ""charts"": { ""Equity"": {} } }";
+            var result = JsonConvert.DeserializeObject<LiveAlgorithmResults>(json, new LiveAlgorithmResultsJsonConverter());
+
+            CollectionAssert.AreEqual(new[] { "Not started" }, result.Errors);
+            Assert.IsNull(result.Charts, "Charts and files are not read once the response reports a failure");
+        }
+
+        [Test]
+        public void DeserializesTheDescription()
+        {
+            var result = Deserialize(@"""description"": ""My project"",");
+
+            Assert.AreEqual("My project", result.Description);
+        }
+
+        [Test]
+        public void DeserializesFilesWithoutModifiedDateOrId()
+        {
+            var json = @"{
+                ""success"": true,
+                ""files"": [ { ""id"": null, ""content"": ""code"", ""modified"": null, ""name"": ""Main.cs"", ""open"": false, ""isLibrary"": false, ""projectId"": 123 } ]
+            }";
+            var result = JsonConvert.DeserializeObject<LiveAlgorithmResults>(json, new LiveAlgorithmResultsJsonConverter());
+
+            Assert.AreEqual(1, result.Files.Count);
+            var file = result.Files[0];
+            Assert.AreEqual("Main.cs", file.Name);
+            Assert.AreEqual("code", file.Code);
+            Assert.AreEqual(123, file.ProjectId);
+            Assert.IsNull(file.DateModified);
+            Assert.IsNull(file.Id);
         }
 
         private static LiveAlgorithmResults Deserialize(string extraFields = "")

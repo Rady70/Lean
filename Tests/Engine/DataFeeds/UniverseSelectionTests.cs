@@ -22,6 +22,7 @@ using NUnit.Framework;
 using QuantConnect.Configuration;
 using QuantConnect.Data;
 using QuantConnect.Data.Fundamental;
+using QuantConnect.Data.Market;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Interfaces;
 using QuantConnect.Lean.Engine.DataFeeds;
@@ -287,6 +288,71 @@ namespace QuantConnect.Tests.Engine.DataFeeds
         }
 
         [Test]
+        public void DelistedSecurityIsRemovedFromItsUniversesOnceSafeToRemove()
+        {
+            var algorithm = new AlgorithmStub(new MockDataFeedWithSubscription());
+            var orderProcessorMock = new Mock<IOrderProcessor>();
+            orderProcessorMock.Setup(m => m.GetOpenOrders(It.IsAny<Func<Order, bool>>())).Returns(new List<Order>());
+            algorithm.Transactions.SetOrderProcessor(orderProcessorMock.Object);
+            algorithm.SetStartDate(2015, 11, 2);
+            algorithm.SetEndDate(2015, 11, 6);
+
+            var equity = algorithm.AddEquity("SPY");
+            var universeA = algorithm.AddUniverse("universe-a", dt => new List<string> { "SPY" });
+            var universeB = algorithm.AddUniverse("universe-b", dt => new List<string> { "SPY" });
+            // OnEndOfTimeStep will add all pending universe additions
+            algorithm.OnEndOfTimeStep();
+
+            var time = algorithm.UtcTime;
+            Assert.IsTrue(universeA.AddMember(time, equity, false));
+            Assert.IsTrue(universeB.AddMember(time, equity, false));
+            // the delisting liquidation is still pending
+            equity.Holdings.SetHoldings(100, 10);
+
+            var universeSelection = algorithm.DataManager.UniverseSelection;
+            universeSelection.HandleDelisting(new Delisting(equity.Symbol, time, 100, DelistingType.Delisted), false);
+            Assert.IsTrue(algorithm.Securities.Values.Contains(equity));
+
+            // checked hourly, still not safe to remove
+            universeSelection.CheckPendingDelistedRemovals(time.AddHours(1));
+            Assert.IsTrue(algorithm.Securities.Values.Contains(equity));
+
+            // the delisting liquidation fills
+            equity.Holdings.SetHoldings(100, 0);
+            universeSelection.CheckPendingDelistedRemovals(time.AddHours(2));
+            Assert.IsFalse(universeA.ContainsMember(equity.Symbol));
+            Assert.IsFalse(universeB.ContainsMember(equity.Symbol));
+            Assert.IsFalse(algorithm.Securities.Values.Contains(equity));
+            Assert.IsFalse(algorithm.UniverseManager.ActiveSecurities.ContainsKey(equity.Symbol));
+        }
+
+        [Test]
+        public void DelistedSecurityWithoutUniverseIsKeptUntilSafeToRemove()
+        {
+            var algorithm = new AlgorithmStub(new MockDataFeedWithSubscription());
+            var orderProcessorMock = new Mock<IOrderProcessor>();
+            orderProcessorMock.Setup(m => m.GetOpenOrders(It.IsAny<Func<Order, bool>>())).Returns(new List<Order>());
+            algorithm.Transactions.SetOrderProcessor(orderProcessorMock.Object);
+            algorithm.SetStartDate(2015, 11, 2);
+            algorithm.SetEndDate(2015, 11, 6);
+
+            // not a member of any universe, like when its universe was removed without deselecting it
+            var equity = algorithm.AddEquity("SPY");
+            Assert.IsFalse(algorithm.UniverseManager.Values.Any(universe => universe.ContainsMember(equity.Symbol)));
+            equity.Holdings.SetHoldings(100, 10);
+
+            var time = algorithm.UtcTime;
+            var universeSelection = algorithm.DataManager.UniverseSelection;
+            universeSelection.HandleDelisting(new Delisting(equity.Symbol, time, 100, DelistingType.Delisted), false);
+            Assert.IsTrue(algorithm.Securities.Values.Contains(equity));
+
+            // the delisting liquidation fills
+            equity.Holdings.SetHoldings(100, 0);
+            universeSelection.CheckPendingDelistedRemovals(time.AddHours(1));
+            Assert.IsFalse(algorithm.Securities.Values.Contains(equity));
+        }
+
+        [Test]
         public void CoarseFundamentalHasFundamentalDataFalseExcludedInFineUniverseSelection()
         {
             var algorithm = new AlgorithmStub(new MockDataFeed());
@@ -441,6 +507,96 @@ namespace QuantConnect.Tests.Engine.DataFeeds
                 dateTime,
                 universeData);
             Assert.AreEqual(0, securityChanges.AddedSecurities.Count);
+        }
+
+        [Test]
+        public void AddingResolutionToExistingUserDefinedSecurityCreatesDataSubscription()
+        {
+            var algorithm = new AlgorithmStub(new MockDataFeedWithSubscription());
+            algorithm.SetStartDate(2012, 3, 27);
+            algorithm.SetEndDate(2012, 3, 30);
+
+            var spy = algorithm.AddEquity("SPY", Resolution.Minute).Symbol;
+            algorithm.OnEndOfTimeStep();
+
+            var universe = algorithm.UniverseManager[UserDefinedUniverse.CreateSymbol(SecurityType.Equity, Market.USA)];
+            var selectionTime = algorithm.EndDate.ConvertToUtc(algorithm.TimeZone).Subtract(TimeSpan.FromDays(2));
+            ApplyUserDefinedSelection(algorithm, universe, selectionTime);
+
+            Assert.IsTrue(HasDataFeedResolution(algorithm, spy, Resolution.Minute));
+            Assert.IsFalse(HasDataFeedResolution(algorithm, spy, Resolution.Tick));
+
+            algorithm.AddEquity("SPY", Resolution.Tick);
+            algorithm.OnEndOfTimeStep();
+            ApplyUserDefinedSelection(algorithm, universe, selectionTime);
+
+            Assert.IsTrue(HasDataFeedResolution(algorithm, spy, Resolution.Minute), "The original minute subscription should stay");
+            Assert.IsTrue(HasDataFeedResolution(algorithm, spy, Resolution.Tick), "The new tick subscription should be created");
+        }
+
+        [Test]
+        public void RemoveAndReaddAtNewResolutionInOneTimeStepReplacesDataSubscription()
+        {
+            var algorithm = new AlgorithmStub(new MockDataFeedWithSubscription());
+            algorithm.SetStartDate(2012, 3, 27);
+            algorithm.SetEndDate(2012, 3, 30);
+
+            var qqq = algorithm.AddEquity("QQQ", Resolution.Minute).Symbol;
+            algorithm.OnEndOfTimeStep();
+
+            var universe = algorithm.UniverseManager[UserDefinedUniverse.CreateSymbol(SecurityType.Equity, Market.USA)];
+            var selectionTime = algorithm.EndDate.ConvertToUtc(algorithm.TimeZone).Subtract(TimeSpan.FromDays(2));
+            ApplyUserDefinedSelection(algorithm, universe, selectionTime);
+            Assert.IsTrue(HasDataFeedResolution(algorithm, qqq, Resolution.Minute));
+
+            Assert.IsTrue(algorithm.RemoveSecurity(qqq));
+            algorithm.AddEquity("QQQ", Resolution.Tick);
+            algorithm.OnEndOfTimeStep();
+            ApplyUserDefinedSelection(algorithm, universe, selectionTime);
+
+            Assert.IsFalse(HasDataFeedResolution(algorithm, qqq, Resolution.Minute), "The removed minute subscription should be dropped");
+            Assert.IsTrue(HasDataFeedResolution(algorithm, qqq, Resolution.Tick), "The re-added tick subscription should be created");
+            Assert.IsTrue(algorithm.Securities[qqq].IsTradable);
+            Assert.IsTrue(algorithm.Securities.ContainsKey(qqq));
+        }
+
+        [Test]
+        public void RemoveAndReaddAtSameResolutionInOneTimeStepKeepsDataSubscription()
+        {
+            var algorithm = new AlgorithmStub(new MockDataFeedWithSubscription());
+            algorithm.SetStartDate(2012, 3, 27);
+            algorithm.SetEndDate(2012, 3, 30);
+
+            var qqq = algorithm.AddEquity("QQQ", Resolution.Minute).Symbol;
+            algorithm.OnEndOfTimeStep();
+
+            var universe = algorithm.UniverseManager[UserDefinedUniverse.CreateSymbol(SecurityType.Equity, Market.USA)];
+            var selectionTime = algorithm.EndDate.ConvertToUtc(algorithm.TimeZone).Subtract(TimeSpan.FromDays(2));
+            ApplyUserDefinedSelection(algorithm, universe, selectionTime);
+            var subscriptions = algorithm.DataManager.DataFeedSubscriptions.Where(x => x.Configuration.Symbol == qqq).ToList();
+            Assert.IsNotEmpty(subscriptions);
+
+            Assert.IsTrue(algorithm.RemoveSecurity(qqq));
+            algorithm.AddEquity("QQQ", Resolution.Minute);
+            algorithm.OnEndOfTimeStep();
+            ApplyUserDefinedSelection(algorithm, universe, selectionTime);
+
+            CollectionAssert.AreEquivalent(subscriptions, algorithm.DataManager.DataFeedSubscriptions.Where(x => x.Configuration.Symbol == qqq));
+            Assert.IsTrue(algorithm.Securities[qqq].IsTradable);
+        }
+
+        private static void ApplyUserDefinedSelection(AlgorithmStub algorithm, Universe universe, DateTime selectionTimeUtc)
+        {
+            algorithm.DataManager.UniverseSelection.ApplyUniverseSelection(
+                universe,
+                selectionTimeUtc,
+                new BaseDataCollection(algorithm.UtcTime, universe.Configuration.Symbol, new List<BaseData>()));
+        }
+
+        private static bool HasDataFeedResolution(AlgorithmStub algorithm, Symbol symbol, Resolution resolution)
+        {
+            return algorithm.DataManager.DataFeedSubscriptions.Any(subscription =>
+                subscription.Configuration.Symbol == symbol && subscription.Configuration.Resolution == resolution);
         }
 
         private IEnumerable<Symbol> CoarseSelectionFunction(IEnumerable<CoarseFundamental> coarse)
