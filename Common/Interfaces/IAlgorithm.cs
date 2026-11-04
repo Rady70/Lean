@@ -33,7 +33,7 @@ using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Algorithm.Framework.Alphas;
 using QuantConnect.Algorithm.Framework.Alphas.Analysis;
 using QuantConnect.Commands;
-using Common.Util;
+using QuantConnect.Util;
 
 namespace QuantConnect.Interfaces
 {
@@ -65,7 +65,7 @@ namespace QuantConnect.Interfaces
         }
 
         /// <summary>
-        /// Data subscription manager controls the information and subscriptions the algorithms recieves.
+        /// Data subscription manager controls the information and subscriptions the algorithms receives.
         /// Subscription configurations can be added through the Subscription Manager.
         /// </summary>
         SubscriptionManager SubscriptionManager
@@ -113,7 +113,7 @@ namespace QuantConnect.Interfaces
         /// <summary>
         /// Security transaction manager class controls the store and processing of orders.
         /// </summary>
-        /// <remarks>The orders and their associated events are accessible here. When a new OrderEvent is recieved the algorithm portfolio is updated.</remarks>
+        /// <remarks>The orders and their associated events are accessible here. When a new OrderEvent is received the algorithm portfolio is updated.</remarks>
         SecurityTransactionManager Transactions
         {
             get;

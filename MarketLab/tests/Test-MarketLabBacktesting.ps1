@@ -669,6 +669,18 @@ try {
         Assert-Match $both.StdErr '(?m)^ERROR: 2 engine ERROR:: line\(s\) in ' 'missing + corrupt: engine-error block counts only the corrupt file''s two lines'
         Assert-NotMatch $both.StdErr '(?m)^ERROR:   .*InvalidSource\(\): File not found: .*20131010_quote\.zip' 'missing + corrupt: the missing file''s InvalidSource line is not quoted as an engine error'
 
+        # F2e: a file read after the data monitor stopped (LEAN's end-of-run
+        # statistics read the SPY daily file) is on no list. It is really
+        # missing, so it is a warning, not an engine error; F2 above still
+        # counts an unlisted file that exists but gave no data.
+        $lateData = New-SampleDataRoot 'read-after-monitor-data'
+        Remove-Item -LiteralPath (Join-Path $lateData 'equity\usa\daily\spy.zip') -Force
+        $lateOutput = Join-Path $script:TempRoot 'read-after-monitor-output'
+        $late = Invoke-Helper @('-AlgorithmTypeName', 'BasicTemplateAlgorithm', '-DataFolder', $lateData, '-OutputRoot', $lateOutput)
+        Assert-Equal 0 $late.ExitCode 'read after the monitor stopped: exit code 0'
+        Assert-Match $late.StdErr '(?m)^WARNING: Missing file read after the data monitor stopped .*daily\\spy\.zip' 'read after the monitor stopped: the file is named in a warning'
+        Assert-NotMatch $late.StdErr '(?m)^ERROR: ' 'read after the monitor stopped: no ERROR: line'
+
         # --------------------------------------------------------------------
         # -Parameters reaches the algorithm (Batch D): the result packet's
         # algorithmConfiguration.parameters is QCAlgorithm.GetParameters(),

@@ -13,6 +13,7 @@
  * limitations under the License.
 */
 
+using System.ComponentModel;
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
@@ -514,6 +515,7 @@ namespace QuantConnect
         /// Extension method to get security price is 0 messages for users
         /// </summary>
         /// <remarks>The value of this method is normalization</remarks>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static string GetZeroPriceMessage(this Symbol symbol)
         {
             return Messages.Extensions.ZeroPriceForSecurity(symbol);
@@ -2159,7 +2161,7 @@ namespace QuantConnect
         /// Business day here is defined as any day of the week that is not saturday or sunday
         /// </summary>
         /// <param name="date">The date to be examined</param>
-        /// <returns>A bool indicating wether the datetime is a weekday or not</returns>
+        /// <returns>A bool indicating whether the datetime is a weekday or not</returns>
         public static bool IsCommonBusinessDay(this DateTime date)
         {
             return (date.DayOfWeek != DayOfWeek.Saturday && date.DayOfWeek != DayOfWeek.Sunday);
@@ -2810,6 +2812,7 @@ namespace QuantConnect
         /// <param name="order">The <see cref="Order"/> being converted</param>
         /// <param name="transactionManager">The transaction manager, <see cref="SecurityTransactionManager"/></param>
         /// <returns></returns>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static OrderTicket ToOrderTicket(this Order order, SecurityTransactionManager transactionManager)
         {
             var limitPrice = 0m;
@@ -2875,7 +2878,8 @@ namespace QuantConnect
                 order.Time,
                 order.Tag,
                 order.Properties,
-                order.GroupOrderManager);
+                order.GroupOrderManager,
+                contingency: order.Contingency);
 
             submitOrderRequest.SetOrderId(order.Id);
             var orderTicket = new OrderTicket(transactionManager, submitOrderRequest);
@@ -3558,6 +3562,7 @@ namespace QuantConnect
         /// Helper method to determine symbol for a live subscription
         /// </summary>
         /// <remarks>Useful for continuous futures where we subscribe to the underlying</remarks>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static bool TryGetLiveSubscriptionSymbol(this Symbol symbol, out Symbol mapped)
         {
             mapped = null;
@@ -3598,6 +3603,7 @@ namespace QuantConnect
         /// <summary>
         /// Helper method to determine if a given symbol is of custom data
         /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static bool IsCustomDataType<T>(this Symbol symbol)
         {
             return symbol.SecurityType == SecurityType.Base
@@ -3947,9 +3953,7 @@ namespace QuantConnect
             switch (securityType)
             {
                 case SecurityType.Future:
-                    if ((universeSettings.DataMappingMode == DataMappingMode.OpenInterest
-                        || universeSettings.DataMappingMode == DataMappingMode.OpenInterestAnnual)
-                        && (market == Market.HKFE || market == Market.EUREX || market == Market.ICE))
+                    if (!universeSettings.DataMappingMode.IsAvailableForFutureMarket(market))
                     {
                         // circle around default OI for currently no OI available data
                         return DataMappingMode.LastTradingDay;
@@ -3958,6 +3962,15 @@ namespace QuantConnect
                 default:
                     return universeSettings.DataMappingMode;
             }
+        }
+
+        /// <summary>
+        /// Determines whether there is mapping data for the given data mapping mode in the given future market
+        /// </summary>
+        public static bool IsAvailableForFutureMarket(this DataMappingMode dataMappingMode, string market)
+        {
+            return dataMappingMode != DataMappingMode.OpenInterest && dataMappingMode != DataMappingMode.OpenInterestAnnual
+                || market != Market.HKFE && market != Market.EUREX && market != Market.ICE && market != Market.KRX;
         }
 
         /// <summary>
@@ -4041,6 +4054,7 @@ namespace QuantConnect
         /// <summary>
         /// Helper method to process an algorithms security changes, will add and remove securities according to them
         /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static void ProcessSecurityChanges(this IAlgorithm algorithm, SecurityChanges securityChanges)
         {
             foreach (var security in securityChanges.AddedSecurities)
@@ -4074,6 +4088,7 @@ namespace QuantConnect
         /// <summary>
         /// Helper method to set an algorithm runtime exception in a normalized fashion
         /// </summary>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static void SetRuntimeError(this IAlgorithm algorithm, Exception exception, string context)
         {
             Log.Error(exception, $"Extensions.SetRuntimeError(): {Messages.Extensions.RuntimeError(algorithm, context)}");
@@ -4208,6 +4223,7 @@ namespace QuantConnect
         /// <param name="security">The found or added security instance</param>
         /// <param name="onError">Callback to invoke in case of unsupported security type</param>
         /// <returns>True if the security was found or added</returns>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static bool GetOrAddUnrequestedSecurity(this IAlgorithm algorithm, Symbol symbol, out Security security,
             Action<IReadOnlyCollection<SecurityType>> onError = null)
         {
@@ -4332,6 +4348,7 @@ namespace QuantConnect
         /// dependency with the FF enumerators requiring that they receive aux data to properly handle delistings.
         /// Otherwise we would have issues with delisted symbols continuing to fill forward after expiry/delisting.
         /// Reference PR #5485 and related issues for more.</remarks>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static bool ShouldEmitData(this SubscriptionDataConfig config, BaseData data, bool isUniverse = false)
         {
             // For now we are only filtering Auxiliary data; so if its another type just return true or if it's a margin interest rate which we want to emit always
@@ -4486,6 +4503,7 @@ namespace QuantConnect
         /// </summary>
         /// <param name="symbol">Type to check</param>
         /// <returns>True if it needs to be mapped</returns>
+        [EditorBrowsable(EditorBrowsableState.Never)]
         public static bool RequiresMapping(this Symbol symbol)
         {
             switch (symbol.SecurityType)

@@ -16,7 +16,6 @@
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
-using QuantConnect;
 using QuantConnect.Data.Market;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Indicators;
@@ -29,7 +28,6 @@ using QuantConnect.Packets;
 using QuantConnect.Securities.Positions;
 using QuantConnect.Statistics;
 using QuantConnect.Util;
-using Common.Util;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -324,6 +322,11 @@ namespace QuantConnect.Lean.Engine.Results
         protected PerformanceTrackingTool PerformanceTrackingTool { get; set; }
 
         /// <summary>
+        /// The data monitor tracking the data requests. May be null when the host doesn't monitor data requests.
+        /// </summary>
+        protected IDataMonitor DataMonitor { get; set; }
+
+        /// <summary>
         /// Creates a new instance
         /// </summary>
         protected BaseResultsHandler()
@@ -518,6 +521,7 @@ namespace QuantConnect.Lean.Engine.Results
             State["Hostname"] = _hostName;
             MapFileProvider = parameters.MapFileProvider;
             PerformanceTrackingTool = parameters.PerformanceTrackingTool;
+            DataMonitor = parameters.DataMonitor;
 
             SerializerSettings = new()
             {

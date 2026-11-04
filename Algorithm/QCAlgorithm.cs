@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Globalization;
@@ -58,7 +59,6 @@ using QuantConnect.Commands;
 using Newtonsoft.Json;
 using QuantConnect.Securities.Index;
 using QuantConnect.Api;
-using Common.Util;
 
 namespace QuantConnect.Algorithm
 {
@@ -121,6 +121,8 @@ namespace QuantConnect.Algorithm
         private ConcurrentQueue<string> _logMessages = new ConcurrentQueue<string>();
         private ConcurrentQueue<string> _errorMessages = new ConcurrentQueue<string>();
         private IStatisticsService _statisticsService;
+        // summary statistics set before the statistics service is attached, e.g. during Initialize
+        private Dictionary<string, string> _pendingSummaryStatistics;
         private IBrokerageModel _brokerageModel;
 
         private bool _sentBroadcastCommandsDisabled;
@@ -153,6 +155,8 @@ namespace QuantConnect.Algorithm
         private int? _warmupBarCount;
         private Dictionary<string, string> _parameters = new Dictionary<string, string>();
         private bool _deploymentDetailsSet;
+        private readonly HashSet<string> _dataMappingModeFallbackWarnedMarkets = new();
+        private bool _ignoredContinuousFutureSettingsWarningSent;
         private SecurityDefinitionSymbolResolver _securityDefinitionSymbolResolver;
 
         private SecurityDefinitionSymbolResolver SecurityDefinitionSymbolResolver
@@ -207,7 +211,19 @@ namespace QuantConnect.Algorithm
             SubscriptionManager = new SubscriptionManager(_timeKeeper);
 
             Securities = new SecurityManager(_timeKeeper);
+            Securities.CollectionChanged += (sender, args) =>
+            {
+                // the removed security's indicators and consolidators would otherwise be kept but never updated again
+                if (args.Action == NotifyCollectionChangedAction.Remove)
+                {
+                    foreach (Security security in args.OldItems)
+                    {
+                        RemoveSecurityConsolidators(security.Symbol);
+                    }
+                }
+            };
             Transactions = new SecurityTransactionManager(this, Securities);
+            OrderFactory = new OrderFactory(this);
             Portfolio = new SecurityPortfolioManager(Securities, Transactions, Settings, DefaultOrderProperties);
             SignalExport = new SignalExportManager(this);
 
@@ -1524,7 +1540,7 @@ namespace QuantConnect.Algorithm
         /// <summary>
         /// Sets the benchmark used for computing statistics of the algorithm to the specified symbol
         /// </summary>
-        /// <param name="symbol">symbol to use as the benchmark</param>
+        /// <param name="symbol">symbol to use as the benchmark, null to disable the benchmark</param>
         [DocumentationAttribute(TradingAndOrders)]
         [DocumentationAttribute(SecuritiesAndPortfolio)]
         [DocumentationAttribute(Indicators)]
@@ -1533,6 +1549,13 @@ namespace QuantConnect.Algorithm
             if (_locked)
             {
                 throw new InvalidOperationException(Messages.QCAlgorithm.SetBenchmarkAlreadyInitialized());
+            }
+
+            if (symbol == null)
+            {
+                // Equivalent to no benchmark
+                Benchmark = new FuncBenchmark(_ => 0);
+                return;
             }
 
             // Create our security benchmark
@@ -2102,7 +2125,7 @@ namespace QuantConnect.Algorithm
                         {
                             ExtendedMarketHours = extendedMarketHours.Value,
                             FillForward = fillForward.Value,
-                            DataMappingMode = dataMappingMode ?? UniverseSettings.GetUniverseMappingModeOrDefault(symbol.SecurityType, symbol.ID.Market),
+                            DataMappingMode = GetDataMappingModeOrDefault(symbol, dataMappingMode),
                             DataNormalizationMode = dataNormalizationMode ?? UniverseSettings.GetUniverseNormalizationModeOrDefault(symbol.SecurityType),
                             ContractDepthOffset = (int)contractOffset,
                             SubscriptionDataTypes = dataTypes,
@@ -2127,10 +2150,71 @@ namespace QuantConnect.Algorithm
 
                     AddUniverse(universe);
                 }
+                else if (symbol.SecurityType == SecurityType.Future
+                    && UniverseManager.TryGetValue(ContinuousContractUniverse.CreateSymbol(symbol), out var continuousUniverse))
+                {
+                    var requestedDataMappingMode = dataMappingMode.HasValue ? GetDataMappingModeOrDefault(symbol, dataMappingMode) : (DataMappingMode?)null;
+                    WarnIfContinuousFutureSettingsIgnored(symbol, continuousUniverse.UniverseSettings, requestedDataMappingMode, dataNormalizationMode, (int)contractOffset);
+                }
                 return security;
             }
 
             return AddToUserDefinedUniverse(security, configs);
+        }
+
+        /// <summary>
+        /// Gets the requested or default data mapping mode for the given symbol, falling back to the market default if it is not available,
+        /// warning once per market when it does
+        /// </summary>
+        private DataMappingMode GetDataMappingModeOrDefault(Symbol symbol, DataMappingMode? dataMappingMode = null)
+        {
+            var requestedDataMappingMode = dataMappingMode ?? UniverseSettings.DataMappingMode;
+            if (symbol.SecurityType != SecurityType.Future || !symbol.IsCanonical() || requestedDataMappingMode.IsAvailableForFutureMarket(symbol.ID.Market))
+            {
+                return requestedDataMappingMode;
+            }
+
+            var fallbackDataMappingMode = UniverseSettings.GetUniverseMappingModeOrDefault(symbol.SecurityType, symbol.ID.Market);
+            if (_dataMappingModeFallbackWarnedMarkets.Add(symbol.ID.Market))
+            {
+                Debug($"Warning: {requestedDataMappingMode} data mapping mode is not available for {symbol.ID.Market.ToUpperInvariant()} futures, using {fallbackDataMappingMode} instead.");
+            }
+            return fallbackDataMappingMode;
+        }
+
+        /// <summary>
+        /// Warns once if a future is added again with continuous contract settings that differ from the existing ones, which are kept
+        /// </summary>
+        private void WarnIfContinuousFutureSettingsIgnored(Symbol symbol, UniverseSettings existingSettings, DataMappingMode? dataMappingMode,
+            DataNormalizationMode? dataNormalizationMode, int contractDepthOffset)
+        {
+            if (_ignoredContinuousFutureSettingsWarningSent)
+            {
+                return;
+            }
+
+            var ignoredSettings = new List<string>();
+            if (dataMappingMode.HasValue && dataMappingMode != existingSettings.DataMappingMode)
+            {
+                ignoredSettings.Add($"data mapping mode {dataMappingMode}");
+            }
+            if (dataNormalizationMode.HasValue && dataNormalizationMode != existingSettings.DataNormalizationMode)
+            {
+                ignoredSettings.Add($"normalization mode {dataNormalizationMode}");
+            }
+            if (contractDepthOffset != existingSettings.ContractDepthOffset)
+            {
+                ignoredSettings.Add($"contract depth offset {contractDepthOffset}");
+            }
+
+            if (ignoredSettings.Count > 0)
+            {
+                _ignoredContinuousFutureSettingsWarningSent = true;
+                var instructions = _locked
+                    ? "Remove it first to change its settings."
+                    : "Add it once, or remove and re-add it after Initialize.";
+                Debug($"Warning: {symbol} already added, ignoring {string.Join(", ", ignoredSettings)}. {instructions}");
+            }
         }
 
         /// <summary>
@@ -3850,6 +3934,15 @@ namespace QuantConnect.Algorithm
             if (_statisticsService == null)
             {
                 _statisticsService = statisticsService;
+
+                if (_pendingSummaryStatistics != null)
+                {
+                    foreach (var (name, value) in _pendingSummaryStatistics)
+                    {
+                        _statisticsService.SetSummaryStatistic(name, value);
+                    }
+                    _pendingSummaryStatistics = null;
+                }
             }
         }
 
