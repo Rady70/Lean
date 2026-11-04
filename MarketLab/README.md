@@ -843,7 +843,11 @@ are not counted:
   `failed-data-requests-*.txt`: those files really are missing and the
   data-monitor check above already owns them (exit code 3, or a warning with
   `-AllowMissingData`). The same line for a file that is **not** in that list
-  means the file exists but produced no data, and it is counted.
+  and exists on disk means the file produced no data, and it is counted;
+- the same line for a file that is **not** in that list and is **not** on disk.
+  The engine stops its data monitor when the data feed ends, so its end-of-run
+  statistics can read a file (the SPY daily file) that no list records. The
+  helper prints a `WARNING:` naming the file; the line stays in the log.
 
 When a run has both a missing file and an engine error, exit code 3 is
 returned and both `ERROR:` blocks are printed. `-AllowEngineErrors` turns the

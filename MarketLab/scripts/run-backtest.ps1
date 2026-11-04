@@ -71,6 +71,8 @@ Exit codes (observable via $LASTEXITCODE when invoked with `-File`):
      the algorithm's own Error() output and handled simulation errors such
      as rejected orders (algorithm-time-prefixed lines), and missing-file
      lines for files listed in failed-data-requests-*.txt (exit code 3's)
+     and for files absent from disk that the data monitor did not list, read
+     after it stopped (reported as a warning)
   other  LEAN's own exit code, propagated unchanged
 
 ERROR:/WARNING: lines are written to stderr, informational lines to stdout.
@@ -1371,8 +1373,13 @@ else {
 #  - "InvalidSource(): File not found" lines whose path is in the run's
 #    failed-data-requests list: those files do not exist and the data-monitor
 #    check above already owns them (exit 3 / -AllowMissingData). The same line
-#    for a file that is NOT in that list means the file exists but produced no
-#    data (empty entry, unreadable content) and is counted.
+#    for a file that is NOT in that list and exists on disk means the file
+#    produced no data (empty entry, unreadable content) and is counted.
+#  - the same line for a file that is NOT in that list and does NOT exist on
+#    disk: the engine stops its data monitor when the data feed ends, so the
+#    end-of-run statistics can read a file (the SPY daily file) that no list
+#    records. It cannot be a skipped data file, so it is not counted; it is
+#    reported as a warning and stays in the log.
 $engineErrorCheckPerformed = $false
 $engineErrorCountForEvidence = $null
 $terminalExceptionLineCount = 0
@@ -1387,6 +1394,7 @@ if (Test-Path -LiteralPath $logPath -PathType Leaf) {
     }
     $missingMarker = 'SubscriptionDataSourceReader.InvalidSource(): File not found: '
     $engineErrors = New-Object 'System.Collections.Generic.List[string]'
+    $unlistedMissingFiles = New-Object 'System.Collections.Generic.List[string]'
     $terminalExceptionLines = New-Object 'System.Collections.Generic.List[string]'
     $engineErrorCheckPerformed = $true
     try {
@@ -1406,6 +1414,10 @@ if (Test-Path -LiteralPath $logPath -PathType Leaf) {
                 foreach ($missing in $missingFiles) {
                     if ($path.EndsWith($missing, [System.StringComparison]::OrdinalIgnoreCase)) { $isKnownMissing = $true; break }
                 }
+                if (-not $isKnownMissing -and [System.IO.Path]::IsPathRooted($path) -and -not (Test-Path -LiteralPath $path)) {
+                    $unlistedMissingFiles.Add($path)
+                    $isKnownMissing = $true
+                }
             }
             if ($isKnownMissing) { continue }
             if (-not [string]::IsNullOrWhiteSpace($ExpectedTerminalException) -and $message.Contains($ExpectedTerminalException)) {
@@ -1422,6 +1434,9 @@ if (Test-Path -LiteralPath $logPath -PathType Leaf) {
     $engineErrorCountForEvidence = if ($engineErrorCheckPerformed) { $engineErrors.Count } else { $null }
     $terminalExceptionLineCount = $terminalExceptionLines.Count
     $engineErrorMessages = @($engineErrors | Select-Object -First 5)
+    foreach ($path in ($unlistedMissingFiles | Select-Object -Unique)) {
+        Write-WarningLine "Missing file read after the data monitor stopped (not in failed-data-requests, not counted as an engine error): $path"
+    }
     if ($leanExitCode -eq 0 -and $engineErrors.Count -gt 0) {
         $lines = @(
             "$($engineErrors.Count) engine ERROR:: line(s) in `"$logPath`" although LEAN exited 0: the algorithm completed, but the engine reported errors on the way (for example a corrupt or empty data file it skipped, or a failure while generating the statistics), so the results are not a clean backtest.",
